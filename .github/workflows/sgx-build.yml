@@ -1,0 +1,22 @@
+name: SGX build check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  fortanix-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+        with:
+          targets: x86_64-fortanix-unknown-sgx
+      - uses: Swatinem/rust-cache@v2
+      - name: check enclave target
+        run: cargo check --target x86_64-fortanix-unknown-sgx -p openapi-enclave
+      - name: host tests (sgx platform)
+        run: cargo test -p openapi-platform-sgx -p openapi-edge
