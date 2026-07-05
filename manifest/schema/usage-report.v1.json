@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teechat.ai/schemas/openapi/usage-report.v1.json",
+  "title": "UsageReport",
+  "type": "object",
+  "required": [
+    "report_version",
+    "key_id",
+    "model",
+    "prompt_tokens",
+    "completion_tokens",
+    "timestamp_ms",
+    "nonce_b64",
+    "signature_hex"
+  ],
+  "properties": {
+    "report_version": { "type": "integer", "const": 1 },
+    "key_id": { "type": "string" },
+    "model": { "type": "string" },
+    "prompt_tokens": { "type": "integer", "minimum": 0 },
+    "completion_tokens": { "type": "integer", "minimum": 0 },
+    "timestamp_ms": { "type": "integer", "minimum": 0 },
+    "nonce_b64": { "type": "string" },
+    "signature_hex": { "type": "string", "pattern": "^[0-9a-f]+$" }
+  },
+  "additionalProperties": false
+}
