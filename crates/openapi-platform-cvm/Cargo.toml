@@ -1,0 +1,26 @@
+[package]
+name = "openapi-platform-cvm"
+description = "Linux CVM (SEV/TDX guest) platform backend for teechat-openapi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+openapi-core = { path = "../openapi-core" }
+openapi-platform = { path = "../openapi-platform" }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+ureq = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
