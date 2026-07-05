@@ -1,0 +1,22 @@
+[package]
+name = "openapi"
+description = "TeeChat OpenAI-compatible edge proxy (CVM guest binary)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "openapi"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+openapi-platform = { path = "../../crates/openapi-platform" }
+openapi-core = { path = "../../crates/openapi-core" }
+openapi-http = { path = "../../crates/openapi-http" }
+openapi-platform-cvm = { path = "../../crates/openapi-platform-cvm" }
+rustls = { workspace = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
