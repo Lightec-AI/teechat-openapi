@@ -1,0 +1,17 @@
+[package]
+name = "openapi-platform-sgx"
+description = "Fortanix EDP SGX platform backend for teechat-openapi (optional build target)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+base64 = { workspace = true }
+hex = { workspace = true }
+openapi-platform = { path = "../openapi-platform" }
+
+[features]
+default = []
+fortanix = []
