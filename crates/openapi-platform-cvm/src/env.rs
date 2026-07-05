@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 
+use crate::seal::CvmSealer;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use openapi_core::auth::Authenticator;
 use openapi_core::catalog::{KeyCatalog, SignedKeyCatalog};
@@ -22,7 +23,10 @@ pub struct EdgeEnv {
     pub launch_digest: String,
     pub image_digest: String,
     pub tls_cert_path: Option<String>,
+    /// Plaintext key path — dev only; production uses `tls_sealed_key_path`.
     pub tls_key_path: Option<String>,
+    pub tls_sealed_key_path: Option<String>,
+    pub seal_root_hex: Option<String>,
     pub max_body_bytes: usize,
     pub requests_per_minute: u32,
 }
@@ -88,6 +92,14 @@ impl EdgeEnv {
             .map_err(|_| EnvError::Invalid("OPENAPI_USAGE_SIGN_SEED_HEX", "must be 32 bytes".into()))?;
         Ok(UsageSigner::from_seed(seed))
     }
+
+    pub fn seal_root(&self) -> Result<Option<[u8; 32]>, EnvError> {
+        parse_seal_root_hex(self.seal_root_hex.as_deref())
+    }
+
+    pub fn cvm_sealer(&self) -> CvmSealer {
+        CvmSealer::from_env(&self.launch_digest, &self.image_digest)
+    }
 }
 
 pub fn load_edge_env() -> Result<EdgeEnv, EnvError> {
@@ -112,6 +124,8 @@ pub fn load_edge_env() -> Result<EdgeEnv, EnvError> {
         image_digest: opt("OPENAPI_IMAGE_DIGEST").unwrap_or_else(|| "unknown".into()),
         tls_cert_path: opt("OPENAPI_TLS_CERT_PATH"),
         tls_key_path: opt("OPENAPI_TLS_KEY_PATH"),
+        tls_sealed_key_path: opt("OPENAPI_TLS_SEALED_KEY_PATH"),
+        seal_root_hex: opt("OPENAPI_SEAL_ROOT_HEX"),
         max_body_bytes: opt("OPENAPI_MAX_BODY_BYTES")
             .and_then(|v| v.parse().ok())
             .unwrap_or(4 * 1024 * 1024),
@@ -159,6 +173,21 @@ pub fn write_dev_catalog(
     Ok(())
 }
 
+pub fn parse_seal_root_hex(raw: Option<&str>) -> Result<Option<[u8; 32]>, EnvError> {
+    match raw {
+        None => Ok(None),
+        Some("") => Ok(None),
+        Some(hex_str) => {
+            let bytes = hex::decode(hex_str)
+                .map_err(|e| EnvError::Invalid("OPENAPI_SEAL_ROOT_HEX", e.to_string()))?;
+            let root: [u8; 32] = bytes.as_slice().try_into().map_err(|_| {
+                EnvError::Invalid("OPENAPI_SEAL_ROOT_HEX", "must be 32 bytes".into())
+            })?;
+            Ok(Some(root))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +221,40 @@ mod tests {
         env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
         env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn parse_seal_root_hex_valid() {
+        let root = parse_seal_root_hex(Some(&hex::encode([9u8; 32]))).unwrap();
+        assert_eq!(root, Some([9u8; 32]));
+        assert_eq!(parse_seal_root_hex(None).unwrap(), None);
+    }
+
+    #[test]
+    fn parse_seal_root_hex_invalid_length() {
+        assert!(parse_seal_root_hex(Some("abcd")).is_err());
+    }
+
+    #[test]
+    fn env_loads_sealed_tls_paths() {
+        env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
+        env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
+        env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
+        env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
+        env::set_var("OPENAPI_TLS_CERT_PATH", "/etc/cert.pem");
+        env::set_var("OPENAPI_TLS_SEALED_KEY_PATH", "/var/openapi/tls-key.sealed.json");
+        env::set_var("OPENAPI_SEAL_ROOT_HEX", hex::encode([3u8; 32]));
+
+        let edge = load_edge_env().unwrap();
+        assert_eq!(edge.tls_sealed_key_path.as_deref(), Some("/var/openapi/tls-key.sealed.json"));
+        assert_eq!(edge.seal_root().unwrap(), Some([3u8; 32]));
+
+        env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
+        env::remove_var("OPENAPI_CATALOG_PATH");
+        env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
+        env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
+        env::remove_var("OPENAPI_TLS_CERT_PATH");
+        env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
+        env::remove_var("OPENAPI_SEAL_ROOT_HEX");
     }
 }
