@@ -1,0 +1,215 @@
+//! Sync HTTP/1.1 upstream client over `TcpStream` (EDP-compatible; use IP:port URLs).
+
+use std::io::{Read, Write};
+use std::net::TcpStream;
+
+use openapi_core::error::ApiError;
+use openapi_core::handler::{UpstreamForwarder, UpstreamResponse};
+use openapi_core::models::{default_models, ModelsListResponse};
+use serde_json::Value;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpEndpoint {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone)]
+pub struct TcpHttpUpstream {
+    endpoint: HttpEndpoint,
+}
+
+impl TcpHttpUpstream {
+    pub fn new(base_url: &str) -> Result<Self, ApiError> {
+        Ok(Self {
+            endpoint: parse_http_base_url(base_url)?,
+        })
+    }
+
+    fn connect(&self) -> Result<TcpStream, ApiError> {
+        let addr = format!("{}:{}", self.endpoint.host, self.endpoint.port);
+        TcpStream::connect(&addr).map_err(|e| ApiError::Upstream(format!("connect {addr}: {e}")))
+    }
+
+    fn request(&self, method: &str, path: &str, body: Option<&[u8]>) -> Result<Vec<u8>, ApiError> {
+        let mut stream = self.connect()?;
+
+        let request = if let Some(body) = body {
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                self.endpoint.host,
+                body.len()
+            )
+        } else {
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                self.endpoint.host
+            )
+        };
+        stream
+            .write_all(request.as_bytes())
+            .map_err(|e| ApiError::Upstream(e.to_string()))?;
+        if let Some(body) = body {
+            stream
+                .write_all(body)
+                .map_err(|e| ApiError::Upstream(e.to_string()))?;
+        }
+        stream.flush().map_err(|e| ApiError::Upstream(e.to_string()))?;
+
+        read_http_response_body(&mut stream)
+    }
+}
+
+impl UpstreamForwarder for TcpHttpUpstream {
+    fn forward_chat(
+        &self,
+        request_json: &Value,
+        stream: bool,
+    ) -> Result<UpstreamResponse, ApiError> {
+        let body = serde_json::to_vec(request_json).map_err(|e| ApiError::Internal(e.to_string()))?;
+        let bytes = self.request("POST", "/v1/chat/completions", Some(&body))?;
+        if stream {
+            return Ok(UpstreamResponse::Raw {
+                bytes,
+                content_type: "text/event-stream".into(),
+            });
+        }
+        let json: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| ApiError::Upstream(format!("invalid upstream json: {e}")))?;
+        Ok(UpstreamResponse::Json(json))
+    }
+
+    fn list_models(&self) -> Result<ModelsListResponse, ApiError> {
+        match self.request("GET", "/v1/models", None) {
+            Ok(body) => serde_json::from_slice(&body).map_err(|e| ApiError::Upstream(e.to_string())),
+            Err(_) => Ok(default_models()),
+        }
+    }
+}
+
+pub fn parse_http_base_url(base_url: &str) -> Result<HttpEndpoint, ApiError> {
+    let url = base_url.trim().trim_end_matches('/');
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| ApiError::BadRequest("upstream must be http://IP:port (no TLS, no DNS)".into()))?;
+    let (host, port) = match rest.split_once(':') {
+        Some((h, p)) => (h.to_string(), p.parse::<u16>().map_err(|e| ApiError::BadRequest(e.to_string()))?),
+        None => return Err(ApiError::BadRequest("upstream must include explicit port".into())),
+    };
+    if host.is_empty() {
+        return Err(ApiError::BadRequest("upstream host empty".into()));
+    }
+    Ok(HttpEndpoint { host, port })
+}
+
+fn read_http_response_body(stream: &mut TcpStream) -> Result<Vec<u8>, ApiError> {
+    let mut raw = Vec::new();
+    stream
+        .read_to_end(&mut raw)
+        .map_err(|e| ApiError::Upstream(e.to_string()))?;
+
+    let header_end = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| ApiError::Upstream("malformed upstream response".into()))?;
+    let headers = String::from_utf8_lossy(&raw[..header_end]);
+    let status_line = headers.lines().next().unwrap_or("");
+    if !status_line.contains(" 200 ") && !status_line.contains(" 201 ") {
+        return Err(ApiError::Upstream(format!(
+            "upstream status: {status_line}; body={}",
+            String::from_utf8_lossy(&raw[header_end + 4..])
+        )));
+    }
+
+    let body_start = header_end + 4;
+    if let Some(cl_line) = headers.lines().find(|l| {
+        l.to_ascii_lowercase().starts_with("content-length:")
+    }) {
+        let cl = cl_line
+            .split_once(':')
+            .map(|(_, v)| v.trim())
+            .unwrap_or("");
+        let len: usize = cl
+            .parse()
+            .map_err(|e| ApiError::Upstream(format!("content-length: {e}")))?;
+        let end = body_start + len;
+        if raw.len() >= end {
+            return Ok(raw[body_start..end].to_vec());
+        }
+    }
+
+    Ok(raw[body_start..].to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+
+    #[test]
+    fn parse_http_base_url_ok() {
+        let ep = parse_http_base_url("http://127.0.0.1:8000/").unwrap();
+        assert_eq!(ep.host, "127.0.0.1");
+        assert_eq!(ep.port, 8000);
+    }
+
+    #[test]
+    fn parse_http_base_url_rejects_https() {
+        assert!(parse_http_base_url("https://127.0.0.1:8000").is_err());
+    }
+
+    #[test]
+    fn tcp_upstream_chat_roundtrip() {
+        use std::net::Shutdown;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap();
+            assert!(n > 0);
+            let body = r#"{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2}}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(resp.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            let _ = stream.shutdown(Shutdown::Write);
+        });
+
+        let base = format!("http://{}:{}", addr.ip(), addr.port());
+        let upstream = TcpHttpUpstream::new(&base).unwrap();
+        let resp = upstream
+            .forward_chat(
+                &serde_json::json!({"model":"m","messages":[{"role":"user","content":"hi"}]}),
+                false,
+            )
+            .unwrap();
+        match resp {
+            UpstreamResponse::Json(v) => assert_eq!(v["id"], "x"),
+            _ => panic!("expected json"),
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn read_http_response_body_unit() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            if let Ok(mut stream) = TcpStream::connect(addr) {
+                let body = read_http_response_body(&mut stream).unwrap();
+                assert_eq!(body, br#"{"ok":true}"#);
+            }
+        });
+        if let Ok((mut stream, _)) = listener.accept() {
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n{\"ok\":true}")
+                .unwrap();
+        }
+    }
+}

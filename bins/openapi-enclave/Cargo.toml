@@ -1,0 +1,16 @@
+[package]
+name = "openapi-enclave"
+description = "TeeChat OpenAI-compatible edge proxy (Fortanix EDP SGX enclave)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "openapi-enclave"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+openapi-platform-sgx = { path = "../../crates/openapi-platform-sgx" }
