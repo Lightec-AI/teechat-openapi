@@ -1,0 +1,16 @@
+[package]
+name = "seal-tls-key-sgx"
+description = "Seal a TLS private key PEM to SGX MRENCLAVE measurement"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "seal-tls-key-sgx"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+openapi-platform-sgx = { path = "../../crates/openapi-platform-sgx" }
