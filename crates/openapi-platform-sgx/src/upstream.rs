@@ -163,14 +163,53 @@ mod tests {
     #[test]
     fn tcp_upstream_chat_roundtrip() {
         use std::net::Shutdown;
+        use std::sync::mpsc;
+
+        fn read_http_request(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+            let mut raw = Vec::new();
+            let mut tmp = [0u8; 1024];
+            loop {
+                let n = stream.read(&mut tmp)?;
+                if n == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&tmp[..n]);
+                let Some(header_end) = raw.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let headers = &raw[..header_end];
+                let body_start = header_end + 4;
+                let cl = headers
+                    .split(|&b| b == b'\n')
+                    .find_map(|line| {
+                        let line = line.strip_suffix(b"\r").unwrap_or(line);
+                        let line_str = std::str::from_utf8(line).ok()?;
+                        let (name, value) = line_str.split_once(':')?;
+                        if name.eq_ignore_ascii_case("content-length") {
+                            value.trim().parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    });
+                if let Some(len) = cl {
+                    if raw.len() >= body_start + len {
+                        return Ok(raw);
+                    }
+                } else if !raw.is_empty() {
+                    return Ok(raw);
+                }
+            }
+            Ok(raw)
+        }
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
+        let (ready_tx, ready_rx) = mpsc::channel();
         let server = thread::spawn(move || {
+            ready_tx.send(()).unwrap();
             let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0u8; 8192];
-            let n = stream.read(&mut buf).unwrap();
-            assert!(n > 0);
+            let request = read_http_request(&mut stream).expect("read request");
+            assert!(request.starts_with(b"POST /v1/chat/completions"));
             let body = r#"{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2}}"#;
             let resp = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -180,6 +219,8 @@ mod tests {
             stream.flush().unwrap();
             let _ = stream.shutdown(Shutdown::Write);
         });
+
+        ready_rx.recv().unwrap();
 
         let base = format!("http://{}:{}", addr.ip(), addr.port());
         let upstream = TcpHttpUpstream::new(&base).unwrap();
