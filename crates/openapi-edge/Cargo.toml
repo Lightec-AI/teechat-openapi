@@ -1,0 +1,22 @@
+[package]
+name = "openapi-edge"
+description = "Shared edge HTTP server loop for CVM and SGX deployments"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+openapi-core = { path = "../openapi-core" }
+openapi-http = { path = "../openapi-http" }
+openapi-platform = { path = "../openapi-platform" }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+ed25519-dalek = { workspace = true }
+openapi-core = { path = "../openapi-core", features = ["test-utils"] }
+rand = { workspace = true }
