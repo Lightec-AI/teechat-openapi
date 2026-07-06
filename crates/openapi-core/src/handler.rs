@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::error::ApiError;
 use crate::limits::{Limits, RateLimiter};
 use crate::models::{
-    default_models, AttestationChallengeRequest, ChatCompletionRequest, ModelsListResponse,
+    AttestationChallengeRequest, ChatCompletionRequest, ModelsListResponse,
 };
 use crate::routes::{classify, RouteAction};
 use crate::upstream::{body_wants_stream, model_from_body};
@@ -40,8 +40,16 @@ pub enum AppResponse {
         body: Value,
         usage: UsageReport,
     },
+    /// Buffered SSE (non-streaming upstream fallback / tests).
     SseStream {
         upstream_body: Vec<u8>,
+        usage: UsageReport,
+    },
+    /// Incremental SSE passthrough: HTTP layer pipes upstream body to the client.
+    SsePassthrough {
+        method: HttpMethod,
+        path: String,
+        body: Vec<u8>,
         usage: UsageReport,
     },
 }
@@ -54,9 +62,45 @@ pub trait UpstreamForwarder: Send + Sync {
         body: Option<&[u8]>,
     ) -> Result<UpstreamResponse, ApiError>;
 
-    fn list_models(&self) -> Result<ModelsListResponse, ApiError> {
-        Ok(default_models())
+    /// Stream upstream response body to `out` on HTTP 2xx. Non-2xx responses are
+    /// read fully and returned as `ApiError::Upstream` without writing to `out`.
+    fn forward_v1_stream(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        body: Option<&[u8]>,
+        out: &mut dyn std::io::Write,
+    ) -> Result<StreamForwardResult, ApiError> {
+        let resp = self.forward_v1(method, path, body)?;
+        let (bytes, content_type) = match resp {
+            UpstreamResponse::Json(v) => (
+                serde_json::to_vec(&v).map_err(|e| ApiError::Internal(e.to_string()))?,
+                "application/json".into(),
+            ),
+            UpstreamResponse::Raw { bytes, content_type } => (bytes, content_type),
+        };
+        out.write_all(&bytes)
+            .map_err(|e| ApiError::Upstream(e.to_string()))?;
+        Ok(StreamForwardResult {
+            status: 200,
+            content_type,
+            bytes_written: bytes.len() as u64,
+        })
     }
+
+    fn list_models(&self) -> Result<ModelsListResponse, ApiError> {
+        match self.forward_v1(HttpMethod::Get, "/v1/models", None)? {
+            UpstreamResponse::Json(v) => crate::models::parse_models_json(v),
+            UpstreamResponse::Raw { bytes, .. } => crate::models::parse_models_bytes(&bytes),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamForwardResult {
+    pub status: u16,
+    pub content_type: String,
+    pub bytes_written: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +188,22 @@ where
                 if !body.is_empty() {
                     self.limits.validate_body_size(body.len())?;
                 }
+                if method == HttpMethod::Post && body_wants_stream(body) {
+                    let model = model_from_body(body);
+                    let usage = self.usage_signer.sign_report(
+                        &auth.key_id,
+                        &model,
+                        0,
+                        0,
+                        now_ms,
+                    )?;
+                    return Ok(AppResponse::SsePassthrough {
+                        method,
+                        path: path.to_string(),
+                        body: body.to_vec(),
+                        usage,
+                    });
+                }
                 let upstream = self.upstream.forward_v1(
                     method,
                     path,
@@ -189,11 +249,28 @@ where
     ) -> Result<AppResponse, ApiError> {
         let stream = body_wants_stream(body);
         let model = model_from_body(body);
+
+        if stream {
+            let usage = self.usage_signer.sign_report(
+                &auth.key_id,
+                &model,
+                0,
+                0,
+                now_ms,
+            )?;
+            return Ok(AppResponse::SsePassthrough {
+                method: HttpMethod::Post,
+                path: path.to_string(),
+                body: body.to_vec(),
+                usage,
+            });
+        }
+
         let upstream = self
             .upstream
             .forward_v1(HttpMethod::Post, path, Some(body))?;
 
-        let (prompt_tokens, completion_tokens) = extract_token_counts(&upstream, stream);
+        let (prompt_tokens, completion_tokens) = extract_token_counts(&upstream, false);
 
         let usage = self.usage_signer.sign_report(
             &auth.key_id,
@@ -203,7 +280,19 @@ where
             now_ms,
         )?;
 
-        inference_to_app_response(upstream, stream, usage)
+        inference_to_app_response(upstream, false, usage)
+    }
+
+    /// Pipe a prepared SSE passthrough request to the client writer.
+    pub fn execute_sse_passthrough(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        body: &[u8],
+        out: &mut dyn std::io::Write,
+    ) -> Result<StreamForwardResult, ApiError> {
+        self.upstream
+            .forward_v1_stream(method, path, Some(body), out)
     }
 
     fn handle_attestation(&self, body: &[u8]) -> Result<AppResponse, ApiError> {
@@ -378,7 +467,7 @@ mod tests {
         }
     }
 
-    fn build_test_app(upstream: MockUpstream) -> App<MockUpstream, TestPlatform> {
+    fn build_test_app<U: UpstreamForwarder>(upstream: U) -> App<U, TestPlatform> {
         let api_key = "sk-teechat-test";
         let mut csprng = OsRng;
         let catalog_signing = SigningKey::generate(&mut csprng);
@@ -509,6 +598,52 @@ mod tests {
                 assert_eq!(v["edge"]["build_version"], "0.1.0");
             }
             _ => panic!("expected json"),
+        }
+    }
+
+    #[test]
+    fn chat_completions_stream_returns_passthrough() {
+        let app = build_test_app(MockUpstream::default());
+        let body = br#"{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":true}"#;
+        let resp = app
+            .handle(HttpMethod::Post, "/v1/chat/completions", Some(AUTH), body, 1)
+            .unwrap();
+        match resp {
+            AppResponse::SsePassthrough { path, body, usage, .. } => {
+                assert_eq!(path, "/v1/chat/completions");
+                assert!(body_wants_stream(&body));
+                assert_eq!(usage.prompt_tokens, 0);
+            }
+            _ => panic!("expected sse passthrough"),
+        }
+    }
+
+    #[test]
+    fn list_models_proxies_upstream() {
+        #[derive(Default)]
+        struct ModelsUpstream;
+        impl UpstreamForwarder for ModelsUpstream {
+            fn forward_v1(
+                &self,
+                method: HttpMethod,
+                path: &str,
+                _body: Option<&[u8]>,
+            ) -> Result<UpstreamResponse, ApiError> {
+                assert_eq!(method, HttpMethod::Get);
+                assert_eq!(path, "/v1/models");
+                Ok(UpstreamResponse::Json(serde_json::json!({
+                    "object": "list",
+                    "data": [{"id":"engine-model","object":"model","created":1,"owned_by":"vllm"}]
+                })))
+            }
+        }
+        let app = build_test_app(ModelsUpstream);
+        let resp = app
+            .handle(HttpMethod::Get, "/v1/models", Some(AUTH), b"", 1)
+            .unwrap();
+        match resp {
+            AppResponse::Json(v) => assert_eq!(v["data"][0]["id"], "engine-model"),
+            _ => panic!("expected models json"),
         }
     }
 

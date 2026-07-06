@@ -39,15 +39,25 @@ pub struct AttestationChallengeRequest {
 pub fn default_models() -> ModelsListResponse {
     ModelsListResponse {
         object: "list".into(),
-        data: vec![
-            ModelObject {
-                id: "teechat-default".into(),
-                object: "model".into(),
-                created: 1_700_000_000,
-                owned_by: "teechat".into(),
-            },
-        ],
+        data: vec![ModelObject {
+            id: "teechat-default".into(),
+            object: "model".into(),
+            created: 1_700_000_000,
+            owned_by: "teechat".into(),
+        }],
     }
+}
+
+/// Parse `GET /v1/models` JSON from upstream.
+pub fn parse_models_json(value: serde_json::Value) -> Result<ModelsListResponse, crate::error::ApiError> {
+    serde_json::from_value(value)
+        .map_err(|e| crate::error::ApiError::Upstream(format!("invalid models list: {e}")))
+}
+
+pub fn parse_models_bytes(bytes: &[u8]) -> Result<ModelsListResponse, crate::error::ApiError> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|e| crate::error::ApiError::Upstream(format!("invalid models json: {e}")))?;
+    parse_models_json(value)
 }
 
 #[cfg(test)]

@@ -5,9 +5,8 @@ use std::net::TcpListener;
 use std::sync::Arc;
 
 use anyhow::Context;
-use openapi_core::App;
-use openapi_core::UpstreamForwarder;
-use openapi_http::{dispatch_request, handle_connection, ParsedRequest};
+use openapi_core::handler::{App, UpstreamForwarder};
+use openapi_http::{dispatch_to_writer, handle_connection, ParsedRequest};
 use openapi_platform::AttestationPlatform;
 use tracing::{info, warn};
 
@@ -44,7 +43,7 @@ where
         std::thread::spawn(move || {
             if let Some(accept_tls) = tls.as_ref() {
                 match accept_tls(stream) {
-                    Some(mut conn) => serve_connection(&app, &mut *conn),
+                    Some(mut conn) => serve_connection(&app, conn.as_mut()),
                     None => warn!("tls accept failed"),
                 }
             } else {
@@ -75,14 +74,18 @@ where
         total += n;
         match ParsedRequest::parse(&buffer[..total]) {
             Ok(Some(req)) => {
-                let response = dispatch_request(
+                if dispatch_to_writer(
                     app,
                     &req.method,
                     &req.path,
                     req.headers.get("authorization").map(String::as_str),
                     &req.body,
-                );
-                let _ = conn.write_all(&response);
+                    conn,
+                )
+                .is_err()
+                {
+                    return;
+                }
                 let _ = conn.flush();
                 return;
             }

@@ -16,7 +16,9 @@ Drop-in OpenAI SDK compatibility: authenticate, rate-limit, forward to `OPENAPI_
 
 Ephemeral in-memory state (TTL, no disk) may be added later for batch/file compat. Process restart clears all ephemeral IDs.
 
-Non-streaming inference responses include `X-TeeChat-Usage-Report`. Streaming (`stream: true`) appends a final SSE event with signed usage.
+Non-streaming inference responses include `X-TeeChat-Usage-Report`. Streaming (`stream: true`) uses **chunked SSE passthrough** (upstream bytes forwarded incrementally) and appends a final signed usage event.
+
+`GET /v1/models` always proxies the upstream engine list; the edge does not substitute a static catalog when upstream is reachable.
 
 ## Endpoints (minimum)
 
@@ -38,6 +40,7 @@ cargo build --release -p openapi
 
 ```bash
 ./scripts/dev-run.sh
+./scripts/smoke-openapi-agent.sh   # health, models, stream + UTF-8 (see docs/streaming-contract.md)
 ```
 
 Required env vars:

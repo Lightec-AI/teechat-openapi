@@ -1,11 +1,16 @@
 use openapi_core::usage::UsageReport;
 
-/// Append a signed usage report as the final SSE event.
-pub fn append_usage_trailer(mut stream: Vec<u8>, usage: &UsageReport) -> Vec<u8> {
-    let trailer = format!(
+pub fn usage_trailer_bytes(usage: &UsageReport) -> Vec<u8> {
+    format!(
         "data: {}\n\n",
         serde_json::json!({"teechat_usage": usage})
-    );
+    )
+    .into_bytes()
+}
+
+/// Append a signed usage report as the final SSE event.
+pub fn append_usage_trailer(mut stream: Vec<u8>, usage: &UsageReport) -> Vec<u8> {
+    let trailer = usage_trailer_bytes(usage);
     if !stream.ends_with(b"\n\n") {
         if stream.ends_with(b"\n") {
             stream.push(b'\n');
@@ -13,7 +18,7 @@ pub fn append_usage_trailer(mut stream: Vec<u8>, usage: &UsageReport) -> Vec<u8>
             stream.extend_from_slice(b"\n\n");
         }
     }
-    stream.extend_from_slice(trailer.as_bytes());
+    stream.extend_from_slice(&trailer);
     stream
 }
 

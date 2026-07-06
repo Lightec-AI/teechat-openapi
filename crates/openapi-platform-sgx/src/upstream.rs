@@ -1,11 +1,11 @@
 //! Sync HTTP/1.1 upstream client over `TcpStream` (EDP-compatible; use IP:port URLs).
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::TcpStream;
 
 use openapi_core::error::ApiError;
-use openapi_core::handler::{HttpMethod, UpstreamForwarder, UpstreamResponse};
-use openapi_core::models::{default_models, ModelsListResponse};
+use openapi_core::handler::{HttpMethod, StreamForwardResult, UpstreamForwarder, UpstreamResponse};
+use openapi_core::http1_body::{copy_body, read_error_body, read_response_headers};
 use openapi_core::upstream::decode_upstream_response;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,9 +31,13 @@ impl TcpHttpUpstream {
         TcpStream::connect(&addr).map_err(|e| ApiError::Upstream(format!("connect {addr}: {e}")))
     }
 
-    fn request(&self, method: &str, path: &str, body: Option<&[u8]>) -> Result<(u16, String, Vec<u8>), ApiError> {
-        let mut stream = self.connect()?;
-
+    fn write_request(
+        &self,
+        stream: &mut TcpStream,
+        method: &str,
+        path: &str,
+        body: Option<&[u8]>,
+    ) -> Result<(), ApiError> {
         let request = if let Some(body) = body {
             format!(
                 "{method} {path} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -54,9 +58,9 @@ impl TcpHttpUpstream {
                 .write_all(body)
                 .map_err(|e| ApiError::Upstream(e.to_string()))?;
         }
-        stream.flush().map_err(|e| ApiError::Upstream(e.to_string()))?;
-
-        read_http_response(&mut stream)
+        stream
+            .flush()
+            .map_err(|e| ApiError::Upstream(e.to_string()))
     }
 }
 
@@ -68,23 +72,65 @@ impl UpstreamForwarder for TcpHttpUpstream {
         body: Option<&[u8]>,
     ) -> Result<UpstreamResponse, ApiError> {
         let wants_stream = body.map(openapi_core::upstream::body_wants_stream).unwrap_or(false);
-        let (status, content_type, bytes) = match method {
-            HttpMethod::Get => self.request("GET", path, None)?,
-            HttpMethod::Post => self.request("POST", path, body)?,
+        let mut stream = self.connect()?;
+        match method {
+            HttpMethod::Get => self.write_request(&mut stream, "GET", path, None)?,
+            HttpMethod::Post => self.write_request(&mut stream, "POST", path, body)?,
             HttpMethod::Other => return Err(ApiError::MethodNotAllowed),
-        };
-        decode_upstream_response(status, &content_type, bytes, wants_stream)
+        }
+        let (status, _headers, framing) = read_response_headers(&mut stream)?;
+        let mut buf = [0u8; 8192];
+        if !(200..300).contains(&status) {
+            let err = read_error_body(&mut stream, &framing, &mut buf)?;
+            return Err(ApiError::Upstream(format!("upstream status {status}: {err}")));
+        }
+        let mut body_out = Vec::new();
+        copy_body(&mut stream, &framing, &mut body_out, &mut buf)?;
+        let content_type = content_type_from_headers(&_headers);
+        decode_upstream_response(status, &content_type, body_out, wants_stream)
     }
 
-    fn list_models(&self) -> Result<ModelsListResponse, ApiError> {
-        match self.forward_v1(HttpMethod::Get, "/v1/models", None) {
-            Ok(UpstreamResponse::Json(v)) => {
-                serde_json::from_value(v).map_err(|e| ApiError::Upstream(e.to_string()))
-            }
-            Ok(_) => Err(ApiError::Upstream("unexpected models response".into())),
-            Err(_) => Ok(default_models()),
+    fn forward_v1_stream(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        body: Option<&[u8]>,
+        out: &mut dyn Write,
+    ) -> Result<StreamForwardResult, ApiError> {
+        let mut stream = self.connect()?;
+        match method {
+            HttpMethod::Get => self.write_request(&mut stream, "GET", path, None)?,
+            HttpMethod::Post => self.write_request(&mut stream, "POST", path, body)?,
+            HttpMethod::Other => return Err(ApiError::MethodNotAllowed),
         }
+        let (status, headers, framing) = read_response_headers(&mut stream)?;
+        let content_type = content_type_from_headers(&headers);
+        let mut buf = [0u8; 8192];
+        if !(200..300).contains(&status) {
+            let err = read_error_body(&mut stream, &framing, &mut buf)?;
+            return Err(ApiError::Upstream(format!("upstream status {status}: {err}")));
+        }
+        let bytes_written = copy_body(&mut stream, &framing, out, &mut buf)?;
+        Ok(StreamForwardResult {
+            status,
+            content_type,
+            bytes_written,
+        })
     }
+}
+
+fn content_type_from_headers(headers: &str) -> String {
+    headers
+        .lines()
+        .find_map(|l| {
+            let (name, value) = l.split_once(':')?;
+            if name.eq_ignore_ascii_case("content-type") {
+                Some(value.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
 }
 
 pub fn parse_http_base_url(base_url: &str) -> Result<HttpEndpoint, ApiError> {
@@ -102,60 +148,12 @@ pub fn parse_http_base_url(base_url: &str) -> Result<HttpEndpoint, ApiError> {
     Ok(HttpEndpoint { host, port })
 }
 
-fn read_http_response(stream: &mut TcpStream) -> Result<(u16, String, Vec<u8>), ApiError> {
-    let mut raw = Vec::new();
-    stream
-        .read_to_end(&mut raw)
-        .map_err(|e| ApiError::Upstream(e.to_string()))?;
-
-    let header_end = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(|| ApiError::Upstream("malformed upstream response".into()))?;
-    let headers = String::from_utf8_lossy(&raw[..header_end]);
-    let status_line = headers.lines().next().unwrap_or("");
-    let status = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(502);
-    let content_type = headers
-        .lines()
-        .find_map(|l| {
-            let (name, value) = l.split_once(':')?;
-            if name.eq_ignore_ascii_case("content-type") {
-                Some(value.trim().to_string())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
-
-    let body_start = header_end + 4;
-    if let Some(cl_line) = headers.lines().find(|l| {
-        l.to_ascii_lowercase().starts_with("content-length:")
-    }) {
-        let cl = cl_line
-            .split_once(':')
-            .map(|(_, v)| v.trim())
-            .unwrap_or("");
-        let len: usize = cl
-            .parse()
-            .map_err(|e| ApiError::Upstream(format!("content-length: {e}")))?;
-        let end = body_start + len;
-        if raw.len() >= end {
-            return Ok((status, content_type, raw[body_start..end].to_vec()));
-        }
-    }
-
-    Ok((status, content_type, raw[body_start..].to_vec()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::mpsc;
     use std::thread;
 
     #[test]
@@ -173,7 +171,6 @@ mod tests {
     #[test]
     fn tcp_upstream_chat_roundtrip() {
         use std::net::Shutdown;
-        use std::sync::mpsc;
 
         fn read_http_request(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
             let mut raw = Vec::new();
@@ -249,19 +246,49 @@ mod tests {
     }
 
     #[test]
-    fn read_http_response_body_unit() {
+    fn forward_v1_stream_sse() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        thread::spawn(move || {
-            if let Ok(mut stream) = TcpStream::connect(addr) {
-                let (_, _, body) = read_http_response(&mut stream).unwrap();
-                assert_eq!(body, br#"{"ok":true}"#);
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut req = Vec::new();
+            let mut buf = [0u8; 1024];
+            loop {
+                let n = stream.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                req.extend_from_slice(&buf[..n]);
+                if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
             }
+            let body = b"data: {\"t\":1}\n\n";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(resp.as_bytes()).unwrap();
+            stream.write_all(body).unwrap();
+            stream.flush().unwrap();
         });
-        if let Ok((mut stream, _)) = listener.accept() {
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n{\"ok\":true}")
-                .unwrap();
-        }
+
+        ready_rx.recv().unwrap();
+        let base = format!("http://{}:{}", addr.ip(), addr.port());
+        let upstream = TcpHttpUpstream::new(&base).unwrap();
+        let mut out = Vec::new();
+        upstream
+            .forward_v1_stream(
+                HttpMethod::Post,
+                "/v1/chat/completions",
+                Some(br#"{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":true}"#),
+                &mut out,
+            )
+            .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("data: {\"t\":1}"));
+        server.join().unwrap();
     }
 }
