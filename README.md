@@ -57,7 +57,7 @@ Optional: `OPENAPI_LISTEN_ADDR` (default `0.0.0.0:8443`), `OPENAPI_REGION`, atte
 |----------|-------------|
 | `OPENAPI_TLS_CERT_PATH` | Server certificate PEM (public) |
 | `OPENAPI_TLS_SEALED_KEY_PATH` | Measurement-bound sealed private key JSON (**production**) |
-| `OPENAPI_PROFILE` | `dev` (default) or **`prod`** — see [sealing threat model](docs/security/sealing-threat-model.md) |
+| `OPENAPI_PROFILE` | `dev` (default) or **`prod`** — see [SECURITY.md](SECURITY.md) |
 | `OPENAPI_SEAL_ROOT_HEX` | Dev-only optional 32-byte HKDF input; **forbidden in prod** (derived in TEE) |
 | `OPENAPI_TLS_KEY_PATH` | Plaintext private key PEM (**dev only**) |
 
@@ -88,9 +88,10 @@ bins/openapi                  # CVM edge binary
 bins/openapi-enclave          # SGX EDP enclave binary
 bins/seal-tls-key-sgx         # Seal TLS key to MRENCLAVE
 bins/seal-tls-key             # seal TLS private key for CVM guest
-manifest/schema/              # signed catalog + edge manifest JSON Schema
+manifest/schema/              # signed catalog + sealed TLS key JSON Schema
 deploy/cvm/                   # CVM guest packaging
 deploy/sgx/                   # EDP build notes
+SECURITY.md                   # vulnerability reporting + sealing summary
 ```
 
 ## License

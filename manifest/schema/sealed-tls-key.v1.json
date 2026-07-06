@@ -5,7 +5,11 @@
   "type": "object",
   "required": ["seal_version", "measurement", "nonce_b64", "ciphertext_b64"],
   "properties": {
-    "seal_version": { "type": "integer", "const": 1 },
+    "seal_version": {
+      "type": "integer",
+      "enum": [1, 2],
+      "description": "1 = HKDF measurement-labeled (CVM MVP); 2 = SGX EGETKEY (Fortanix SealData)"
+    },
     "measurement": {
       "oneOf": [
         {
@@ -30,7 +34,17 @@
       ]
     },
     "nonce_b64": { "type": "string" },
-    "ciphertext_b64": { "type": "string" }
+    "ciphertext_b64": { "type": "string" },
+    "seal_data_b64": {
+      "type": "string",
+      "description": "URL-safe base64 Fortanix SealData JSON; required when seal_version is 2"
+    }
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "seal_version": { "const": 2 } } },
+      "then": { "required": ["seal_data_b64"] }
+    }
+  ]
 }

@@ -1,3 +1,7 @@
+//! Measurement-labeled encryption (MVP, `seal_version` 1).
+//!
+//! **Not** Intel SGX `EGETKEY` in v1 — see repo `SECURITY.md`. SGX prod uses v2 in `openapi-platform-sgx`.
+
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -9,7 +13,10 @@ use sha2::Sha256;
 use crate::{Measurement, PlatformError};
 
 pub const SEAL_AAD: &[u8] = b"teechat-openapi-tls-key-v1";
+/// HKDF + AES-GCM bound to a measurement label (MVP / CVM).
 pub const SEAL_VERSION: u32 = 1;
+/// Fortanix EGETKEY + AES-GCM (SGX hardware sealing).
+pub const SEAL_VERSION_SGX_EGETKEY: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedTlsKeyBlob {
@@ -17,6 +24,9 @@ pub struct SealedTlsKeyBlob {
     pub measurement: Measurement,
     pub nonce_b64: String,
     pub ciphertext_b64: String,
+    /// Fortanix `SealData` (URL-safe base64). Required for `seal_version` 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seal_data_b64: Option<String>,
 }
 
 pub fn measurement_binding_label(measurement: &Measurement) -> String {
@@ -27,6 +37,14 @@ pub fn measurement_binding_label(measurement: &Measurement) -> String {
             image_digest,
         } => format!("launch_digest:{launch_digest}|image_digest:{image_digest}"),
     }
+}
+
+/// Prod CVM seal root derived inside guest from attested launch + image digests.
+pub fn derive_cvm_seal_root(attested_launch_digest: &str, image_digest: &str) -> [u8; 32] {
+    let binding = format!(
+        "cvm-seal-root|launch:{attested_launch_digest}|image:{image_digest}"
+    );
+    derive_seal_key(&binding, None)
 }
 
 pub fn derive_seal_key(binding: &str, seal_root: Option<&[u8; 32]>) -> [u8; 32] {
@@ -82,6 +100,7 @@ pub fn seal_tls_private_key(
         measurement: measurement.clone(),
         nonce_b64: URL_SAFE_NO_PAD.encode(nonce_bytes),
         ciphertext_b64: URL_SAFE_NO_PAD.encode(ciphertext),
+        seal_data_b64: None,
     })
 }
 
@@ -92,9 +111,14 @@ pub fn unseal_tls_private_key(
 ) -> Result<Vec<u8>, PlatformError> {
     if blob.seal_version != SEAL_VERSION {
         return Err(PlatformError::Seal(format!(
-            "unsupported seal_version {}",
+            "unsupported seal_version {} for HKDF unseal (expected {SEAL_VERSION})",
             blob.seal_version
         )));
+    }
+    if blob.seal_data_b64.is_some() {
+        return Err(PlatformError::Seal(
+            "seal_data_b64 present — use SGX hardware unseal (seal_version 2)".into(),
+        ));
     }
 
     if blob.measurement != *expected_measurement {
@@ -253,5 +277,22 @@ mod tests {
         let a = derive_seal_key(&binding, None);
         let b = derive_seal_key(&binding, Some(&SEAL_ROOT));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn derive_cvm_seal_root_is_stable() {
+        let a = derive_cvm_seal_root("launch-a", "image-b");
+        let b = derive_cvm_seal_root("launch-a", "image-b");
+        assert_eq!(a, b);
+        assert_ne!(a, derive_cvm_seal_root("launch-x", "image-b"));
+    }
+
+    #[test]
+    fn hkdf_unseal_rejects_sgx_blob_version() {
+        let m = mrenclave_measurement();
+        let mut blob = seal_tls_private_key(&m, KEY_PEM, None).unwrap();
+        blob.seal_version = SEAL_VERSION_SGX_EGETKEY;
+        blob.seal_data_b64 = Some("AAAA".into());
+        assert!(unseal_tls_private_key(&blob, &m, None).is_err());
     }
 }

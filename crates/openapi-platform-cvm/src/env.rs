@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use openapi_platform::{load_edge_profile, validate_tls_key_policy, EdgeProfile, ProfileError};
+
 use crate::seal::CvmSealer;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use openapi_core::auth::Authenticator;
@@ -41,6 +43,10 @@ pub enum EnvError {
     Io(#[from] std::io::Error),
     #[error("catalog: {0}")]
     Catalog(String),
+    #[error("profile: {0}")]
+    Profile(#[from] ProfileError),
+    #[error("seal: {0}")]
+    Seal(String),
 }
 
 impl EdgeEnv {
@@ -93,12 +99,29 @@ impl EdgeEnv {
         Ok(UsageSigner::from_seed(seed))
     }
 
+    pub fn profile(&self) -> EdgeProfile {
+        load_edge_profile()
+    }
+
+    pub fn validate_profile(&self) -> Result<(), EnvError> {
+        validate_tls_key_policy(self.profile())?;
+        Ok(())
+    }
+
     pub fn seal_root(&self) -> Result<Option<[u8; 32]>, EnvError> {
-        parse_seal_root_hex(self.seal_root_hex.as_deref())
+        self.cvm_sealer()
+            .resolve_seal_root(
+                parse_seal_root_hex(self.seal_root_hex.as_deref())?.as_ref(),
+            )
+            .map_err(|e| EnvError::Seal(e.to_string()))
     }
 
     pub fn cvm_sealer(&self) -> CvmSealer {
-        CvmSealer::from_env(&self.launch_digest, &self.image_digest)
+        CvmSealer::with_profile(
+            &self.launch_digest,
+            &self.image_digest,
+            self.profile().is_prod(),
+        )
     }
 }
 

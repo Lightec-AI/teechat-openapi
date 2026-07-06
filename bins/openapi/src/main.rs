@@ -20,10 +20,16 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let env = load_edge_env().context("load edge env")?;
-    info!(listen = %env.listen_addr, region = %env.region, "starting openapi edge");
+    env.validate_profile().context("tls/profile policy")?;
+    info!(
+        listen = %env.listen_addr,
+        region = %env.region,
+        profile = ?env.profile(),
+        "starting openapi edge"
+    );
 
-    let seal_root = env.seal_root().context("seal root")?;
     let sealer = env.cvm_sealer();
+    let seal_root = env.seal_root().context("seal root")?;
 
     let tls_spki = tls_spki_hex(&env, &sealer, seal_root.as_ref())?;
 

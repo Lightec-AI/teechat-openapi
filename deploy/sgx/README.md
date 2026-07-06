@@ -2,7 +2,7 @@
 
 Production SGX builds use **`x86_64-fortanix-unknown-sgx`**. The whole Rust binary runs inside the enclave (`ftxsgx-runner`); this is **not** Gramine/Occlum and **not** WASM.
 
-Internal architecture: TeaChat `docs/design/teechat-openapi.md`.
+Product docs: [openapi.teechat.ai](https://openapi.teechat.ai). Sealing: [SECURITY.md](../../SECURITY.md).
 
 ## 1. Host prerequisites (SGX-capable Linux)
 
@@ -68,7 +68,10 @@ export OPENAPI_SGX_ENCLAVE=$PWD/target/x86_64-fortanix-unknown-sgx/release/opena
 | `OPENAPI_TLS_CERT_PATH` | prod | Server cert PEM (public) |
 | `OPENAPI_TLS_SEALED_KEY_PATH` | prod | MRENCLAVE-bound sealed key JSON |
 | `OPENAPI_TLS_KEY_PATH` | dev | Plaintext key (**dev only**) |
-| `OPENAPI_SEAL_ROOT_HEX` | no | Optional 32-byte seal root |
+| `OPENAPI_PROFILE` | prod | Set to **`prod`** on production units |
+| `OPENAPI_SEAL_ROOT_HEX` | dev | Dev HKDF input only — **forbidden in prod** (EGETKEY-derived in enclave) |
+
+Sealing: [SECURITY.md](../../SECURITY.md).
 
 ### Seal TLS key to MRENCLAVE
 

@@ -8,7 +8,7 @@ use tracing::{info, warn};
 
 use crate::attest::SgxAttestationPlatform;
 use crate::env::{load_sgx_edge_env, SgxEdgeEnv};
-use crate::seal::SgxSealer;
+use crate::seal::{local_mrenclave_hex, SgxSealer};
 use crate::tls::{TlsAcceptor, TlsConfig};
 use crate::upstream::TcpHttpUpstream;
 
@@ -20,22 +20,27 @@ pub fn run() -> anyhow::Result<()> {
         .init();
 
     let env = load_sgx_edge_env().context("load sgx edge env")?;
+    env.validate_profile().context("tls/profile policy")?;
+
+    let runtime_mr = local_mrenclave_hex().context("read MRENCLAVE from enclave report")?;
     info!(
         listen = %env.listen_addr,
         region = %env.region,
-        mrenclave = %env.mrenclave,
+        mrenclave = %runtime_mr,
+        profile = ?env.profile(),
         "starting openapi SGX edge"
     );
 
+    let sealer = env.runtime_sgx_sealer().context("sgx sealer")?;
+
     let seal_root = env.seal_root().context("seal root")?;
-    let sealer = env.sgx_sealer();
 
     let tls_spki = tls_spki_hex(&env, &sealer, seal_root.as_ref())?;
 
     let platform = SgxAttestationPlatform::from_env(
         &env.build_version,
         &env.code_hash,
-        &env.mrenclave,
+        &runtime_mr,
         &tls_spki,
     );
 

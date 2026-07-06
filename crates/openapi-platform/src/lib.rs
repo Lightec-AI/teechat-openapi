@@ -1,12 +1,18 @@
 //! Platform abstraction for Edge KMS deployments (CVM guest or SGX enclave).
+//!
+//! TLS sealing summary: repo `SECURITY.md`.
 
+mod profile;
 mod seal;
 
 use std::path::Path;
 
+pub use profile::{
+    load_edge_profile, validate_tls_key_policy, EdgeProfile, ProfileError,
+};
 pub use seal::{
-    measurement_binding_label, seal_tls_private_key, unseal_tls_private_key, SealedTlsKeyBlob,
-    SEAL_AAD, SEAL_VERSION,
+    derive_seal_key, derive_cvm_seal_root, measurement_binding_label, seal_tls_private_key,
+    unseal_tls_private_key, SealedTlsKeyBlob, SEAL_AAD, SEAL_VERSION, SEAL_VERSION_SGX_EGETKEY,
 };
 
 use serde::{Deserialize, Serialize};

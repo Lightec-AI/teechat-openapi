@@ -9,7 +9,9 @@ use openapi_core::limits::Limits;
 use openapi_core::usage::UsageSigner;
 use thiserror::Error;
 
-use crate::seal::SgxSealer;
+use openapi_platform::{load_edge_profile, validate_tls_key_policy, EdgeProfile, ProfileError};
+
+use crate::seal::{local_mrenclave_hex, SgxSealer};
 
 #[derive(Debug, Clone)]
 pub struct SgxEdgeEnv {
@@ -40,6 +42,10 @@ pub enum EnvError {
     Io(#[from] std::io::Error),
     #[error("catalog: {0}")]
     Catalog(String),
+    #[error("profile: {0}")]
+    Profile(#[from] ProfileError),
+    #[error("seal: {0}")]
+    Seal(String),
 }
 
 impl SgxEdgeEnv {
@@ -88,12 +94,41 @@ impl SgxEdgeEnv {
         Ok(UsageSigner::from_seed(seed))
     }
 
+    pub fn profile(&self) -> EdgeProfile {
+        load_edge_profile()
+    }
+
+    pub fn validate_profile(&self) -> Result<(), EnvError> {
+        validate_tls_key_policy(self.profile())?;
+        Ok(())
+    }
+
     pub fn seal_root(&self) -> Result<Option<[u8; 32]>, EnvError> {
+        if self.profile().is_prod() {
+            return self
+                .runtime_sgx_sealer()?
+                .resolve_seal_root(None, true)
+                .map_err(|e| EnvError::Seal(e.to_string()));
+        }
         parse_seal_root_hex(self.seal_root_hex.as_deref())
     }
 
     pub fn sgx_sealer(&self) -> SgxSealer {
         SgxSealer::new(self.mrenclave.clone())
+    }
+
+    /// Runtime sealer: MRENCLAVE from enclave report when inside SGX.
+    pub fn runtime_sgx_sealer(&self) -> Result<SgxSealer, EnvError> {
+        let runtime_mr = local_mrenclave_hex().map_err(|e| EnvError::Invalid("MRENCLAVE", e.to_string()))?;
+        if (self.profile().is_prod() || self.mrenclave != "unknown")
+            && self.mrenclave != runtime_mr
+        {
+            return Err(EnvError::Invalid(
+                "OPENAPI_MRENCLAVE",
+                format!("env={} report={runtime_mr}", self.mrenclave),
+            ));
+        }
+        Ok(SgxSealer::new(runtime_mr))
     }
 }
 
