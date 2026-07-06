@@ -4,9 +4,9 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 
 use openapi_core::error::ApiError;
-use openapi_core::handler::{UpstreamForwarder, UpstreamResponse};
+use openapi_core::handler::{HttpMethod, UpstreamForwarder, UpstreamResponse};
 use openapi_core::models::{default_models, ModelsListResponse};
-use serde_json::Value;
+use openapi_core::upstream::decode_upstream_response;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpEndpoint {
@@ -31,7 +31,7 @@ impl TcpHttpUpstream {
         TcpStream::connect(&addr).map_err(|e| ApiError::Upstream(format!("connect {addr}: {e}")))
     }
 
-    fn request(&self, method: &str, path: &str, body: Option<&[u8]>) -> Result<Vec<u8>, ApiError> {
+    fn request(&self, method: &str, path: &str, body: Option<&[u8]>) -> Result<(u16, String, Vec<u8>), ApiError> {
         let mut stream = self.connect()?;
 
         let request = if let Some(body) = body {
@@ -56,32 +56,32 @@ impl TcpHttpUpstream {
         }
         stream.flush().map_err(|e| ApiError::Upstream(e.to_string()))?;
 
-        read_http_response_body(&mut stream)
+        read_http_response(&mut stream)
     }
 }
 
 impl UpstreamForwarder for TcpHttpUpstream {
-    fn forward_chat(
+    fn forward_v1(
         &self,
-        request_json: &Value,
-        stream: bool,
+        method: HttpMethod,
+        path: &str,
+        body: Option<&[u8]>,
     ) -> Result<UpstreamResponse, ApiError> {
-        let body = serde_json::to_vec(request_json).map_err(|e| ApiError::Internal(e.to_string()))?;
-        let bytes = self.request("POST", "/v1/chat/completions", Some(&body))?;
-        if stream {
-            return Ok(UpstreamResponse::Raw {
-                bytes,
-                content_type: "text/event-stream".into(),
-            });
-        }
-        let json: Value = serde_json::from_slice(&bytes)
-            .map_err(|e| ApiError::Upstream(format!("invalid upstream json: {e}")))?;
-        Ok(UpstreamResponse::Json(json))
+        let wants_stream = body.map(openapi_core::upstream::body_wants_stream).unwrap_or(false);
+        let (status, content_type, bytes) = match method {
+            HttpMethod::Get => self.request("GET", path, None)?,
+            HttpMethod::Post => self.request("POST", path, body)?,
+            HttpMethod::Other => return Err(ApiError::MethodNotAllowed),
+        };
+        decode_upstream_response(status, &content_type, bytes, wants_stream)
     }
 
     fn list_models(&self) -> Result<ModelsListResponse, ApiError> {
-        match self.request("GET", "/v1/models", None) {
-            Ok(body) => serde_json::from_slice(&body).map_err(|e| ApiError::Upstream(e.to_string())),
+        match self.forward_v1(HttpMethod::Get, "/v1/models", None) {
+            Ok(UpstreamResponse::Json(v)) => {
+                serde_json::from_value(v).map_err(|e| ApiError::Upstream(e.to_string()))
+            }
+            Ok(_) => Err(ApiError::Upstream("unexpected models response".into())),
             Err(_) => Ok(default_models()),
         }
     }
@@ -102,7 +102,7 @@ pub fn parse_http_base_url(base_url: &str) -> Result<HttpEndpoint, ApiError> {
     Ok(HttpEndpoint { host, port })
 }
 
-fn read_http_response_body(stream: &mut TcpStream) -> Result<Vec<u8>, ApiError> {
+fn read_http_response(stream: &mut TcpStream) -> Result<(u16, String, Vec<u8>), ApiError> {
     let mut raw = Vec::new();
     stream
         .read_to_end(&mut raw)
@@ -114,12 +114,22 @@ fn read_http_response_body(stream: &mut TcpStream) -> Result<Vec<u8>, ApiError> 
         .ok_or_else(|| ApiError::Upstream("malformed upstream response".into()))?;
     let headers = String::from_utf8_lossy(&raw[..header_end]);
     let status_line = headers.lines().next().unwrap_or("");
-    if !status_line.contains(" 200 ") && !status_line.contains(" 201 ") {
-        return Err(ApiError::Upstream(format!(
-            "upstream status: {status_line}; body={}",
-            String::from_utf8_lossy(&raw[header_end + 4..])
-        )));
-    }
+    let status = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(502);
+    let content_type = headers
+        .lines()
+        .find_map(|l| {
+            let (name, value) = l.split_once(':')?;
+            if name.eq_ignore_ascii_case("content-type") {
+                Some(value.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
 
     let body_start = header_end + 4;
     if let Some(cl_line) = headers.lines().find(|l| {
@@ -134,11 +144,11 @@ fn read_http_response_body(stream: &mut TcpStream) -> Result<Vec<u8>, ApiError> 
             .map_err(|e| ApiError::Upstream(format!("content-length: {e}")))?;
         let end = body_start + len;
         if raw.len() >= end {
-            return Ok(raw[body_start..end].to_vec());
+            return Ok((status, content_type, raw[body_start..end].to_vec()));
         }
     }
 
-    Ok(raw[body_start..].to_vec())
+    Ok((status, content_type, raw[body_start..].to_vec()))
 }
 
 #[cfg(test)]
@@ -225,9 +235,10 @@ mod tests {
         let base = format!("http://{}:{}", addr.ip(), addr.port());
         let upstream = TcpHttpUpstream::new(&base).unwrap();
         let resp = upstream
-            .forward_chat(
-                &serde_json::json!({"model":"m","messages":[{"role":"user","content":"hi"}]}),
-                false,
+            .forward_v1(
+                HttpMethod::Post,
+                "/v1/chat/completions",
+                Some(br#"{"model":"m","messages":[{"role":"user","content":"hi"}]}"#),
             )
             .unwrap();
         match resp {
@@ -243,7 +254,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         thread::spawn(move || {
             if let Ok(mut stream) = TcpStream::connect(addr) {
-                let body = read_http_response_body(&mut stream).unwrap();
+                let (_, _, body) = read_http_response(&mut stream).unwrap();
                 assert_eq!(body, br#"{"ok":true}"#);
             }
         });

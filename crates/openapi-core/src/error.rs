@@ -19,6 +19,8 @@ pub enum ApiError {
     BadRequest(String),
     #[error("upstream error: {0}")]
     Upstream(String),
+    #[error("not implemented: {0}")]
+    NotImplemented(String),
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -33,6 +35,7 @@ impl ApiError {
             Self::PayloadTooLarge => 413,
             Self::RateLimited => 429,
             Self::BadRequest(_) => 400,
+            Self::NotImplemented(_) => 501,
             Self::Upstream(_) => 502,
             Self::Internal(_) => 500,
         }
@@ -46,6 +49,7 @@ impl ApiError {
             Self::PayloadTooLarge => "invalid_request_error",
             Self::RateLimited => "rate_limit_exceeded",
             Self::BadRequest(_) => "invalid_request_error",
+            Self::NotImplemented(_) => "invalid_request_error",
             Self::Upstream(_) => "server_error",
             Self::Internal(_) => "server_error",
         }
@@ -70,6 +74,7 @@ impl ApiError {
         let code = match &self {
             Self::Unauthorized => Some("invalid_api_key".to_string()),
             Self::RateLimited => Some("rate_limit_exceeded".to_string()),
+            Self::NotImplemented(_) => Some("not_supported".to_string()),
             _ => None,
         };
         ApiErrorBody {

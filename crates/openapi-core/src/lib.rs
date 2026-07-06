@@ -1,10 +1,13 @@
 pub mod auth;
 pub mod catalog;
 pub mod config;
+pub mod ephemeral;
 pub mod error;
 pub mod handler;
 pub mod limits;
 pub mod models;
+pub mod routes;
+pub mod upstream;
 pub mod usage;
 
 pub use auth::{AuthContext, Authenticator};

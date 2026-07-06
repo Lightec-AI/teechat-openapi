@@ -148,7 +148,7 @@ mod tests {
     use openapi_core::auth::Authenticator;
     use openapi_core::catalog::{hash_api_key, sign_test_catalog, KeyCatalog, KeyRecord};
     use openapi_core::config::Config;
-    use openapi_core::handler::UpstreamResponse;
+    use openapi_core::handler::{HttpMethod, UpstreamResponse};
     use openapi_core::limits::Limits;
     use openapi_core::usage::UsageSigner;
     use openapi_platform::{AttestationChallengeResponse, AttestationPlatform, EdgeIdentity, Measurement, PlatformError};
@@ -160,10 +160,11 @@ mod tests {
 
     struct TestUpstream;
     impl UpstreamForwarder for TestUpstream {
-        fn forward_chat(
+        fn forward_v1(
             &self,
-            _request_json: &serde_json::Value,
-            _stream: bool,
+            _method: HttpMethod,
+            _path: &str,
+            _body: Option<&[u8]>,
         ) -> Result<UpstreamResponse, ApiError> {
             Ok(UpstreamResponse::Json(serde_json::json!({
                 "choices": [],

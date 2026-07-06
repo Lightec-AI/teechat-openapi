@@ -116,10 +116,11 @@ mod tests {
 
     struct TestUpstream;
     impl UpstreamForwarder for TestUpstream {
-        fn forward_chat(
+        fn forward_v1(
             &self,
-            _request_json: &serde_json::Value,
-            _stream: bool,
+            _method: openapi_core::HttpMethod,
+            _path: &str,
+            _body: Option<&[u8]>,
         ) -> Result<UpstreamResponse, ApiError> {
             Ok(UpstreamResponse::Json(serde_json::json!({
                 "choices": [],
