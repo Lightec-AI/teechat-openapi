@@ -19,13 +19,16 @@ command -v openssl >/dev/null || fail "openssl not found"
 
 log "host=${HOST} port=${PORT}"
 
-tls13_out="$(echo | openssl s_client -connect "${HOST}:${PORT}" -tls1_3 -servername "${HOST}" 2>/dev/null || true)"
-echo "$tls13_out" | grep -q 'Protocol  *: TLSv1.3' || fail "TLS 1.3 handshake did not negotiate TLSv1.3"
+tls13_out="$(echo | openssl s_client -connect "${HOST}:${PORT}" -tls1_3 -servername "${HOST}" 2>&1 || true)"
+echo "$tls13_out" | grep -qE 'Protocol[^:]*: TLSv1\.3' || fail "TLS 1.3 handshake did not negotiate TLSv1.3"
 log "OK TLS 1.3 handshake"
 
 tls12_out="$(echo | openssl s_client -connect "${HOST}:${PORT}" -tls1_2 -servername "${HOST}" 2>&1 || true)"
-if echo "$tls12_out" | grep -q 'Protocol  *: TLSv1.2'; then
+if echo "$tls12_out" | grep -qE 'Cipher is \([^N]|Cipher[[:space:]]+:[[:space:]]+[A-Z]'; then
   fail "TLS 1.2 still accepted"
+fi
+if ! echo "$tls12_out" | grep -qE 'Cipher is \(NONE\)|Cipher[[:space:]]+:[[:space:]]+0000|alert protocol version'; then
+  fail "TLS 1.2 rejection could not be confirmed"
 fi
 log "OK TLS 1.2 rejected"
 

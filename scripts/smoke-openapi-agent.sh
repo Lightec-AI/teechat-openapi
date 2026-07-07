@@ -55,7 +55,11 @@ log "OK healthz"
 
 # 2) Models (must proxy upstream — no static teechat-default-only list)
 MODELS_JSON="$(curl -fsS "${AUTH[@]}" "${BASE}/v1/models")"
-MODEL="${OPENAPI_MODEL:-$(python3 -c "import json,sys; d=json.load(sys.stdin); print(d['data'][0]['id'])" <<<"$MODELS_JSON")")}"
+if [[ -n "${OPENAPI_MODEL:-}" ]]; then
+  MODEL="$OPENAPI_MODEL"
+else
+  MODEL="$(printf '%s' "$MODELS_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['data'][0]['id'])")"
+fi
 [[ -n "$MODEL" ]] || fail "no model id in /v1/models"
 log "OK models (using model=$MODEL)"
 
@@ -76,25 +80,21 @@ if [[ "${OPENAPI_SMOKE_SKIP_STREAM:-}" == "1" ]]; then
 fi
 
 # 4) Stream — chunked SSE, usage trailer, UTF-8 safe reassembly (emoji prompt)
-STREAM_RAW="$TMP/stream.raw"
-curl -fsS -N "${AUTH[@]}" \
+STREAM_HDR="$TMP/stream.hdr"
+STREAM_BODY="$TMP/stream.body"
+curl -fsS -N -D "$STREAM_HDR" -o "$STREAM_BODY" "${AUTH[@]}" \
   -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"Say hi then 💡\"}],\"stream\":true,\"max_tokens\":32}" \
-  "${BASE}/v1/chat/completions" >"$STREAM_RAW" || fail "stream request"
+  "${BASE}/v1/chat/completions" || fail "stream request"
 
-grep -q 'Transfer-Encoding: chunked' "$STREAM_RAW" || fail "stream response not chunked"
-grep -q 'data:' "$STREAM_RAW" || fail "stream missing SSE data lines"
-grep -q 'teechat_usage' "$STREAM_RAW" || fail "stream missing teechat_usage trailer"
+grep -qi 'Transfer-Encoding: chunked' "$STREAM_HDR" || fail "stream response not chunked"
+grep -q 'data:' "$STREAM_BODY" || fail "stream missing SSE data lines"
+grep -q 'teechat_usage' "$STREAM_BODY" || fail "stream missing teechat_usage trailer"
 
-python3 - "$STREAM_RAW" <<'PY' || fail "stream UTF-8 / SSE validation"
+python3 - "$STREAM_BODY" <<'PY' || fail "stream UTF-8 / SSE validation"
 import sys
 from pathlib import Path
 
-raw = Path(sys.argv[1]).read_bytes()
-# Split HTTP headers from body (first blank line).
-sep = raw.find(b"\r\n\r\n")
-if sep < 0:
-    raise SystemExit("no HTTP header/body separator")
-body = raw[sep + 4 :]
+body = Path(sys.argv[1]).read_bytes()
 # Must decode as UTF-8 without surrogate errors (edge byte passthrough).
 text = body.decode("utf-8")
 if "\ufffd" in text:
