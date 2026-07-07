@@ -64,6 +64,8 @@ Optional: `OPENAPI_LISTEN_ADDR` (default `0.0.0.0:8443`), `OPENAPI_REGION`, atte
 | `OPENAPI_SEAL_ROOT_HEX` | Dev-only optional 32-byte HKDF input; **forbidden in prod** (derived in TEE) |
 | `OPENAPI_TLS_KEY_PATH` | Plaintext private key PEM (**dev only**) |
 
+**Wire protocol:** the edge listener is **TLS 1.3 only** (rustls `builder_with_protocol_versions([&TLS13])`; `tls12` feature disabled). Verify after deploy: `bash scripts/verify-tls13-only.sh`. Hypervisor nginx uses TCP passthrough — it does not terminate TLS for openapi.
+
 Seal a key for the current guest measurement:
 
 ```bash

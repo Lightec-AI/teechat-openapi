@@ -44,6 +44,25 @@ OPENAPI_MRENCLAVE=... ./scripts/seal-tls-key-sgx.sh key.pem tls-key.sealed.json
 
 `POST /v1/attestation/challenge` returns edge identity (measurement, code hash, TLS SPKI, build version) bound to a client nonce. SGX deployments include an enclave REPORT in `quote_b64` when running on hardware.
 
+### TLS wire protocol
+
+The edge **server** negotiates **TLS 1.3 only**:
+
+- rustls `ServerConfig::builder_with_protocol_versions([&TLS13])` in `openapi-platform::tls`
+- Workspace `rustls` dependency built **without** the `tls12` feature (compile-time guard)
+
+TLS 1.2 handshakes are rejected. This matches production gateway posture and limits legacy cipher exposure on the prompt path.
+
+**Verify after deploy:**
+
+```bash
+bash scripts/verify-tls13-only.sh
+# or against public hostname:
+OPENAPI_TLS_VERIFY_HOST=openapi.teechat.ai OPENAPI_TLS_VERIFY_PORT=443 bash scripts/verify-tls13-only.sh
+```
+
+**Note:** Upstream calls to the inference engine (`OPENAPI_UPSTREAM_BASE_URL`, typically plain HTTP on a private LAN) are separate from client-facing edge TLS.
+
 ---
 
 ## Scope

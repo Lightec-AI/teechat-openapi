@@ -37,6 +37,18 @@ fail() { log "FAIL: $*"; exit 1; }
 
 log "base=$BASE"
 
+# 0) TLS 1.3 only when hitting HTTPS edge
+if [[ "$BASE" == https://* ]]; then
+  host_port="${BASE#https://}"
+  host="${host_port%%/*}"
+  port="${host##*:}"
+  host="${host%%:*}"
+  [[ "$port" == "$host" ]] && port=443
+  OPENAPI_TLS_VERIFY_HOST="$host" OPENAPI_TLS_VERIFY_PORT="$port" \
+    bash "$ROOT/scripts/verify-tls13-only.sh"
+  log "OK TLS 1.3 only"
+fi
+
 # 1) Health
 curl -fsS "${BASE}/healthz" | grep -q '"status":"ok"' || fail "healthz"
 log "OK healthz"

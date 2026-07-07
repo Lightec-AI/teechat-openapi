@@ -44,6 +44,9 @@ Timer: `teechat-openapi-acme-renew.timer` (twice daily).
 ```bash
 sudo openapi-tls-ceremony verify-disk
 curl -sk https://127.0.0.1:8443/healthz
+bash /usr/local/share/teechat-openapi/verify-tls13-only.sh   # or repo scripts/verify-tls13-only.sh
 ```
+
+**TLS 1.3 only:** the `openapi` binary negotiates TLS 1.3 exclusively (no TLS 1.2). After install, `verify-tls13-only.sh` must pass on `127.0.0.1:8443`.
 
 See TeaChat [openapi-snp-staging.md](../../../docs/ops/openapi-snp-staging.md) and [openapi-edge-sealing-threat-model.md](../../../docs/design/openapi-edge-sealing-threat-model.md).
