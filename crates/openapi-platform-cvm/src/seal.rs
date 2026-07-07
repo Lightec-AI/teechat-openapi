@@ -36,13 +36,13 @@ impl CvmSealer {
         Self::new(launch_digest, image_digest)
     }
 
-    /// Resolve seal root: dev allows host HKDF input; prod derives inside guest.
+    /// Resolve seal root from **host env** (`OPENAPI_SEAL_ROOT_HEX`); prod derives inside guest.
     pub fn resolve_seal_root(
         &self,
-        host_supplied: Option<&[u8; 32]>,
+        host_env_supplied: Option<&[u8; 32]>,
     ) -> Result<Option<[u8; 32]>, PlatformError> {
         if self.prod {
-            if host_supplied.is_some() {
+            if host_env_supplied.is_some() {
                 return Err(PlatformError::Seal(
                     "OPENAPI_SEAL_ROOT_HEX must not be host-supplied in prod".into(),
                 ));
@@ -53,7 +53,21 @@ impl CvmSealer {
                 &self.image_digest,
             )));
         }
-        Ok(host_supplied.copied())
+        Ok(host_env_supplied.copied())
+    }
+
+    fn effective_seal_root(
+        &self,
+        caller_supplied: Option<&[u8; 32]>,
+    ) -> Result<Option<[u8; 32]>, PlatformError> {
+        if self.prod {
+            verify_launch_digest_attested(&self.launch_digest)?;
+            return Ok(Some(derive_cvm_seal_root(
+                &self.launch_digest,
+                &self.image_digest,
+            )));
+        }
+        Ok(caller_supplied.copied())
     }
 }
 
@@ -70,10 +84,7 @@ impl Sealer for CvmSealer {
         key_pem: &[u8],
         seal_root: Option<&[u8; 32]>,
     ) -> Result<SealedTlsKeyBlob, PlatformError> {
-        if self.prod {
-            verify_launch_digest_attested(&self.launch_digest)?;
-        }
-        let effective_root = self.resolve_seal_root(seal_root)?;
+        let effective_root = self.effective_seal_root(seal_root)?;
         openapi_platform::seal_tls_private_key(
             &self.sealing_measurement(),
             key_pem,
@@ -86,10 +97,7 @@ impl Sealer for CvmSealer {
         blob: &SealedTlsKeyBlob,
         seal_root: Option<&[u8; 32]>,
     ) -> Result<Vec<u8>, PlatformError> {
-        if self.prod {
-            verify_launch_digest_attested(&self.launch_digest)?;
-        }
-        let effective_root = self.resolve_seal_root(seal_root)?;
+        let effective_root = self.effective_seal_root(seal_root)?;
         unseal_tls_private_key(blob, &self.sealing_measurement(), effective_root.as_ref())
     }
 }

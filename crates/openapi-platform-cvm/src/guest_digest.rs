@@ -79,17 +79,39 @@ fn read_launch_digest_via_snpguest() -> Result<String, PlatformError> {
 }
 
 fn parse_launch_measurement_from_display(text: &str) -> Result<String, PlatformError> {
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("Launch Measurement:") {
-            let hex = rest.trim();
+    let mut lines = text.lines().map(str::trim).peekable();
+    while let Some(line) = lines.next() {
+        let rest = line
+            .strip_prefix("Launch Measurement:")
+            .or_else(|| line.strip_prefix("Measurement:"));
+        if let Some(after_label) = rest {
+            let mut hex = String::new();
+            let inline = after_label
+                .split_whitespace()
+                .filter(|t| t.chars().all(|c| c.is_ascii_hexdigit()))
+                .collect::<String>();
+            hex.push_str(&inline);
+            while let Some(&next) = lines.peek() {
+                if next.is_empty() || next.contains(':') {
+                    break;
+                }
+                let chunk: String = next
+                    .split_whitespace()
+                    .filter(|t| t.chars().all(|c| c.is_ascii_hexdigit()))
+                    .collect();
+                if chunk.is_empty() {
+                    break;
+                }
+                hex.push_str(&chunk);
+                lines.next();
+            }
             if hex.len() >= 64 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Ok(hex.to_ascii_lowercase());
             }
         }
     }
     Err(PlatformError::Attestation(
-        "snpguest display output missing Launch Measurement".into(),
+        "snpguest display output missing Measurement".into(),
     ))
 }
 
@@ -130,6 +152,21 @@ mod tests {
         let digest = parse_launch_measurement_from_display(text).unwrap();
         assert_eq!(digest.len(), 64);
         assert!(digest.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn parse_snpguest_multiline_measurement() {
+        let text = r"Measurement:
+3D 9B 4D DB B3 1F BF 6D F0 6E C3 6E 9A C6 B8 39
+B1 1B 47 5C 6B EC FA B0 18 5A A0 8A CC FD 14 46
+65 38 55 A9 19 8F 75 B5 CE 14 24 BB C5 89 76 73
+";
+        let digest = parse_launch_measurement_from_display(text).unwrap();
+        assert_eq!(digest.len(), 96);
+        assert_eq!(
+            digest,
+            "3d9b4ddbb31fbf6df06ec36e9ac6b839b11b475c6becfab0185aa08accfd1446653855a9198f75b5ce1424bbc5897673"
+        );
     }
 
     #[test]
