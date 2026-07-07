@@ -11,6 +11,8 @@ Production TLS for `openapi.teechat.ai` terminates **inside the SEV-SNP guest**.
 | `/etc/teechat/openapi-tls-key.sealed.json` | Measurement-bound sealed private key |
 | `/etc/letsencrypt/` | ACME state during renewal only; **privkey shredded after seal** |
 
+HTTP-01 challenge delivery (port 80): see TeaChat [openapi-acme-http01-security.md](../../../docs/ops/openapi-acme-http01-security.md) — certbot writes token in guest webroot; host proxies challenge prefix only.
+
 Immutable golden root (target) + small writable data volume for `/etc/teechat` and ACME.
 
 ## First issuance (inside guest)
