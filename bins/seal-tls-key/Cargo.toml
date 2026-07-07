@@ -13,4 +13,5 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+openapi-platform = { path = "../../crates/openapi-platform" }
 openapi-platform-cvm = { path = "../../crates/openapi-platform-cvm" }
