@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use openapi_platform::{PlatformError, Sealer, SealedTlsKeyBlob};
+use openapi_platform::tls::build_server_tls_config;
 use rustls::pki_types::CertificateDer;
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use sha2::{Digest, Sha256};
@@ -76,11 +77,7 @@ pub fn load_server_config_from_pem_paths(
         .map_err(|e| TlsError::Rustls(e.to_string()))?
         .ok_or_else(|| TlsError::Rustls("missing private key".into()))?;
 
-    let config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|e| TlsError::Rustls(e.to_string()))?;
-    Ok(Arc::new(config))
+    build_server_tls_config(certs, key).map_err(|e| TlsError::Rustls(e.to_string()))
 }
 
 pub fn spki_sha256_hex_from_cert_path(path: &Path) -> Result<String, TlsError> {

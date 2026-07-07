@@ -4,6 +4,7 @@
 
 mod profile;
 mod seal;
+pub mod tls;
 
 use std::path::Path;
 
