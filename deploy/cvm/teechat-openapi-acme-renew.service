@@ -1,0 +1,11 @@
+[Unit]
+Description=TeeChat OpenAPI ACME renew + TLS seal ceremony
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/usr/local/bin/issue-and-seal-tls.sh
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/teechat/openapi.env
+ExecStart=/usr/local/bin/issue-and-seal-tls.sh renew
+Nice=10

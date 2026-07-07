@@ -1,0 +1,18 @@
+[Unit]
+Description=TeeChat OpenAPI Edge (TEE)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/teechat/openapi.env
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/teechat/openapi.env
+Environment=OPENAPI_PROFILE=prod
+ExecStart=/usr/local/bin/openapi
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

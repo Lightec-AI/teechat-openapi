@@ -1,0 +1,16 @@
+[package]
+name = "openapi-tls-ceremony"
+description = "In-guest ACME TLS seal ceremony for prod-openapi CVM"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "openapi-tls-ceremony"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+openapi-platform-cvm = { path = "../../crates/openapi-platform-cvm" }

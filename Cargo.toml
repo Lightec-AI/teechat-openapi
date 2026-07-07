@@ -11,6 +11,7 @@ members = [
     "bins/openapi-enclave",
     "bins/seal-tls-key",
     "bins/seal-tls-key-sgx",
+    "bins/openapi-tls-ceremony",
 ]
 
 [workspace.package]
