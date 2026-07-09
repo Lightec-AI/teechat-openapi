@@ -1,0 +1,220 @@
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use serde::{Deserialize, Serialize};
+
+use crate::error::ApiError;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenApiKeyPolicy {
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default = "default_rpm")]
+    pub rpm: u32,
+}
+
+fn default_rpm() -> u32 {
+    120
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SignedAuthz {
+    pub authz_version: u32,
+    pub key_id: String,
+    pub key_hash_hex: String,
+    pub account_id: String,
+    pub policy: OpenApiKeyPolicy,
+    pub exp_ms: u64,
+    pub epoch: u64,
+    pub signature_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct UnsignedAuthz {
+    authz_version: u32,
+    key_id: String,
+    key_hash_hex: String,
+    account_id: String,
+    policy: OpenApiKeyPolicy,
+    exp_ms: u64,
+    epoch: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SignedRevocation {
+    pub revoke_version: u32,
+    pub key_id: String,
+    pub revoked_at_ms: u64,
+    pub epoch: u64,
+    pub signature_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct UnsignedRevocation {
+    revoke_version: u32,
+    key_id: String,
+    revoked_at_ms: u64,
+    epoch: u64,
+}
+
+impl SignedAuthz {
+    pub fn unsigned_bytes(&self) -> Result<Vec<u8>, ApiError> {
+        let unsigned = UnsignedAuthz {
+            authz_version: self.authz_version,
+            key_id: self.key_id.clone(),
+            key_hash_hex: self.key_hash_hex.clone(),
+            account_id: self.account_id.clone(),
+            policy: self.policy.clone(),
+            exp_ms: self.exp_ms,
+            epoch: self.epoch,
+        };
+        serde_json::to_vec(&unsigned).map_err(|e| ApiError::Internal(e.to_string()))
+    }
+
+    pub fn verify_signature(&self, verify_key: &VerifyingKey) -> Result<(), ApiError> {
+        verify_family_b(&self.unsigned_bytes()?, &self.signature_hex, verify_key)
+    }
+}
+
+impl SignedRevocation {
+    pub fn unsigned_bytes(&self) -> Result<Vec<u8>, ApiError> {
+        let unsigned = UnsignedRevocation {
+            revoke_version: self.revoke_version,
+            key_id: self.key_id.clone(),
+            revoked_at_ms: self.revoked_at_ms,
+            epoch: self.epoch,
+        };
+        serde_json::to_vec(&unsigned).map_err(|e| ApiError::Internal(e.to_string()))
+    }
+
+    pub fn verify_signature(&self, verify_key: &VerifyingKey) -> Result<(), ApiError> {
+        verify_family_b(&self.unsigned_bytes()?, &self.signature_hex, verify_key)
+    }
+}
+
+/// Build a signed authz for unit tests (same canonical JSON as verification).
+#[cfg(any(test, feature = "test-utils"))]
+pub fn sign_test_authz(
+    key_id: &str,
+    key_hash_hex: &str,
+    exp_ms: u64,
+    signing_key: &ed25519_dalek::SigningKey,
+) -> SignedAuthz {
+    use ed25519_dalek::Signer;
+
+    let unsigned = UnsignedAuthz {
+        authz_version: 1,
+        key_id: key_id.into(),
+        key_hash_hex: key_hash_hex.into(),
+        account_id: "usr".into(),
+        policy: OpenApiKeyPolicy {
+            models: vec!["*".into()],
+            rpm: 120,
+        },
+        exp_ms,
+        epoch: 1,
+    };
+    let payload = serde_json::to_vec(&unsigned).unwrap();
+    let sig = signing_key.sign(&payload);
+    SignedAuthz {
+        authz_version: unsigned.authz_version,
+        key_id: unsigned.key_id,
+        key_hash_hex: unsigned.key_hash_hex,
+        account_id: unsigned.account_id,
+        policy: unsigned.policy,
+        exp_ms: unsigned.exp_ms,
+        epoch: unsigned.epoch,
+        signature_hex: hex::encode(sig.to_bytes()),
+    }
+}
+
+/// Build a signed revocation for unit tests.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn sign_test_revocation(
+    key_id: &str,
+    revoked_at_ms: u64,
+    epoch: u64,
+    signing_key: &ed25519_dalek::SigningKey,
+) -> SignedRevocation {
+    use ed25519_dalek::Signer;
+
+    let unsigned = UnsignedRevocation {
+        revoke_version: 1,
+        key_id: key_id.into(),
+        revoked_at_ms,
+        epoch,
+    };
+    let payload = serde_json::to_vec(&unsigned).unwrap();
+    let sig = signing_key.sign(&payload);
+    SignedRevocation {
+        revoke_version: unsigned.revoke_version,
+        key_id: unsigned.key_id,
+        revoked_at_ms: unsigned.revoked_at_ms,
+        epoch: unsigned.epoch,
+        signature_hex: hex::encode(sig.to_bytes()),
+    }
+}
+
+pub fn verify_family_b(payload: &[u8], signature_hex: &str, verify_key: &VerifyingKey) -> Result<(), ApiError> {
+    let sig_bytes = hex::decode(signature_hex)
+        .map_err(|e| ApiError::Internal(format!("invalid signature hex: {e}")))?;
+    let signature = Signature::from_slice(&sig_bytes)
+        .map_err(|e| ApiError::Internal(format!("invalid signature: {e}")))?;
+    verify_key
+        .verify(payload, &signature)
+        .map_err(|_| ApiError::Internal("family B signature invalid".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+    use rand::rngs::OsRng;
+
+    #[test]
+    fn authz_signature_roundtrip() {
+        let signing = SigningKey::generate(&mut OsRng);
+        let verify_key = signing.verifying_key();
+        let unsigned = UnsignedAuthz {
+            authz_version: 1,
+            key_id: "tcak_test01".into(),
+            key_hash_hex: "abc".into(),
+            account_id: "usr".into(),
+            policy: OpenApiKeyPolicy {
+                models: vec!["*".into()],
+                rpm: 120,
+            },
+            exp_ms: 1_700_003_600_000,
+            epoch: 42,
+        };
+        let payload = serde_json::to_vec(&unsigned).unwrap();
+        let sig = signing.sign(&payload);
+        let signed = SignedAuthz {
+            authz_version: unsigned.authz_version,
+            key_id: unsigned.key_id.clone(),
+            key_hash_hex: unsigned.key_hash_hex.clone(),
+            account_id: unsigned.account_id.clone(),
+            policy: unsigned.policy.clone(),
+            exp_ms: unsigned.exp_ms,
+            epoch: unsigned.epoch,
+            signature_hex: hex::encode(sig.to_bytes()),
+        };
+        signed.verify_signature(&verify_key).unwrap();
+    }
+
+    #[test]
+    fn cross_lang_fixture_authz() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../test-fixtures/openapi-cross-sign.json"
+        );
+        let raw = std::fs::read_to_string(path).expect("fixture");
+        let fixture: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let verify_hex = fixture["verify_key_hex"].as_str().unwrap();
+        let verify_bytes = hex::decode(verify_hex).unwrap();
+        let verify_key = ed25519_dalek::VerifyingKey::from_bytes(verify_bytes.as_slice().try_into().unwrap()).unwrap();
+        let signed: SignedAuthz = serde_json::from_value(fixture["signed_authz"].clone()).unwrap();
+        signed.verify_signature(&verify_key).unwrap();
+        let payload_hex = fixture["unsigned_authz_bytes_hex"].as_str().unwrap();
+        let payload = hex::decode(payload_hex).unwrap();
+        assert_eq!(signed.unsigned_bytes().unwrap(), payload);
+    }
+}

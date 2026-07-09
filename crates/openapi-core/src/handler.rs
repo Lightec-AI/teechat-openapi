@@ -6,6 +6,7 @@ use rand::RngCore;
 use serde_json::Value;
 
 use crate::auth::{AuthContext, Authenticator};
+use crate::remote_auth::EdgeAuthenticator;
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::limits::{Limits, RateLimiter};
@@ -116,7 +117,7 @@ where
 {
     config: Config,
     limits: Limits,
-    authenticator: Authenticator,
+    authenticator: EdgeAuthenticator,
     upstream: U,
     platform: P,
     usage_signer: UsageSigner,
@@ -131,7 +132,7 @@ where
     pub fn new(
         config: Config,
         limits: Limits,
-        authenticator: Authenticator,
+        authenticator: EdgeAuthenticator,
         upstream: U,
         platform: P,
         usage_signer: UsageSigner,
@@ -483,7 +484,7 @@ mod tests {
         App::new(
             Config::default(),
             Limits::default(),
-            Authenticator::new(catalog),
+            EdgeAuthenticator::from_catalog(Authenticator::new(catalog)),
             upstream,
             TestPlatform,
             UsageSigner::from_seed([1u8; 32]),

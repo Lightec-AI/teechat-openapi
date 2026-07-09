@@ -6,6 +6,7 @@ pub struct AuthContext {
     pub key_id: String,
 }
 
+#[derive(Debug)]
 pub struct Authenticator {
     catalog: KeyCatalog,
 }

@@ -106,6 +106,7 @@ mod tests {
     use base64::Engine;
     use ed25519_dalek::SigningKey;
     use openapi_core::auth::Authenticator;
+    use openapi_core::remote_auth::EdgeAuthenticator;
     use openapi_core::catalog::{hash_api_key, sign_test_catalog, KeyCatalog, KeyRecord};
     use openapi_core::config::Config;
     use openapi_core::handler::UpstreamResponse;
@@ -167,7 +168,7 @@ mod tests {
         Arc::new(App::new(
             Config::default(),
             Limits::default(),
-            Authenticator::new(catalog),
+            EdgeAuthenticator::from_catalog(Authenticator::new(catalog)),
             TestUpstream,
             TestPlatform,
             UsageSigner::from_seed([5u8; 32]),
