@@ -50,7 +50,9 @@ pub fn run() -> anyhow::Result<()> {
     let app = Arc::new(App::new(
         env.config(),
         env.limits(),
-        env.authenticator().context("catalog")?,
+        openapi_core::remote_auth::EdgeAuthenticator::from_catalog(
+            env.authenticator().context("catalog")?,
+        ),
         upstream,
         platform,
         env.usage_signer().context("usage signer")?,

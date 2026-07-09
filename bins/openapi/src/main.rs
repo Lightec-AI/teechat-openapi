@@ -41,10 +41,20 @@ fn main() -> anyhow::Result<()> {
         &tls_spki,
     );
 
+    let authenticator = env.edge_authenticator().context("auth")?;
+
+    if let (Some(push_addr), Some(remote)) = (
+        env.push_listen_addr.as_ref(),
+        authenticator.remote_arc(),
+    ) {
+        openapi_platform_cvm::spawn_push_listener(push_addr.clone(), remote)
+            .context("push listener")?;
+    }
+
     let app = Arc::new(App::new(
         env.config(),
         env.limits(),
-        env.authenticator().context("catalog")?,
+        authenticator,
         UreqUpstream::new(env.upstream_base_url.clone()),
         platform,
         env.usage_signer().context("usage signer")?,

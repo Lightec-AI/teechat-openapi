@@ -9,6 +9,7 @@ use openapi_core::auth::Authenticator;
 use openapi_core::catalog::{KeyCatalog, SignedKeyCatalog};
 use openapi_core::config::Config;
 use openapi_core::limits::Limits;
+use openapi_core::remote_auth::EdgeAuthenticator;
 use openapi_core::usage::UsageSigner;
 use thiserror::Error;
 
@@ -17,8 +18,12 @@ pub struct EdgeEnv {
     pub listen_addr: String,
     pub region: String,
     pub upstream_base_url: String,
-    pub catalog_path: String,
+    pub catalog_path: Option<String>,
     pub catalog_verify_key_hex: String,
+    pub auth_mode: OpenApiAuthMode,
+    pub l0_authorize_url: Option<String>,
+    pub l0_internal_token: Option<String>,
+    pub push_listen_addr: Option<String>,
     pub usage_sign_seed_hex: String,
     pub build_version: String,
     pub code_hash: String,
@@ -31,6 +36,21 @@ pub struct EdgeEnv {
     pub seal_root_hex: Option<String>,
     pub max_body_bytes: usize,
     pub requests_per_minute: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenApiAuthMode {
+    Catalog,
+    Remote,
+}
+
+impl OpenApiAuthMode {
+    fn parse(raw: &str) -> Self {
+        match raw.trim().to_lowercase().as_str() {
+            "remote" | "d6" => Self::Remote,
+            _ => Self::Catalog,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -70,7 +90,11 @@ impl EdgeEnv {
     }
 
     pub fn load_catalog(&self) -> Result<KeyCatalog, EnvError> {
-        let raw = fs::read_to_string(&self.catalog_path)?;
+        let path = self
+            .catalog_path
+            .as_ref()
+            .ok_or_else(|| EnvError::Missing("OPENAPI_CATALOG_PATH"))?;
+        let raw = fs::read_to_string(path)?;
         let signed: SignedKeyCatalog = serde_json::from_str(&raw)
             .map_err(|e| EnvError::Catalog(format!("parse catalog: {e}")))?;
         let verify_bytes = hex::decode(&self.catalog_verify_key_hex)
@@ -85,6 +109,32 @@ impl EdgeEnv {
         KeyCatalog::from_signed(signed, verify_key).map_err(|e| EnvError::Catalog(e.to_string()))
     }
 
+    pub fn edge_authenticator(&self) -> Result<EdgeAuthenticator, EnvError> {
+        match self.auth_mode {
+            OpenApiAuthMode::Catalog => Ok(EdgeAuthenticator::from_catalog(
+                Authenticator::new(self.load_catalog()?),
+            )),
+            OpenApiAuthMode::Remote => {
+                let authorize_url = self
+                    .l0_authorize_url
+                    .clone()
+                    .ok_or(EnvError::Missing("OPENAPI_L0_AUTHORIZE_URL"))?;
+                let token = self
+                    .l0_internal_token
+                    .clone()
+                    .ok_or(EnvError::Missing("OPENAPI_L0_INTERNAL_TOKEN"))?;
+                let remote = crate::remote_client::build_remote_authenticator(
+                    &self.catalog_verify_key_hex,
+                    authorize_url,
+                    token,
+                )
+                .map_err(|e| EnvError::Catalog(e.to_string()))?;
+                Ok(EdgeAuthenticator::from_remote(remote))
+            }
+        }
+    }
+
+    /** @deprecated Use `edge_authenticator` — file catalog mode only. */
     pub fn authenticator(&self) -> Result<Authenticator, EnvError> {
         Ok(Authenticator::new(self.load_catalog()?))
     }
@@ -134,12 +184,25 @@ pub fn load_edge_env() -> Result<EdgeEnv, EnvError> {
         std::env::var(name).ok().filter(|s| !s.is_empty())
     }
 
+    let auth_mode = OpenApiAuthMode::parse(
+        &opt("OPENAPI_AUTH_MODE").unwrap_or_else(|| "catalog".into()),
+    );
+    let catalog_path = if auth_mode == OpenApiAuthMode::Catalog {
+        Some(req("OPENAPI_CATALOG_PATH")?)
+    } else {
+        opt("OPENAPI_CATALOG_PATH")
+    };
+
     Ok(EdgeEnv {
         listen_addr: opt("OPENAPI_LISTEN_ADDR").unwrap_or_else(|| "0.0.0.0:8443".into()),
         region: opt("OPENAPI_REGION").unwrap_or_else(|| "global".into()),
         upstream_base_url: req("OPENAPI_UPSTREAM_BASE_URL")?,
-        catalog_path: req("OPENAPI_CATALOG_PATH")?,
+        catalog_path,
         catalog_verify_key_hex: req("OPENAPI_CATALOG_VERIFY_KEY_HEX")?,
+        auth_mode,
+        l0_authorize_url: opt("OPENAPI_L0_AUTHORIZE_URL"),
+        l0_internal_token: opt("OPENAPI_L0_INTERNAL_TOKEN"),
+        push_listen_addr: opt("OPENAPI_PUSH_LISTEN_ADDR"),
         usage_sign_seed_hex: req("OPENAPI_USAGE_SIGN_SEED_HEX")?,
         build_version: opt("OPENAPI_BUILD_VERSION").unwrap_or_else(|| "dev".into()),
         code_hash: opt("OPENAPI_CODE_HASH").unwrap_or_else(|| "unknown".into()),
