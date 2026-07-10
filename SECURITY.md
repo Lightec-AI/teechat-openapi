@@ -48,14 +48,16 @@ OPENAPI_MRENCLAVE=... ./scripts/seal-tls-key-sgx.sh key.pem tls-key.sealed.json
 
 **OpenAI-compatible default:** most `base_url` + API key clients **skip** attestation. That is **normally acceptable** for this product: TLS still terminates in the TEE, and **`POST /v1/attestation/challenge` is public** (no API key) so anyone can independently check the live measurement against the published manifest. Skipping does **not** prove *your* connection was verified — only that verification is optional and externally auditable.
 
-**If your client verifies attestation** (auditors, monitors, custom integrators):
+**If your client verifies attestation** (auditors, monitors, custom integrators), use the **hybrid** policy — not a challenge on every prompt:
 
-Edge upgrades may use **in-place restart** or (future) **blue/green** connection drain. Either path **can change the TEE measurement** (and during a soak window the published manifest may allowlist more than one).
+Edge upgrades may use **in-place restart** or (future) **blue/green** connection drain. Either path **can change the TEE measurement** (and during a soak window the published manifest may allowlist more than one). Watching TLS peer SPKI alone is **not** enough (same cert can span measurement changes).
 
-1. Run a **fresh challenge at the beginning of every new TLS session**.
-2. Pin the quote to **this connection’s** peer certificate SPKI (and the current measurement allowlist).
-3. Do **not** cache “hostname → measurement” across reconnects, load-balancer flips, or process restarts.
-4. Do **not** treat a challenge observed on another connection (or by a public monitor) as proof for your session.
+1. On each new TLS session, read **peer SPKI** from the handshake.
+2. Run `POST /v1/attestation/challenge` when SPKI is **unknown or changed**, when the published **manifest allowlist/epoch** changed, or when trust **TTL** expired (recommend ≤ 1 hour).
+3. Require the challenge response’s TLS SPKI hash to match **this connection’s** peer SPKI; pin measurement to the allowlist; cache `(SPKI → measurement, expiry)`.
+4. If SPKI is unchanged and cache is valid, **skip** the challenge for that session.
+5. Do **not** cache “hostname → measurement” without SPKI; do **not** treat another connection’s (or a public monitor’s) challenge as proof for yours.
+6. Do **not** re-challenge on every prompt once the session is trusted.
 
 ### TLS wire protocol
 
