@@ -44,6 +44,19 @@ OPENAPI_MRENCLAVE=... ./scripts/seal-tls-key-sgx.sh key.pem tls-key.sealed.json
 
 `POST /v1/attestation/challenge` returns edge identity (measurement, code hash, TLS SPKI, build version) bound to a client nonce. SGX deployments include an enclave REPORT in `quote_b64` when running on hardware.
 
+### Integrator reminder — attestation
+
+**OpenAI-compatible default:** most `base_url` + API key clients **skip** attestation. That is **normally acceptable** for this product: TLS still terminates in the TEE, and **`POST /v1/attestation/challenge` is public** (no API key) so anyone can independently check the live measurement against the published manifest. Skipping does **not** prove *your* connection was verified — only that verification is optional and externally auditable.
+
+**If your client verifies attestation** (auditors, monitors, custom integrators):
+
+Edge upgrades may use **in-place restart** or (future) **blue/green** connection drain. Either path **can change the TEE measurement** (and during a soak window the published manifest may allowlist more than one).
+
+1. Run a **fresh challenge at the beginning of every new TLS session**.
+2. Pin the quote to **this connection’s** peer certificate SPKI (and the current measurement allowlist).
+3. Do **not** cache “hostname → measurement” across reconnects, load-balancer flips, or process restarts.
+4. Do **not** treat a challenge observed on another connection (or by a public monitor) as proof for your session.
+
 ### TLS wire protocol
 
 The edge **server** negotiates **TLS 1.3 only**:
