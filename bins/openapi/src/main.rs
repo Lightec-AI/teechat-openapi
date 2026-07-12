@@ -183,6 +183,9 @@ fn serve_tls<U, P>(
                     req.headers.get("authorization").map(String::as_str),
                     &req.body,
                     client_ip,
+                    req.headers
+                        .get("x-teechat-challenge-bench")
+                        .map(String::as_str),
                 );
                 let _ = tls_stream.write_all(&response);
                 let _ = tls_stream.flush();

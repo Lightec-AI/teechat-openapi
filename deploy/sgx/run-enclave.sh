@@ -48,6 +48,10 @@ ARGS=(
 [[ -n "${OPENAPI_TLS_CERT_PATH:-}" ]] && ARGS+=("OPENAPI_TLS_CERT_PATH=${OPENAPI_TLS_CERT_PATH}")
 [[ -n "${OPENAPI_DCAP_HELPER_URL:-}" ]] && ARGS+=("OPENAPI_DCAP_HELPER_URL=${OPENAPI_DCAP_HELPER_URL}")
 [[ -n "${RUST_LOG:-}" ]] && ARGS+=("RUST_LOG=${RUST_LOG}")
+# Challenge rate limits (0 = unlimited for bench). Fortanix does not inherit host env.
+[[ -n "${OPENAPI_CHALLENGE_RPM:-}" ]] && ARGS+=("OPENAPI_CHALLENGE_RPM=${OPENAPI_CHALLENGE_RPM}")
+[[ -n "${OPENAPI_CHALLENGE_MAX_INFLIGHT:-}" ]] && ARGS+=("OPENAPI_CHALLENGE_MAX_INFLIGHT=${OPENAPI_CHALLENGE_MAX_INFLIGHT}")
+[[ -n "${OPENAPI_CHALLENGE_BENCH_TOKEN:-}" ]] && ARGS+=("OPENAPI_CHALLENGE_BENCH_TOKEN=${OPENAPI_CHALLENGE_BENCH_TOKEN}")
 
 # Default DCAP helper for ECDSA quotes (host openapi-dcap-helper).
 if [[ -z "${OPENAPI_DCAP_HELPER_URL:-}" ]]; then

@@ -81,6 +81,9 @@ where
                     req.headers.get("authorization").map(String::as_str),
                     &req.body,
                     client_ip.as_deref(),
+                    req.headers
+                        .get("x-teechat-challenge-bench")
+                        .map(String::as_str),
                     &mut stream,
                 )?;
                 stream.flush()?;
@@ -114,7 +117,7 @@ where
     U: UpstreamForwarder,
     P: AttestationPlatform,
 {
-    dispatch_request_from(app, method, path, authorization, body, None)
+    dispatch_request_from(app, method, path, authorization, body, None, None)
 }
 
 pub fn dispatch_request_from<U, P>(
@@ -124,14 +127,23 @@ pub fn dispatch_request_from<U, P>(
     authorization: Option<&str>,
     body: &[u8],
     client_ip: Option<&str>,
+    challenge_bench_header: Option<&str>,
 ) -> Vec<u8>
 where
     U: UpstreamForwarder,
     P: AttestationPlatform,
 {
     let mut buf = Vec::new();
-    if let Err(e) = dispatch_to_writer(app, method, path, authorization, body, client_ip, &mut buf)
-    {
+    if let Err(e) = dispatch_to_writer(
+        app,
+        method,
+        path,
+        authorization,
+        body,
+        client_ip,
+        challenge_bench_header,
+        &mut buf,
+    ) {
         return build_error_response(ApiError::Internal(e.to_string()));
     }
     buf
@@ -144,6 +156,7 @@ pub fn dispatch_to_writer<U, P, W: Write + ?Sized>(
     authorization: Option<&str>,
     body: &[u8],
     client_ip: Option<&str>,
+    challenge_bench_header: Option<&str>,
     out: &mut W,
 ) -> Result<(), ServerError>
 where
@@ -156,13 +169,14 @@ where
         .unwrap_or(0);
 
     let http_method = HttpMethod::parse(method);
-    match app.handle_from(
+    match app.handle_from_ex(
         http_method.clone(),
         path,
         authorization,
         body,
         now_ms,
         client_ip,
+        challenge_bench_header,
     ) {
         Ok(AppResponse::Json(body)) => {
             let bytes = serde_json::to_vec(&body).unwrap_or_default();

@@ -165,6 +165,9 @@ pub fn serve_connection<U, P>(
                     req.headers.get("authorization").map(String::as_str),
                     &req.body,
                     client_ip,
+                    req.headers
+                        .get("x-teechat-challenge-bench")
+                        .map(String::as_str),
                     conn,
                 )
                 .is_err()

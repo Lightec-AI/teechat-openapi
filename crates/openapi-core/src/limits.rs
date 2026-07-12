@@ -9,9 +9,14 @@ pub struct Limits {
     pub requests_per_minute: u32,
     pub max_body_bytes: usize,
     /// Public `POST /v1/attestation/challenge` per client IP (or shared `unknown`).
+    /// `0` disables the per-IP limiter (bench / emergency).
     pub challenge_requests_per_minute: u32,
     /// Max concurrent challenge handlers (SNP/DCAP quotes are expensive).
+    /// `0` disables the in-flight cap (bench / emergency).
     pub challenge_max_inflight: u32,
+    /// If set, requests carrying matching `X-TeeChat-Challenge-Bench` bypass
+    /// challenge RPM + in-flight limits (for controlled benchmarks).
+    pub challenge_bench_token: Option<String>,
 }
 
 impl Default for Limits {
@@ -22,6 +27,7 @@ impl Default for Limits {
             // Hybrid verifiers challenge rarely; monitors need a few probes/min.
             challenge_requests_per_minute: 10,
             challenge_max_inflight: 4,
+            challenge_bench_token: None,
         }
     }
 }
@@ -47,8 +53,9 @@ impl RateLimiter {
     }
 
     pub fn check(&self, key_id: &str) -> Result<(), ApiError> {
+        // 0 = unlimited (temporary bench / ops override).
         if self.rpm == 0 {
-            return Err(ApiError::RateLimited);
+            return Ok(());
         }
         let mut buckets = self.buckets.lock().expect("rate limiter lock");
         let now = Instant::now();
@@ -78,30 +85,44 @@ pub struct InflightGate {
     current: Mutex<u32>,
 }
 
-pub struct InflightPermit<'a> {
-    gate: &'a InflightGate,
-}
-
 impl InflightGate {
     pub fn new(max: u32) -> Self {
         Self {
-            max: max.max(1),
+            max,
             current: Mutex::new(0),
         }
     }
 
     pub fn try_acquire(&self) -> Result<InflightPermit<'_>, ApiError> {
+        // 0 = unlimited.
+        if self.max == 0 {
+            return Ok(InflightPermit {
+                gate: self,
+                active: false,
+            });
+        }
         let mut cur = self.current.lock().expect("inflight lock");
         if *cur >= self.max {
             return Err(ApiError::RateLimited);
         }
         *cur += 1;
-        Ok(InflightPermit { gate: self })
+        Ok(InflightPermit {
+            gate: self,
+            active: true,
+        })
     }
+}
+
+pub struct InflightPermit<'a> {
+    gate: &'a InflightGate,
+    active: bool,
 }
 
 impl Drop for InflightPermit<'_> {
     fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
         if let Ok(mut cur) = self.gate.current.lock() {
             *cur = cur.saturating_sub(1);
         }

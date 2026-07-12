@@ -38,6 +38,7 @@ pub struct EdgeEnv {
     pub requests_per_minute: u32,
     pub challenge_requests_per_minute: u32,
     pub challenge_max_inflight: u32,
+    pub challenge_bench_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +91,7 @@ impl EdgeEnv {
             max_body_bytes: self.max_body_bytes,
             challenge_requests_per_minute: self.challenge_requests_per_minute,
             challenge_max_inflight: self.challenge_max_inflight,
+            challenge_bench_token: self.challenge_bench_token.clone(),
         }
     }
 
@@ -228,6 +230,7 @@ pub fn load_edge_env() -> Result<EdgeEnv, EnvError> {
         challenge_max_inflight: opt("OPENAPI_CHALLENGE_MAX_INFLIGHT")
             .and_then(|v| v.parse().ok())
             .unwrap_or(4),
+        challenge_bench_token: opt("OPENAPI_CHALLENGE_BENCH_TOKEN"),
     })
 }
 

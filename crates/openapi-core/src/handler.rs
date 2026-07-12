@@ -179,12 +179,28 @@ where
         now_ms: u64,
         client_ip: Option<&str>,
     ) -> Result<AppResponse, ApiError> {
+        self.handle_from_ex(method, path, authorization, body, now_ms, client_ip, None)
+    }
+
+    /// Full request context including optional challenge bench bypass token.
+    pub fn handle_from_ex(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        authorization: Option<&str>,
+        body: &[u8],
+        now_ms: u64,
+        client_ip: Option<&str>,
+        challenge_bench_header: Option<&str>,
+    ) -> Result<AppResponse, ApiError> {
         match classify(method.clone(), path) {
             RouteAction::Health => Ok(AppResponse::Json(serde_json::json!({
                 "status": "ok",
                 "region": self.config.region,
             }))),
-            RouteAction::Attestation => self.handle_attestation(body, client_ip),
+            RouteAction::Attestation => {
+                self.handle_attestation(body, client_ip, challenge_bench_header)
+            }
             RouteAction::ModelsList => {
                 let auth = self.authenticator.authenticate_bearer(authorization)?;
                 self.enforce_rate_limit(&auth)?;
@@ -318,16 +334,33 @@ where
         &self,
         body: &[u8],
         client_ip: Option<&str>,
+        challenge_bench_header: Option<&str>,
     ) -> Result<AppResponse, ApiError> {
         use openapi_platform::CHALLENGE_NONCE_LEN;
 
-        // Keep challenge public (no API key / TeeChat JWT) — rate-limit by IP instead.
-        let ip_key = client_ip
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("unknown");
-        self.challenge_rate_limiter.check(ip_key)?;
-        let _inflight = self.challenge_inflight.try_acquire()?;
+        let bench_bypass = match (
+            self.limits.challenge_bench_token.as_deref(),
+            challenge_bench_header,
+        ) {
+            (Some(expected), Some(got))
+                if !expected.is_empty()
+                    && subtle_constant_time_eq(expected.as_bytes(), got.as_bytes()) =>
+            {
+                true
+            }
+            _ => false,
+        };
+
+        let _inflight = if bench_bypass {
+            None
+        } else {
+            let ip_key = client_ip
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("unknown");
+            self.challenge_rate_limiter.check(ip_key)?;
+            Some(self.challenge_inflight.try_acquire()?)
+        };
 
         self.limits.validate_body_size(body.len())?;
         if body.is_empty() {
@@ -353,6 +386,17 @@ where
             .map_err(|e| ApiError::Internal(e.to_string()))?;
         Ok(AppResponse::Json(serde_json::to_value(attestation).unwrap()))
     }
+}
+
+fn subtle_constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 fn upstream_to_json_response(upstream: UpstreamResponse) -> AppResponse {
