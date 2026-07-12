@@ -60,8 +60,11 @@ fn snp_report_linux(report_data: &[u8; REPORT_DATA_LEN]) -> Result<Vec<u8>, Plat
     let out = Command::new(&snpguest)
         .args([
             "report",
-            request.to_str().unwrap_or("/dev/null"),
+            // snpguest 0.10: report <att-report-path> <request-file>
             tmp.to_str().unwrap_or("/dev/null"),
+            request.to_str().unwrap_or("/dev/null"),
+            "-v",
+            "0",
         ])
         .output()
         .map_err(|e| PlatformError::Attestation(format!("snpguest spawn: {e}")))?;
