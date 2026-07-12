@@ -117,10 +117,11 @@ fn main() -> Result<()> {
 }
 
 fn handle_client(state: &Mutex<QuoteState>, mut stream: TcpStream) -> Result<()> {
-    let mut buf = Vec::new();
-    stream
-        .read_to_end(&mut buf)
-        .context("read request")?;
+    // Do not use read_to_end: HTTP clients keep the socket open awaiting a
+    // response, so EOF never arrives and both sides deadlock.
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(30)));
+    let buf = read_http_request(&mut stream).context("read request")?;
     let req = String::from_utf8_lossy(&buf);
     let mut lines = req.split("\r\n");
     let request_line = lines.next().unwrap_or("");
@@ -139,11 +140,7 @@ fn handle_client(state: &Mutex<QuoteState>, mut stream: TcpStream) -> Result<()>
             let quote = state.lock().unwrap().quote(report)?;
             (200, quote, "application/octet-stream")
         }
-        _ => (
-            404,
-            b"not found".to_vec(),
-            "text/plain",
-        ),
+        _ => (404, b"not found".to_vec(), "text/plain"),
     };
 
     let reason = match status {
@@ -159,6 +156,55 @@ fn handle_client(state: &Mutex<QuoteState>, mut stream: TcpStream) -> Result<()>
     stream.write_all(&body)?;
     stream.flush()?;
     Ok(())
+}
+
+fn read_http_request(stream: &mut TcpStream) -> Result<Vec<u8>> {
+    let mut buf = Vec::with_capacity(4096);
+    let mut tmp = [0u8; 1024];
+    let header_end = loop {
+        let n = stream.read(&mut tmp).context("read")?;
+        if n == 0 {
+            bail!("client closed before complete HTTP request");
+        }
+        buf.extend_from_slice(&tmp[..n]);
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos + 4;
+        }
+        if buf.len() > 64 * 1024 {
+            bail!("HTTP headers too large");
+        }
+    };
+
+    let content_length = {
+        let header = std::str::from_utf8(&buf[..header_end]).unwrap_or("");
+        header
+            .lines()
+            .find_map(|line| {
+                let (k, v) = line.split_once(':')?;
+                if k.eq_ignore_ascii_case("content-length") {
+                    v.trim().parse::<usize>().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0)
+    };
+
+    while buf.len() < header_end + content_length {
+        let n = stream.read(&mut tmp).context("read body")?;
+        if n == 0 {
+            bail!(
+                "client closed before complete body (have {} need {})",
+                buf.len().saturating_sub(header_end),
+                content_length
+            );
+        }
+        buf.extend_from_slice(&tmp[..n]);
+        if buf.len() > 256 * 1024 {
+            bail!("HTTP body too large");
+        }
+    }
+    Ok(buf)
 }
 
 fn extract_body(raw: &[u8]) -> Result<Vec<u8>> {
