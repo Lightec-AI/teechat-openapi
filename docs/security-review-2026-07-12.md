@@ -15,15 +15,15 @@
 
 ## 1. Summary
 
-| Severity | Open at review | Status after Option A (`566d96e`) |
+| Severity | Open at review | Status after remediations |
 |----------|---------------:|-----------------------------------|
 | Critical | 0 | — |
-| High | 4 | **2 mitigated / partial** (ATT-001, ATT-002); **2 open** (NET-001, AUTH-001) |
+| High | 4 | **3 mitigated** (ATT-001, ATT-002, AUTH-001); **1 open** (NET-001) |
 | Medium | 7 | **1 mitigated** (ATT-003 via hardware binding); **6 open** |
 | Low | 1 | open (TLS-001) |
 | Info / positive | 1 | unchanged (CRYPTO-001) |
 
-**Verdict (updated):** Attestation binding (ATT-001/002/003) is addressed in-tree for the Option A challenge path. Residual high risk is now **L0 policy enforcement (AUTH-001)** and **push / accept hardening (NET-001, DOS-001)**, plus metering and ops guards.
+**Verdict (updated):** Attestation binding (ATT-001/002/003) and L0 policy enforcement (AUTH-001) are addressed in-tree. Residual high risk is **push / accept hardening (NET-001, DOS-001)**, plus metering and ops guards.
 
 ---
 
@@ -69,11 +69,11 @@
 
 ### AUTH-001 — High — L0 `SignedAuthz.policy` (models / rpm) not enforced
 
-- **Status:** **Open** (unchanged by Option A).
-- **Location:** `crates/openapi-core/src/authz.rs`, `remote_auth.rs`
-- **Detail:** `OpenApiKeyPolicy { models, rpm }` is inside the signed authz blob, but the edge only checks signature, expiry, hash match, and revocations. RPM uses global `OPENAPI_REQUESTS_PER_MINUTE`.
+- **Status:** **Mitigated** — edge enforces `policy.models` on inference/proxy POST and `min(global, policy.rpm)` per `key_id` (`OpenApiKeyPolicy::effective_rpm`). Catalog auth uses unrestricted policy (`models: ["*"]`, `rpm: 0`). Disallowed model → `403` / `model_not_allowed`.
+- **Location:** `crates/openapi-core/src/authz.rs`, `auth.rs`, `remote_auth.rs`, `handler.rs`, `limits.rs`
+- **Detail:** `OpenApiKeyPolicy { models, rpm }` is inside the signed authz blob, but the edge only checked signature, expiry, hash match, and revocations. RPM used global `OPENAPI_REQUESTS_PER_MINUTE`.
 - **Impact:** Restricted keys can still hit any model / higher RPM than L0 intended.
-- **Remediation:** Enforce `policy.models` on inference/proxy; `min(global rpm, policy.rpm)`; Forbidden on violation.
+- **Remediation:** Enforce `policy.models` on inference/proxy; `min(global rpm, policy.rpm)`; Forbidden on violation. **Done.**
 
 ### PROXY-001 — Medium — Authenticated transparent `/v1/*` proxy is broad
 
@@ -145,7 +145,7 @@
 | Priority | IDs | Work |
 |----------|-----|------|
 | P0 | ATT-001 | DCAP ECDSA wired; keep PCCS/helper healthy in ops |
-| P0 | AUTH-001 | Enforce L0 models/rpm at edge |
+| P0 | AUTH-001 | **Done** — enforce L0 models/rpm at edge |
 | P1 | NET-001, DOS-001 | Push auth + CVM bounded accept |
 | P1 | ATT-002 remaining, METER-001, OPS-001, OPS-002 | SNP ioctl + streaming usage + prod seal guards |
 | P2 | PROXY-001, CFG-001, TLS-001 | Hardening and measured config |
