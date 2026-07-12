@@ -19,6 +19,8 @@ pub struct SgxEdgeEnv {
     pub region: String,
     pub upstream_base_url: String,
     pub catalog_path: String,
+    /// Inline catalog JSON (Fortanix: no host filesystem). Takes precedence over path.
+    pub catalog_json: Option<String>,
     pub catalog_verify_key_hex: String,
     pub usage_sign_seed_hex: String,
     pub build_version: String,
@@ -65,7 +67,11 @@ impl SgxEdgeEnv {
     }
 
     pub fn load_catalog(&self) -> Result<KeyCatalog, EnvError> {
-        let raw = fs::read_to_string(&self.catalog_path)?;
+        let raw = if let Some(json) = &self.catalog_json {
+            json.clone()
+        } else {
+            fs::read_to_string(&self.catalog_path)?
+        };
         let signed: SignedKeyCatalog = serde_json::from_str(&raw)
             .map_err(|e| EnvError::Catalog(format!("parse catalog: {e}")))?;
         let verify_bytes = hex::decode(&self.catalog_verify_key_hex)
@@ -141,11 +147,12 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
         std::env::var(name).ok().filter(|s| !s.is_empty())
     }
 
-    Ok(SgxEdgeEnv {
+    let env = SgxEdgeEnv {
         listen_addr: opt("OPENAPI_LISTEN_ADDR").unwrap_or_else(|| "0.0.0.0:8443".into()),
         region: opt("OPENAPI_REGION").unwrap_or_else(|| "global".into()),
         upstream_base_url: req("OPENAPI_UPSTREAM_BASE_URL")?,
-        catalog_path: req("OPENAPI_CATALOG_PATH")?,
+        catalog_json: opt("OPENAPI_CATALOG_JSON"),
+        catalog_path: opt("OPENAPI_CATALOG_PATH").unwrap_or_default(),
         catalog_verify_key_hex: req("OPENAPI_CATALOG_VERIFY_KEY_HEX")?,
         usage_sign_seed_hex: req("OPENAPI_USAGE_SIGN_SEED_HEX")?,
         build_version: opt("OPENAPI_BUILD_VERSION").unwrap_or_else(|| "dev".into()),
@@ -161,7 +168,11 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
         requests_per_minute: opt("OPENAPI_REQUESTS_PER_MINUTE")
             .and_then(|v| v.parse().ok())
             .unwrap_or(128),
-    })
+    };
+    if env.catalog_json.is_none() && env.catalog_path.is_empty() {
+        return Err(EnvError::Missing("OPENAPI_CATALOG_JSON|OPENAPI_CATALOG_PATH"));
+    }
+    Ok(env)
 }
 
 pub fn parse_seal_root_hex(raw: Option<&str>) -> Result<Option<[u8; 32]>, EnvError> {

@@ -13,9 +13,12 @@ UPSTREAM="${OPENAPI_UPSTREAM_BASE_URL:-http://127.0.0.1:8000}"
 "${ROOT}/deploy/sgx/build-enclave.sh"
 
 INSPECT="${ROOT}/deploy/sgx/last-build-inspect.txt"
-MRENCLAVE="$(grep -i 'mrenclave' "${INSPECT}" | head -1 | awk '{print $NF}' | tr -d '[:space:]')"
+MRENCLAVE="$(grep -Eo 'ENCLAVEHASH:[[:space:]]*[0-9a-fA-F]{64}' "${INSPECT}" | head -1 | awk '{print $NF}' | tr -d '[:space:]')"
 if [[ -z "${MRENCLAVE}" ]]; then
-  echo "Could not parse MRENCLAVE from ${INSPECT}" >&2
+  MRENCLAVE="$(grep -i 'mrenclave' "${INSPECT}" | head -1 | awk '{print $NF}' | tr -d '[:space:]')"
+fi
+if [[ -z "${MRENCLAVE}" ]]; then
+  echo "Could not parse MRENCLAVE/ENCLAVEHASH from ${INSPECT}" >&2
   exit 1
 fi
 
@@ -40,14 +43,16 @@ unsigned = {
 }
 payload = json.dumps(unsigned, separators=(",", ":")).encode()
 catalog = {**unsigned, "signature_hex": sk.sign(payload).signature.hex()}
+compact = json.dumps(catalog, separators=(",", ":"))
 Path(catalog_path).write_text(json.dumps(catalog, indent=2) + "\n")
+Path(catalog_path + ".compact").write_text(compact)
 print(sk.verify_key.encode().hex())
 PY
 )"
 
 export OPENAPI_MRENCLAVE="${MRENCLAVE}"
 export OPENAPI_UPSTREAM_BASE_URL="${UPSTREAM}"
-export OPENAPI_CATALOG_PATH="${DEV_DIR}/catalog.json"
+export OPENAPI_CATALOG_JSON="$(cat "${DEV_DIR}/catalog.json.compact")"
 export OPENAPI_CATALOG_VERIFY_KEY_HEX="${CATALOG_VERIFY}"
 export OPENAPI_USAGE_SIGN_SEED_HEX="${USAGE_SEED}"
 export OPENAPI_LISTEN_ADDR="${OPENAPI_LISTEN_ADDR:-127.0.0.1:18443}"
