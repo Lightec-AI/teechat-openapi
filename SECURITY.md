@@ -61,6 +61,8 @@ Production SGX evidence must be a remotely verifiable **`sgx_dcap_ecdsa`** quote
 2. **Attest** — Edge fills `report_data`, obtains a DCAP/SNP quote (QE/aesmd or SNP device). Quote generation is typically tens to hundreds of milliseconds warm; cold PCCS/aesmd failures should surface as `5xx`, not a fake quote.
 3. **Verify** — Client (a) verifies the Intel/AMD quote signature and TCB policy, (b) recomputes `report_data` and checks freshness/binding, (c) pins measurement / `code_hash` / `build_version` to the published regional manifest, and optionally requires `edge.tls_cert_spki_sha256` to match **this** connection’s peer SPKI.
 
+Step 3(b) is what makes a separate Ed25519 signature over the challenge JSON unnecessary for verifying clients (security review ATT-003): identity fields that matter are covered by hardware `report_data`.
+
 JSON schemas: [`attestation-challenge-request.v1.json`](manifest/schema/attestation-challenge-request.v1.json), [`attestation-challenge-response.v1.json`](manifest/schema/attestation-challenge-response.v1.json).
 
 ### Integrator reminder — attestation

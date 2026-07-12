@@ -8,21 +8,22 @@
 
 **Related:** [`SECURITY.md`](../SECURITY.md) · [`docs/streaming-contract.md`](./streaming-contract.md)
 
-**Module tip at review:** through `7f55ca1` (Fortanix EDP bring-up: rustls+ring, CLI config, bounded SGX accept pool).
+**Module tip at review:** through `7f55ca1` (Fortanix EDP bring-up).  
+**Remediation tip (attestation Option A):** `566d96e` — `report_data` v1 + challenge JSON fields + SGX `for_target` / CVM `snpguest`.
 
 ---
 
 ## 1. Summary
 
-| Severity | Count |
-|----------|------:|
-| Critical | 0 |
-| High | 4 |
-| Medium | 7 |
-| Low | 1 |
-| Info / positive | 1 |
+| Severity | Open at review | Status after Option A (`566d96e`) |
+|----------|---------------:|-----------------------------------|
+| Critical | 0 | — |
+| High | 4 | **2 mitigated / partial** (ATT-001, ATT-002); **2 open** (NET-001, AUTH-001) |
+| Medium | 7 | **1 mitigated** (ATT-003 via hardware binding); **6 open** |
+| Low | 1 | open (TLS-001) |
+| Info / positive | 1 | unchanged (CRYPTO-001) |
 
-**Verdict:** Crypto orientation (TLS 1.3-only, prod seal policy, CT key-hash compare) is sound. Residual high risk centers on **attestation binding vs product claims**, **unsigned/unenforced L0 policy fields**, and **push / accept hardening**.
+**Verdict (updated):** Attestation binding (ATT-001/002/003) is addressed in-tree for the Option A challenge path. Residual high risk is now **L0 policy enforcement (AUTH-001)** and **push / accept hardening (NET-001, DOS-001)**, plus metering and ops guards.
 
 ---
 
@@ -41,25 +42,26 @@
 
 ### ATT-001 — High — SGX challenge nonce not bound via `REPORT.report_data`
 
-- **Status (2026-07-12 follow-up):** **Mitigated in-tree** — `report_data` v1 preimage + `Report::for_target`; response includes `schema_version` / `report_data_version` / `quote_format`. Production SGX still returns `sgx_report` (local REPORT) until DCAP quote generation is linked (`sgx_dcap_ecdsa`).
+- **Status:** **Mitigated in-tree** (`566d96e`) — `report_data` v1 preimage + `Report::for_target`; response includes `schema_version` / `report_data_version` / `quote_format`. Production SGX still returns `sgx_report` (local REPORT) until DCAP quote generation is linked (`sgx_dcap_ecdsa`).
 - **Location:** `crates/openapi-platform/src/challenge.rs`, `crates/openapi-platform-sgx/src/report.rs`
 - **Remaining:** Wire DCAP ECDSA quote (`aesmd` / QE) and set `quote_format = sgx_dcap_ecdsa` for internet verifiers.
 
 ### ATT-002 — High — CVM attestation challenge returns no guest quote
 
-- **Status (2026-07-12 follow-up):** **Partially mitigated** — challenge builds `report_data` v1 and requires an SNP report (`snpguest report`) with matching `REPORT_DATA`. Hosts without SNP/snpguest fail closed (no empty quote).
+- **Status:** **Partially mitigated** (`566d96e`) — challenge builds `report_data` v1 and requires an SNP report (`snpguest report`) with matching `REPORT_DATA`. Hosts without SNP/snpguest fail closed (no empty quote).
 - **Location:** `crates/openapi-platform-cvm/src/{attest,snp_report}.rs`
 - **Remaining:** Prefer in-process `/dev/sev-guest` ioctl; publish VCEK verify recipe for clients.
 
 ### ATT-003 — Medium — Challenge identity payload is unsigned
 
-- **Location:** attestation challenge response path in core / platform
-- **Detail:** Response fields are plain JSON over TLS; no Ed25519 signature of the challenge body.
-- **Impact:** Without a hardware quote (CVM) or correct REPORT binding (SGX), strength is TLS-in-TEE + client diligence only.
-- **Remediation:** Sign responses with an enclave/guest-held key published in the manifest, or rely solely on hardware quotes.
+- **Status:** **Mitigated by Option A (hardware binding)** — we did **not** add an Ed25519 signature over the JSON body. The locked remediation allowed *“or rely solely on hardware quotes.”* Verifying clients recompute `report_data` from the JSON identity fields + nonce and match the quote/`REPORT` user-data; those fields are therefore covered by hardware evidence, not by a separate software signature.
+- **Location:** `crates/openapi-platform/src/challenge.rs` · [`docs/attestation-challenge.md`](./attestation-challenge.md)
+- **Caveat:** Clients that trust JSON fields **without** checking `report_data` (or that accept `sgx_report` without a local/same-platform verifier) still see unsigned claims. Remote SGX internet verify still needs DCAP (ATT-001 remaining). No change for skip-attestation OpenAI clients (by product design).
+- **Not done:** Manifest-published Ed25519 challenge signing (optional defense-in-depth; not required once hardware binding is verified).
 
 ### NET-001 — High — Revocation push listener has no transport authentication
 
+- **Status:** **Open** (unchanged by Option A).
 - **Location:** `crates/openapi-platform-cvm/src/push.rs`
 - **Detail:** Plain TCP accept, naive HTTP body parse, Ed25519 on `SignedRevocation` only. Unbounded `thread::spawn`. No mTLS / internal Bearer / IP ACL in code.
 - **Impact:** Reachable push port → DoS / parse load; catalog verify-key compromise becomes a remote revoke oracle with a larger surface than necessary.
@@ -67,6 +69,7 @@
 
 ### AUTH-001 — High — L0 `SignedAuthz.policy` (models / rpm) not enforced
 
+- **Status:** **Open** (unchanged by Option A).
 - **Location:** `crates/openapi-core/src/authz.rs`, `remote_auth.rs`
 - **Detail:** `OpenApiKeyPolicy { models, rpm }` is inside the signed authz blob, but the edge only checks signature, expiry, hash match, and revocations. RPM uses global `OPENAPI_REQUESTS_PER_MINUTE`.
 - **Impact:** Restricted keys can still hit any model / higher RPM than L0 intended.
@@ -74,6 +77,7 @@
 
 ### PROXY-001 — Medium — Authenticated transparent `/v1/*` proxy is broad
 
+- **Status:** **Open** (unchanged by Option A).
 - **Location:** `crates/openapi-core/src/routes.rs`
 - **Detail:** Unknown GET/POST under `/v1/` proxy to upstream after Bearer auth, except an explicit 501 denylist.
 - **Impact:** New upstream admin/debug routes become reachable to any valid API key without edge review.
@@ -81,6 +85,7 @@
 
 ### DOS-001 — Medium — CVM edge unbounded `thread::spawn` per connection
 
+- **Status:** **Open** (unchanged by Option A).
 - **Location:** `bins/openapi/src/main.rs`
 - **Detail:** SGX path uses bounded accept pool in `openapi-edge`; CVM binary was not migrated.
 - **Impact:** Connection flood can exhaust guest memory/threads.
@@ -88,6 +93,7 @@
 
 ### METER-001 — Medium — Streaming inference signs usage as 0/0 tokens
 
+- **Status:** **Open** (unchanged by Option A).
 - **Location:** `crates/openapi-core/src/handler.rs`
 - **Detail:** For `stream:true`, `sign_report` uses token counts that always return `(0, 0)`.
 - **Impact:** Billing/quota under-count if L0 trusts edge-signed reports alone.
@@ -95,6 +101,7 @@
 
 ### OPS-001 — Medium — `OPENAPI_ATTESTED_LAUNCH_DIGEST` bypasses snpguest
 
+- **Status:** **Open** (unchanged by Option A). Note: challenge now uses `snpguest` for quotes; this finding is about **sealing** digest override, not the challenge path.
 - **Location:** `crates/openapi-platform-cvm/src/guest_digest.rs`
 - **Detail:** Env override preferred over `snpguest` when set (documented for tests).
 - **Impact:** Rogue guest env write can forge sealing policy digest without hardware attestation.
@@ -102,6 +109,7 @@
 
 ### OPS-002 — Medium — `seal-tls-key-sgx` lacks prod profile refusal
 
+- **Status:** **Open** (unchanged by Option A).
 - **Location:** `bins/seal-tls-key-sgx` vs `bins/seal-tls-key`
 - **Detail:** CVM seal tool bails on `OPENAPI_PROFILE=prod`; SGX tool does not.
 - **Impact:** Host-visible plaintext keys can enter an SGX sealing workflow labeled prod.
@@ -109,6 +117,7 @@
 
 ### CFG-001 — Medium — SGX config via CLI args is host-attacker visible
 
+- **Status:** **Open** (unchanged by Option A). Challenge binding includes SPKI/measurement but does **not** measure catalog/upstream argv.
 - **Location:** `bins/openapi-enclave/src/main.rs`
 - **Detail:** Fortanix empty env → `OPENAPI_*` (catalog, seeds, upstream) passed as enclave argv.
 - **Impact:** Rogue host can retarget upstream / inject catalog without changing `MRENCLAVE`. TLS key still EGETKEY-bound.
@@ -116,6 +125,7 @@
 
 ### TLS-001 — Low — Plain TCP listen allowed when TLS paths unset
 
+- **Status:** **Open** (unchanged by Option A).
 - **Location:** CVM/SGX run paths
 - **Detail:** Prod forbids plaintext key path but does not require TLS acceptor success.
 - **Impact:** Misconfigured prod unit could listen without TLS.
@@ -123,9 +133,10 @@
 
 ### CRYPTO-001 — Info — Positive controls
 
-- **Location:** platform `tls.rs` / `profile.rs` / seal paths; catalog CT compare
+- **Status:** **Still valid**; Option A adds honest `quote_format` labeling and fail-closed challenge when evidence is unavailable.
+- **Location:** platform `tls.rs` / `profile.rs` / seal paths; catalog CT compare; `challenge.rs`
 - **Detail:** rustls TLS 1.3-only; prod forbids `OPENAPI_TLS_KEY_PATH` and host `OPENAPI_SEAL_ROOT_HEX`; SGX `seal_version` 2 uses EGETKEY; SGX IP-only upstream; SGX accept pool.
-- **Remediation:** Keep `verify-tls13-only.sh` in CI; add prod negative tests for plaintext key and `ATTESTED_LAUNCH` override.
+- **Remediation:** Keep `verify-tls13-only.sh` in CI; add prod negative tests for plaintext key and `ATTESTED_LAUNCH` override; add DCAP integration tests when QE is wired.
 
 ---
 
@@ -133,11 +144,12 @@
 
 | Priority | IDs | Work |
 |----------|-----|------|
-| P0 | ATT-001, ATT-002 | Real hardware-bound attestation quotes |
+| P0 | ATT-001 remaining | DCAP ECDSA quotes (`sgx_dcap_ecdsa`) for remote SGX verify |
 | P0 | AUTH-001 | Enforce L0 models/rpm at edge |
 | P1 | NET-001, DOS-001 | Push auth + CVM bounded accept |
-| P1 | METER-001, OPS-001, OPS-002 | Streaming usage + prod seal guards |
-| P2 | PROXY-001, CFG-001, TLS-001, ATT-003 | Hardening and measured config |
+| P1 | ATT-002 remaining, METER-001, OPS-001, OPS-002 | SNP ioctl + streaming usage + prod seal guards |
+| P2 | PROXY-001, CFG-001, TLS-001 | Hardening and measured config |
+| Done | ATT-003 | Satisfied by hardware `report_data` binding for verifying clients |
 
 ---
 
