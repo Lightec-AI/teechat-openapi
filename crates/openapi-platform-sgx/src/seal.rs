@@ -5,10 +5,10 @@ use openapi_platform::{
     derive_seal_key, seal_tls_private_key, unseal_tls_private_key, SEAL_VERSION,
 };
 use openapi_platform::{
-    Measurement, PlatformError, SealedTlsKeyBlob, Sealer, SEAL_VERSION, SEAL_VERSION_SGX_EGETKEY,
+    Measurement, PlatformError, SealedTlsKeyBlob, Sealer, SEAL_VERSION_SGX_EGETKEY,
 };
 #[cfg(target_env = "sgx")]
-use openapi_platform::unseal_tls_private_key;
+use openapi_platform::{unseal_tls_private_key, SEAL_VERSION};
 
 /// 16-byte EGETKEY label for TLS key sealing (Fortanix sealing API).
 pub const SGX_TLS_SEAL_LABEL: [u8; 16] = *b"teechat-tls-seal";

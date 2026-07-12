@@ -188,8 +188,10 @@ mod tests {
     use openapi_core::handler::{HttpMethod, UpstreamResponse};
     use openapi_core::limits::Limits;
     use openapi_core::usage::UsageSigner;
-    use openapi_platform::{AttestationChallengeResponse, AttestationPlatform, EdgeIdentity, Measurement, PlatformError};
-    use base64::Engine;
+    use openapi_platform::{
+        AttestationChallengeResponse, AttestationPlatform, EdgeIdentity, Measurement,
+        PlatformError, QuoteFormat, REPORT_DATA_LEN,
+    };
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
     use std::time::Duration;
@@ -217,16 +219,22 @@ mod tests {
             panic!("unused")
         }
         fn challenge(&self, nonce: &[u8]) -> Result<AttestationChallengeResponse, PlatformError> {
-            Ok(AttestationChallengeResponse {
-                edge: EdgeIdentity {
-                    build_version: "t".into(),
-                    code_hash: "c".into(),
-                    measurement: Measurement::Mrenclave { value: "m".into() },
-                    tls_cert_spki_sha256: "s".into(),
+            fn hex32(b: u8) -> String {
+                hex::encode([b; 32])
+            }
+            let edge = EdgeIdentity {
+                build_version: "t".into(),
+                code_hash: hex32(0x11),
+                measurement: Measurement::Mrenclave {
+                    value: hex32(0xaa),
                 },
-                challenge_nonce_b64: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(nonce),
-                quote_b64: None,
-            })
+                tls_cert_spki_sha256: hex32(0xbb),
+            };
+            let rd = openapi_platform::build_report_data_v1(nonce, &edge)?;
+            let mut report = vec![0u8; 320 + REPORT_DATA_LEN];
+            report[320..384].copy_from_slice(&rd);
+            AttestationChallengeResponse::new(edge, nonce, QuoteFormat::SgxReport, &report)
+                .map_err(Into::into)
         }
     }
 

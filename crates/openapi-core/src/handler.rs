@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use openapi_platform::AttestationPlatform;
-use rand::RngCore;
 use serde_json::Value;
 
-use crate::auth::{AuthContext, Authenticator};
+use crate::auth::AuthContext;
 use crate::remote_auth::EdgeAuthenticator;
 use crate::config::Config;
 use crate::error::ApiError;
@@ -297,28 +296,24 @@ where
     }
 
     fn handle_attestation(&self, body: &[u8]) -> Result<AppResponse, ApiError> {
+        use openapi_platform::CHALLENGE_NONCE_LEN;
+
         self.limits.validate_body_size(body.len())?;
-        let req: AttestationChallengeRequest = if body.is_empty() {
-            AttestationChallengeRequest {
-                nonce_b64: String::new(),
-            }
-        } else {
-            serde_json::from_slice(body)
-                .map_err(|e| ApiError::BadRequest(format!("invalid challenge request: {e}")))?
-        };
+        if body.is_empty() {
+            return Err(ApiError::BadRequest(
+                "attestation challenge requires JSON body with nonce_b64".into(),
+            ));
+        }
+        let req: AttestationChallengeRequest = serde_json::from_slice(body)
+            .map_err(|e| ApiError::BadRequest(format!("invalid challenge request: {e}")))?;
 
-        let nonce = if req.nonce_b64.is_empty() {
-            let mut buf = [0u8; 32];
-            rand::thread_rng().fill_bytes(&mut buf);
-            buf.to_vec()
-        } else {
-            URL_SAFE_NO_PAD
-                .decode(&req.nonce_b64)
-                .map_err(|e| ApiError::BadRequest(format!("invalid nonce: {e}")))?
-        };
-
-        if nonce.len() < 16 {
-            return Err(ApiError::BadRequest("nonce must be at least 16 bytes".into()));
+        let nonce = URL_SAFE_NO_PAD
+            .decode(req.nonce_b64.trim())
+            .map_err(|e| ApiError::BadRequest(format!("invalid nonce_b64: {e}")))?;
+        if nonce.len() != CHALLENGE_NONCE_LEN {
+            return Err(ApiError::BadRequest(format!(
+                "nonce must be exactly {CHALLENGE_NONCE_LEN} bytes"
+            )));
         }
 
         let attestation = self
@@ -404,10 +399,12 @@ pub use openapi_platform::AttestationChallengeResponse as ChallengeResponse;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::Authenticator;
     use crate::catalog::{hash_api_key, sign_test_catalog, KeyCatalog, KeyRecord};
     use ed25519_dalek::SigningKey;
     use openapi_platform::{
-        AttestationChallengeResponse, EdgeIdentity, Measurement, PlatformError,
+        AttestationChallengeResponse, EdgeIdentity, Measurement, PlatformError, QuoteFormat,
+        REPORT_DATA_LEN, SNP_REPORT_DATA_OFFSET,
     };
     use rand::rngs::OsRng;
     use std::collections::HashMap;
@@ -452,19 +449,23 @@ mod tests {
         }
 
         fn challenge(&self, nonce: &[u8]) -> Result<AttestationChallengeResponse, PlatformError> {
-            Ok(AttestationChallengeResponse {
-                edge: EdgeIdentity {
-                    build_version: "0.1.0".into(),
-                    code_hash: "abc".into(),
-                    measurement: Measurement::LaunchDigest {
-                        launch_digest: "ld".into(),
-                        image_digest: "id".into(),
-                    },
-                    tls_cert_spki_sha256: "spki".into(),
+            fn hex32(b: u8) -> String {
+                hex::encode([b; 32])
+            }
+            let edge = EdgeIdentity {
+                build_version: "0.1.0".into(),
+                code_hash: hex32(0x11),
+                measurement: Measurement::LaunchDigest {
+                    launch_digest: hex32(0xcc),
+                    image_digest: hex32(0xdd),
                 },
-                challenge_nonce_b64: URL_SAFE_NO_PAD.encode(nonce),
-                quote_b64: None,
-            })
+                tls_cert_spki_sha256: hex32(0xbb),
+            };
+            let rd = openapi_platform::build_report_data_v1(nonce, &edge)?;
+            let mut report = vec![0u8; SNP_REPORT_DATA_OFFSET + REPORT_DATA_LEN];
+            report[SNP_REPORT_DATA_OFFSET..SNP_REPORT_DATA_OFFSET + 64].copy_from_slice(&rd);
+            AttestationChallengeResponse::new(edge, nonce, QuoteFormat::SnpReport, &report)
+                .map_err(Into::into)
         }
     }
 
@@ -597,9 +598,33 @@ mod tests {
         match resp {
             AppResponse::Json(v) => {
                 assert_eq!(v["edge"]["build_version"], "0.1.0");
+                assert_eq!(v["schema_version"], 1);
+                assert_eq!(v["report_data_version"], 1);
+                assert_eq!(v["quote_format"], "snp_report");
+                assert!(v["quote_b64"].as_str().unwrap().len() > 8);
             }
             _ => panic!("expected json"),
         }
+    }
+
+    #[test]
+    fn attestation_rejects_short_nonce() {
+        let app = build_test_app(MockUpstream::default());
+        let nonce = URL_SAFE_NO_PAD.encode([0u8; 16]);
+        let body = format!(r#"{{"nonce_b64":"{nonce}"}}"#).into_bytes();
+        let err = app
+            .handle(HttpMethod::Post, "/v1/attestation/challenge", None, &body, 1)
+            .unwrap_err();
+        assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn attestation_rejects_empty_body() {
+        let app = build_test_app(MockUpstream::default());
+        let err = app
+            .handle(HttpMethod::Post, "/v1/attestation/challenge", None, b"", 1)
+            .unwrap_err();
+        assert!(matches!(err, ApiError::BadRequest(_)));
     }
 
     #[test]

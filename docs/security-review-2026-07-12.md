@@ -41,17 +41,15 @@
 
 ### ATT-001 — High — SGX challenge nonce not bound via `REPORT.report_data`
 
-- **Location:** `crates/openapi-platform-sgx/src/report.rs`
-- **Detail:** `local_enclave_report_b64()` calls `Report::for_self()` then XOR-mixes the client nonce into the serialized REPORT bytes. That mutates a measured structure after generation and is not Intel-standard `report_data` binding.
-- **Impact:** Verifiers cannot prove the enclave saw the challenge nonce at REPORT generation time; recycled/host-tampered quote blobs may be accepted.
-- **Remediation:** Implement [`docs/attestation-challenge.md`](./attestation-challenge.md) (`report_data` v1 preimage + `sgx_dcap_ecdsa`). Never post-process REPORT/quote bytes.
+- **Status (2026-07-12 follow-up):** **Mitigated in-tree** — `report_data` v1 preimage + `Report::for_target`; response includes `schema_version` / `report_data_version` / `quote_format`. Production SGX still returns `sgx_report` (local REPORT) until DCAP quote generation is linked (`sgx_dcap_ecdsa`).
+- **Location:** `crates/openapi-platform/src/challenge.rs`, `crates/openapi-platform-sgx/src/report.rs`
+- **Remaining:** Wire DCAP ECDSA quote (`aesmd` / QE) and set `quote_format = sgx_dcap_ecdsa` for internet verifiers.
 
 ### ATT-002 — High — CVM attestation challenge returns no guest quote
 
-- **Location:** `crates/openapi-platform-cvm/src/attest.rs`
-- **Detail:** `challenge` always sets `quote_b64: None` and returns `EdgeIdentity` fields from startup env.
-- **Impact:** Clients cannot cryptographically verify SNP launch digest via the public challenge API; identity is TOFU of env strings under TLS.
-- **Remediation:** Embed SNP attestation report / VCEK chain in `quote_b64` (or sibling), bound to nonce + TLS SPKI. Keep env digests as hints only.
+- **Status (2026-07-12 follow-up):** **Partially mitigated** — challenge builds `report_data` v1 and requires an SNP report (`snpguest report`) with matching `REPORT_DATA`. Hosts without SNP/snpguest fail closed (no empty quote).
+- **Location:** `crates/openapi-platform-cvm/src/{attest,snp_report}.rs`
+- **Remaining:** Prefer in-process `/dev/sev-guest` ioctl; publish VCEK verify recipe for clients.
 
 ### ATT-003 — Medium — Challenge identity payload is unsigned
 

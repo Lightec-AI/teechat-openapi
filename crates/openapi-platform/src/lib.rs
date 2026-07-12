@@ -1,18 +1,27 @@
 //! Platform abstraction for Edge KMS deployments (CVM guest or SGX enclave).
 //!
 //! TLS sealing summary: repo `SECURITY.md`.
+//! Attestation challenge binding: `docs/attestation-challenge.md`.
 
+mod challenge;
 mod profile;
 mod seal;
 pub mod tls;
 
 use std::path::Path;
 
+pub use challenge::{
+    build_preimage_v1, build_report_data_v1, canonicalize_digest_field, canonicalize_edge_identity,
+    report_data_matches_v1, sgx_report_reportdata, snp_report_reportdata,
+    verify_challenge_report_data, AttestationChallengeResponse, ChallengeBindError, QuoteFormat,
+    CHALLENGE_MAGIC, CHALLENGE_NONCE_LEN, REPORT_DATA_LEN, REPORT_DATA_VERSION, SCHEMA_VERSION,
+    SNP_REPORT_DATA_OFFSET,
+};
 pub use profile::{
     load_edge_profile, validate_tls_key_policy, EdgeProfile, ProfileError,
 };
 pub use seal::{
-    derive_seal_key, derive_cvm_seal_root, measurement_binding_label, seal_tls_private_key,
+    derive_cvm_seal_root, derive_seal_key, measurement_binding_label, seal_tls_private_key,
     unseal_tls_private_key, SealedTlsKeyBlob, SEAL_AAD, SEAL_VERSION, SEAL_VERSION_SGX_EGETKEY,
 };
 
@@ -29,21 +38,12 @@ pub enum Measurement {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EdgeIdentity {
     pub build_version: String,
     pub code_hash: String,
     pub measurement: Measurement,
     pub tls_cert_spki_sha256: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttestationChallengeResponse {
-    pub edge: EdgeIdentity,
-    pub challenge_nonce_b64: String,
-    /// Platform-specific quote bytes (hex or base64), when available.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quote_b64: Option<String>,
 }
 
 #[derive(Debug, Error)]

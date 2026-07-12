@@ -4,6 +4,7 @@ mod guest_digest;
 mod push;
 mod remote_client;
 mod seal;
+mod snp_report;
 mod tls;
 mod tls_ceremony;
 mod upstream;

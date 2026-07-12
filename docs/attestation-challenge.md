@@ -146,7 +146,7 @@ preimage =
 
 | Component | Size | Content |
 |-----------|------|---------|
-| `magic` | 28 | ASCII `teechat-openapi-challenge-v1` (27) + `0x00` (1) |
+| `magic` | 28 | ASCII `teechat-openapi-challenge-v1` (exactly 28 bytes, no trailing NUL) |
 | `nonce` | 32 | Raw challenge nonce |
 | `spki_sha256` | 32 | Raw bytes of `edge.tls_cert_spki_sha256` (hex-decoded) |
 | `build_digest` | 32 | `SHA-256(UTF-8 bytes of edge.build_version)` |
@@ -201,9 +201,10 @@ assert quote.report_data == expected
 1. Reject nonce ≠ 32 bytes.
 2. Use the **currently serving** TLS leaf SPKI (not a stale env copy that can drift from the acceptor).
 3. Fill `report_data` **before** REPORT/quote generation — **never** post-process quote bytes.
-4. Prefer `quote_format = sgx_dcap_ecdsa` (or `snp_report` on CVM) for any deployment that claims remote verifiability.
-5. On quote infrastructure failure (aesmd / QE / PCCS), return a clear `5xx` with a stable error code — do not return a local REPORT labeled as a DCAP quote.
-6. Rate-limit the public challenge endpoint.
+4. Prefer `quote_format = sgx_dcap_ecdsa` (or `snp_report` on CVM) for any deployment that claims remote verifiability. Until DCAP is linked, SGX may return `sgx_report` (honest local REPORT with correct `report_data`).
+5. Canonicalize identity digests before hashing: 64-hex fields are lowercased; non-hex staging values (e.g. `code_hash=unknown`) become `hex(SHA-256(utf8))` in both `report_data` and the JSON response.
+6. On quote infrastructure failure (aesmd / QE / PCCS / snpguest), return a clear `5xx` with a stable error code — do not return a local REPORT labeled as a DCAP quote.
+7. Rate-limit the public challenge endpoint.
 
 ---
 

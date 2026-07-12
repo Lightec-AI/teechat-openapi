@@ -51,7 +51,7 @@ report_data[0..32]  = SHA-256(preimage)
 report_data[32..64] = 0x00 × 32
 ```
 
-`preimage` (version 1) binds magic `teechat-openapi-challenge-v1` + NUL, the nonce, TLS SPKI SHA-256, build/code digests, and measurement (`MRENCLAVE` or launch/image digests). **Never** XOR or otherwise mutate quote bytes after generation.
+`preimage` (version 1) binds magic `teechat-openapi-challenge-v1` (28 ASCII bytes), the nonce, TLS SPKI SHA-256, build/code digests, and measurement (`MRENCLAVE` or launch/image digests). **Never** XOR or otherwise mutate quote bytes after generation.
 
 Production SGX evidence must be a remotely verifiable **`sgx_dcap_ecdsa`** quote (not a local-only `sgx_report`). CVM uses `snp_report`.
 
