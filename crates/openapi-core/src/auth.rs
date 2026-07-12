@@ -1,9 +1,12 @@
+use crate::authz::OpenApiKeyPolicy;
 use crate::catalog::{KeyCatalog, KeyRecord};
 use crate::error::ApiError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthContext {
     pub key_id: String,
+    /// L0-signed policy (remote auth) or [`OpenApiKeyPolicy::unrestricted`] (catalog).
+    pub policy: OpenApiKeyPolicy,
 }
 
 #[derive(Debug)]
@@ -31,6 +34,7 @@ impl Authenticator {
         let record = self.catalog.lookup_by_api_key(token)?;
         Ok(AuthContext {
             key_id: record.key_id.clone(),
+            policy: OpenApiKeyPolicy::unrestricted(),
         })
     }
 }
@@ -39,6 +43,7 @@ impl From<&KeyRecord> for AuthContext {
     fn from(record: &KeyRecord) -> Self {
         Self {
             key_id: record.key_id.clone(),
+            policy: OpenApiKeyPolicy::unrestricted(),
         }
     }
 }
@@ -72,6 +77,8 @@ mod tests {
             .authenticate_bearer(Some(&format!("Bearer {key}")))
             .unwrap();
         assert_eq!(ctx.key_id, "test");
+        assert!(ctx.policy.allows_model("any-model"));
+        assert_eq!(ctx.policy.rpm, 0);
     }
 
     #[test]

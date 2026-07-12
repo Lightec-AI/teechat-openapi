@@ -74,6 +74,7 @@ impl RemoteAuthenticator {
         entry.authz.verify_signature(&self.verify_key)?;
         Ok(Some(AuthContext {
             key_id: parsed.key_id.clone(),
+            policy: entry.authz.policy.clone(),
         }))
     }
 
@@ -114,9 +115,11 @@ impl RemoteAuthenticator {
         if !hash_match {
             return Err(ApiError::Unauthorized);
         }
+        let policy = authz.policy.clone();
         self.store_cache(authz)?;
         Ok(AuthContext {
             key_id: parsed.key_id.clone(),
+            policy,
         })
     }
 
@@ -165,7 +168,7 @@ impl EdgeAuthenticator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::authz::{sign_test_authz, sign_test_revocation};
+    use crate::authz::{sign_test_authz, sign_test_authz_with_policy, sign_test_revocation, OpenApiKeyPolicy};
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
 
@@ -198,11 +201,44 @@ mod tests {
             .authenticate_bearer(Some(&format!("Bearer {api_key}")))
             .unwrap();
         assert_eq!(ctx.key_id, "tcak_ab12CD34");
+        assert!(ctx.policy.allows_model("any"));
+        assert_eq!(ctx.policy.rpm, 120);
         // second call uses cache — still ok if mock stopped working
         let ctx2 = remote
             .authenticate_bearer(Some(&format!("Bearer {api_key}")))
             .unwrap();
         assert_eq!(ctx2.key_id, ctx.key_id);
+        assert_eq!(ctx2.policy, ctx.policy);
+    }
+
+    #[test]
+    fn remote_auth_returns_restricted_policy_from_cache() {
+        let mut csprng = OsRng;
+        let signing = SigningKey::generate(&mut csprng);
+        let verify_key = signing.verifying_key();
+        let secret = "C".repeat(32);
+        let api_key = format!("sk-teechat-tcak_ef90AB12.{secret}");
+        let hash = hash_api_key(&api_key);
+        let policy = OpenApiKeyPolicy {
+            models: vec!["teechat-lite".into()],
+            rpm: 5,
+        };
+        let authz = sign_test_authz_with_policy(
+            "tcak_ef90AB12",
+            &hash,
+            RemoteAuthenticator::now_ms() + 60_000,
+            policy.clone(),
+            &signing,
+        );
+        let remote = RemoteAuthenticator::new(verify_key, Arc::new(MockClient { authz }));
+        let ctx = remote
+            .authenticate_bearer(Some(&format!("Bearer {api_key}")))
+            .unwrap();
+        assert_eq!(ctx.policy, policy);
+        let ctx2 = remote
+            .authenticate_bearer(Some(&format!("Bearer {api_key}")))
+            .unwrap();
+        assert_eq!(ctx2.policy, policy);
     }
 
     #[test]

@@ -53,8 +53,12 @@ impl RateLimiter {
     }
 
     pub fn check(&self, key_id: &str) -> Result<(), ApiError> {
-        // 0 = unlimited (temporary bench / ops override).
-        if self.rpm == 0 {
+        self.check_with_rpm(key_id, self.rpm)
+    }
+
+    /// Rate-limit `key_id` using `rpm` for this call (`0` = unlimited).
+    pub fn check_with_rpm(&self, key_id: &str, rpm: u32) -> Result<(), ApiError> {
+        if rpm == 0 {
             return Ok(());
         }
         let mut buckets = self.buckets.lock().expect("rate limiter lock");
@@ -69,7 +73,7 @@ impl RateLimiter {
             bucket.count = 0;
         }
 
-        if bucket.count >= self.rpm {
+        if bucket.count >= rpm {
             return Err(ApiError::RateLimited);
         }
 
@@ -187,5 +191,20 @@ mod tests {
         assert!(gate.try_acquire().is_err());
         drop(a);
         assert!(gate.try_acquire().is_ok());
+    }
+
+    #[test]
+    fn check_with_rpm_overrides_constructor_limit() {
+        let limiter = RateLimiter::new(100);
+        limiter.check_with_rpm("k", 1).unwrap();
+        assert!(limiter.check_with_rpm("k", 1).is_err());
+    }
+
+    #[test]
+    fn check_with_rpm_zero_is_unlimited() {
+        let limiter = RateLimiter::new(1);
+        for _ in 0..5 {
+            limiter.check_with_rpm("k", 0).unwrap();
+        }
     }
 }

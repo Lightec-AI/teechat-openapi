@@ -15,7 +15,7 @@ pub mod upstream;
 pub mod usage;
 
 pub use auth::{AuthContext, Authenticator};
-pub use authz::{SignedAuthz, SignedRevocation};
+pub use authz::{OpenApiKeyPolicy, SignedAuthz, SignedRevocation};
 pub use catalog::{KeyCatalog, SignedKeyCatalog};
 pub use config::Config;
 pub use error::{ApiError, ApiErrorBody};

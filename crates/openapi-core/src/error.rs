@@ -5,8 +5,8 @@ use thiserror::Error;
 pub enum ApiError {
     #[error("unauthorized")]
     Unauthorized,
-    #[error("forbidden")]
-    Forbidden,
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("not found")]
     NotFound,
     #[error("method not allowed")]
@@ -29,7 +29,7 @@ impl ApiError {
     pub fn status_code(&self) -> u16 {
         match self {
             Self::Unauthorized => 401,
-            Self::Forbidden => 403,
+            Self::Forbidden(_) => 403,
             Self::NotFound => 404,
             Self::MethodNotAllowed => 405,
             Self::PayloadTooLarge => 413,
@@ -43,7 +43,7 @@ impl ApiError {
 
     pub fn openai_type(&self) -> &'static str {
         match self {
-            Self::Unauthorized | Self::Forbidden => "invalid_request_error",
+            Self::Unauthorized | Self::Forbidden(_) => "invalid_request_error",
             Self::NotFound => "invalid_request_error",
             Self::MethodNotAllowed => "invalid_request_error",
             Self::PayloadTooLarge => "invalid_request_error",
@@ -73,6 +73,7 @@ impl ApiError {
     pub fn into_body(self) -> ApiErrorBody {
         let code = match &self {
             Self::Unauthorized => Some("invalid_api_key".to_string()),
+            Self::Forbidden(_) => Some("model_not_allowed".to_string()),
             Self::RateLimited => Some("rate_limit_exceeded".to_string()),
             Self::NotImplemented(_) => Some("not_supported".to_string()),
             _ => None,

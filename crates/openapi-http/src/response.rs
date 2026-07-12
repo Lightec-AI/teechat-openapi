@@ -79,6 +79,17 @@ mod tests {
     }
 
     #[test]
+    fn forbidden_model_error_is_403_with_code() {
+        let bytes = build_error_response(ApiError::Forbidden(
+            "model `x` is not allowed for this API key".into(),
+        ));
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.starts_with("HTTP/1.1 403"));
+        assert!(text.contains("model_not_allowed"));
+        assert!(text.contains("not allowed"));
+    }
+
+    #[test]
     fn sse_response_appends_usage_trailer() {
         let signer = UsageSigner::from_seed([2u8; 32]);
         let usage = signer.sign_report("k", "m", 1, 2, 3).unwrap();

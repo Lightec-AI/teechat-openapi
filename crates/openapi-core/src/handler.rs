@@ -211,6 +211,7 @@ where
                 let auth = self.authenticator.authenticate_bearer(authorization)?;
                 self.enforce_rate_limit(&auth)?;
                 self.limits.validate_body_size(body.len())?;
+                self.enforce_model_policy(&auth, body)?;
                 if path == "/v1/chat/completions" {
                     self.handle_chat_completions(auth, body, now_ms)
                 } else {
@@ -222,6 +223,9 @@ where
                 self.enforce_rate_limit(&auth)?;
                 if !body.is_empty() {
                     self.limits.validate_body_size(body.len())?;
+                }
+                if method == HttpMethod::Post && !body.is_empty() {
+                    self.enforce_model_policy(&auth, body)?;
                 }
                 if method == HttpMethod::Post && body_wants_stream(body) {
                     let model = model_from_body(body);
@@ -256,7 +260,20 @@ where
     }
 
     fn enforce_rate_limit(&self, auth: &AuthContext) -> Result<(), ApiError> {
-        self.rate_limiter.check(&auth.key_id)
+        let rpm = auth
+            .policy
+            .effective_rpm(self.limits.requests_per_minute);
+        self.rate_limiter.check_with_rpm(&auth.key_id, rpm)
+    }
+
+    fn enforce_model_policy(&self, auth: &AuthContext, body: &[u8]) -> Result<(), ApiError> {
+        let model = model_from_body(body);
+        if auth.policy.allows_model(&model) {
+            return Ok(());
+        }
+        Err(ApiError::Forbidden(format!(
+            "model `{model}` is not allowed for this API key"
+        )))
     }
 
     fn handle_chat_completions(
@@ -820,5 +837,188 @@ mod tests {
             app.handle(HttpMethod::Get, "/v2/foo", Some(AUTH), b"", 1),
             Err(ApiError::NotFound)
         ));
+    }
+
+    fn build_remote_app<U: UpstreamForwarder>(
+        upstream: U,
+        policy: crate::authz::OpenApiKeyPolicy,
+        global_rpm: u32,
+    ) -> (App<U, TestPlatform>, String) {
+        use crate::authz::sign_test_authz_with_policy;
+        use crate::remote_auth::{L0AuthorizeClient, RemoteAuthenticator};
+        use std::sync::Arc;
+
+        struct MockL0 {
+            authz: crate::authz::SignedAuthz,
+        }
+        impl L0AuthorizeClient for MockL0 {
+            fn authorize(
+                &self,
+                _key_id: &str,
+                _key_hash_hex: &str,
+            ) -> Result<crate::authz::SignedAuthz, ApiError> {
+                Ok(self.authz.clone())
+            }
+        }
+
+        let secret = "D".repeat(32);
+        let api_key = format!("sk-teechat-tcak_pl01ICY1.{secret}");
+        let signing = SigningKey::generate(&mut OsRng);
+        let hash = hash_api_key(&api_key);
+        let authz = sign_test_authz_with_policy(
+            "tcak_pl01ICY1",
+            &hash,
+            9_999_999_999_999,
+            policy,
+            &signing,
+        );
+        let remote = RemoteAuthenticator::new(
+            signing.verifying_key(),
+            Arc::new(MockL0 { authz }),
+        );
+        let mut limits = Limits::default();
+        limits.requests_per_minute = global_rpm;
+        let app = App::new(
+            Config::default(),
+            limits,
+            EdgeAuthenticator::from_remote(remote),
+            upstream,
+            TestPlatform,
+            UsageSigner::from_seed([3u8; 32]),
+        );
+        (app, format!("Bearer {api_key}"))
+    }
+
+    #[test]
+    fn authz_policy_denies_disallowed_model() {
+        let (app, auth) = build_remote_app(
+            MockUpstream::default().with(
+                "/v1/chat/completions",
+                UpstreamResponse::Json(serde_json::json!({"id": "should-not-reach"})),
+            ),
+            crate::authz::OpenApiKeyPolicy {
+                models: vec!["teechat-lite".into()],
+                rpm: 120,
+            },
+            120,
+        );
+        let body = br#"{"model":"teechat-pro","messages":[{"role":"user","content":"hi"}]}"#;
+        let err = app
+            .handle(HttpMethod::Post, "/v1/chat/completions", Some(&auth), body, 1)
+            .unwrap_err();
+        match err {
+            ApiError::Forbidden(msg) => assert!(msg.contains("teechat-pro")),
+            other => panic!("expected Forbidden, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn authz_policy_allows_listed_model() {
+        let (app, auth) = build_remote_app(
+            MockUpstream::default().with(
+                "/v1/chat/completions",
+                UpstreamResponse::Json(serde_json::json!({
+                    "id": "ok",
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                })),
+            ),
+            crate::authz::OpenApiKeyPolicy {
+                models: vec!["teechat-lite".into()],
+                rpm: 120,
+            },
+            120,
+        );
+        let body = br#"{"model":"teechat-lite","messages":[{"role":"user","content":"hi"}]}"#;
+        let resp = app
+            .handle(HttpMethod::Post, "/v1/chat/completions", Some(&auth), body, 1)
+            .unwrap();
+        assert!(matches!(resp, AppResponse::JsonWithUsage { .. }));
+    }
+
+    #[test]
+    fn authz_policy_denies_model_on_streaming_chat() {
+        let (app, auth) = build_remote_app(
+            MockUpstream::default(),
+            crate::authz::OpenApiKeyPolicy {
+                models: vec!["teechat-lite".into()],
+                rpm: 120,
+            },
+            120,
+        );
+        let body =
+            br#"{"model":"teechat-pro","messages":[{"role":"user","content":"hi"}],"stream":true}"#;
+        assert!(matches!(
+            app.handle(HttpMethod::Post, "/v1/chat/completions", Some(&auth), body, 1),
+            Err(ApiError::Forbidden(_))
+        ));
+    }
+
+    #[test]
+    fn authz_policy_rpm_caps_below_global() {
+        let (app, auth) = build_remote_app(
+            MockUpstream::default().with(
+                "/v1/embeddings",
+                UpstreamResponse::Json(serde_json::json!({
+                    "object": "list",
+                    "usage": {"prompt_tokens": 1, "total_tokens": 1}
+                })),
+            ),
+            crate::authz::OpenApiKeyPolicy {
+                models: vec!["*".into()],
+                rpm: 2,
+            },
+            120,
+        );
+        let body = br#"{"model":"m","input":"x"}"#;
+        app.handle(HttpMethod::Post, "/v1/embeddings", Some(&auth), body, 1)
+            .unwrap();
+        app.handle(HttpMethod::Post, "/v1/embeddings", Some(&auth), body, 2)
+            .unwrap();
+        assert!(matches!(
+            app.handle(HttpMethod::Post, "/v1/embeddings", Some(&auth), body, 3),
+            Err(ApiError::RateLimited)
+        ));
+    }
+
+    #[test]
+    fn authz_policy_global_rpm_caps_below_policy() {
+        let (app, auth) = build_remote_app(
+            MockUpstream::default().with(
+                "/v1/embeddings",
+                UpstreamResponse::Json(serde_json::json!({
+                    "object": "list",
+                    "usage": {"prompt_tokens": 1, "total_tokens": 1}
+                })),
+            ),
+            crate::authz::OpenApiKeyPolicy {
+                models: vec!["*".into()],
+                rpm: 100,
+            },
+            1,
+        );
+        let body = br#"{"model":"m","input":"x"}"#;
+        app.handle(HttpMethod::Post, "/v1/embeddings", Some(&auth), body, 1)
+            .unwrap();
+        assert!(matches!(
+            app.handle(HttpMethod::Post, "/v1/embeddings", Some(&auth), body, 2),
+            Err(ApiError::RateLimited)
+        ));
+    }
+
+    #[test]
+    fn catalog_auth_still_allows_any_model() {
+        let app = build_test_app(
+            MockUpstream::default().with(
+                "/v1/chat/completions",
+                UpstreamResponse::Json(serde_json::json!({
+                    "id": "ok",
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                })),
+            ),
+        );
+        let body = br#"{"model":"whatever","messages":[{"role":"user","content":"hi"}]}"#;
+        assert!(app
+            .handle(HttpMethod::Post, "/v1/chat/completions", Some(AUTH), body, 1)
+            .is_ok());
     }
 }

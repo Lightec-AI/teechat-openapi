@@ -15,6 +15,33 @@ fn default_rpm() -> u32 {
     120
 }
 
+impl OpenApiKeyPolicy {
+    /// Catalog / legacy keys: any model, no per-key RPM cap (`rpm = 0` → unlimited).
+    pub fn unrestricted() -> Self {
+        Self {
+            models: vec!["*".into()],
+            rpm: 0,
+        }
+    }
+
+    /// `true` if `model` is allowed. `"*"` allows any id. Empty list denies all (fail-closed).
+    pub fn allows_model(&self, model: &str) -> bool {
+        self.models
+            .iter()
+            .any(|entry| entry == "*" || entry == model)
+    }
+
+    /// Effective API-key RPM: `min(global, policy)`, treating either `0` as unlimited.
+    pub fn effective_rpm(&self, global_rpm: u32) -> u32 {
+        match (global_rpm, self.rpm) {
+            (0, 0) => 0,
+            (0, policy) => policy,
+            (global, 0) => global,
+            (global, policy) => global.min(policy),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SignedAuthz {
     pub authz_version: u32,
@@ -98,6 +125,27 @@ pub fn sign_test_authz(
     exp_ms: u64,
     signing_key: &ed25519_dalek::SigningKey,
 ) -> SignedAuthz {
+    sign_test_authz_with_policy(
+        key_id,
+        key_hash_hex,
+        exp_ms,
+        OpenApiKeyPolicy {
+            models: vec!["*".into()],
+            rpm: 120,
+        },
+        signing_key,
+    )
+}
+
+/// Build a signed authz with an explicit L0 policy (AUTH-001 tests).
+#[cfg(any(test, feature = "test-utils"))]
+pub fn sign_test_authz_with_policy(
+    key_id: &str,
+    key_hash_hex: &str,
+    exp_ms: u64,
+    policy: OpenApiKeyPolicy,
+    signing_key: &ed25519_dalek::SigningKey,
+) -> SignedAuthz {
     use ed25519_dalek::Signer;
 
     let unsigned = UnsignedAuthz {
@@ -105,10 +153,7 @@ pub fn sign_test_authz(
         key_id: key_id.into(),
         key_hash_hex: key_hash_hex.into(),
         account_id: "usr".into(),
-        policy: OpenApiKeyPolicy {
-            models: vec!["*".into()],
-            rpm: 120,
-        },
+        policy,
         exp_ms,
         epoch: 1,
     };
@@ -216,5 +261,34 @@ mod tests {
         let payload_hex = fixture["unsigned_authz_bytes_hex"].as_str().unwrap();
         let payload = hex::decode(payload_hex).unwrap();
         assert_eq!(signed.unsigned_bytes().unwrap(), payload);
+    }
+
+    #[test]
+    fn policy_allows_wildcard_and_exact() {
+        let p = OpenApiKeyPolicy {
+            models: vec!["teechat-a".into()],
+            rpm: 10,
+        };
+        assert!(p.allows_model("teechat-a"));
+        assert!(!p.allows_model("teechat-b"));
+        assert!(!OpenApiKeyPolicy {
+            models: vec![],
+            rpm: 10
+        }
+        .allows_model("anything"));
+        assert!(OpenApiKeyPolicy::unrestricted().allows_model("anything"));
+    }
+
+    #[test]
+    fn effective_rpm_min_with_zero_unlimited() {
+        let p = OpenApiKeyPolicy {
+            models: vec!["*".into()],
+            rpm: 30,
+        };
+        assert_eq!(p.effective_rpm(120), 30);
+        assert_eq!(p.effective_rpm(10), 10);
+        assert_eq!(p.effective_rpm(0), 30);
+        assert_eq!(OpenApiKeyPolicy::unrestricted().effective_rpm(120), 120);
+        assert_eq!(OpenApiKeyPolicy::unrestricted().effective_rpm(0), 0);
     }
 }
