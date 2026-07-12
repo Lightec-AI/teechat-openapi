@@ -32,6 +32,8 @@ pub struct SgxEdgeEnv {
     pub seal_root_hex: Option<String>,
     pub max_body_bytes: usize,
     pub requests_per_minute: u32,
+    pub challenge_requests_per_minute: u32,
+    pub challenge_max_inflight: u32,
 }
 
 #[derive(Debug, Error)]
@@ -63,6 +65,8 @@ impl SgxEdgeEnv {
         Limits {
             requests_per_minute: self.requests_per_minute,
             max_body_bytes: self.max_body_bytes,
+            challenge_requests_per_minute: self.challenge_requests_per_minute,
+            challenge_max_inflight: self.challenge_max_inflight,
         }
     }
 
@@ -168,6 +172,12 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
         requests_per_minute: opt("OPENAPI_REQUESTS_PER_MINUTE")
             .and_then(|v| v.parse().ok())
             .unwrap_or(128),
+        challenge_requests_per_minute: opt("OPENAPI_CHALLENGE_RPM")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10),
+        challenge_max_inflight: opt("OPENAPI_CHALLENGE_MAX_INFLIGHT")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4),
     };
     if env.catalog_json.is_none() && env.catalog_path.is_empty() {
         return Err(EnvError::Missing("OPENAPI_CATALOG_JSON|OPENAPI_CATALOG_PATH"));

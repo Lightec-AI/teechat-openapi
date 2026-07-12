@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use openapi_core::App;
-use openapi_http::{dispatch_request, handle_connection, ParsedRequest};
+use openapi_http::{dispatch_request_from, handle_connection, ParsedRequest};
 use openapi_platform_cvm::{
     load_edge_env, CvmAttestationPlatform, CvmSealer, TlsAcceptor, TlsConfig, UreqUpstream,
 };
@@ -76,9 +76,10 @@ fn main() -> anyhow::Result<()> {
         let app = Arc::clone(&app);
         let tls = tls_acceptor.clone();
         std::thread::spawn(move || {
+            let client_ip = stream.peer_addr().ok().map(|a| a.ip().to_string());
             if let Some(acceptor) = tls {
                 if let Ok(mut tls_stream) = acceptor.accept(stream) {
-                    serve_tls(&app, &mut tls_stream);
+                    serve_tls(&app, &mut tls_stream, client_ip.as_deref());
                 }
             } else {
                 let _ = handle_connection(stream, app);
@@ -153,8 +154,11 @@ fn build_tls_acceptor(
     Ok(Some(Arc::new(TlsAcceptor::new(server_config))))
 }
 
-fn serve_tls<U, P>(app: &Arc<App<U, P>>, tls_stream: &mut (impl Read + Write))
-where
+fn serve_tls<U, P>(
+    app: &Arc<App<U, P>>,
+    tls_stream: &mut (impl Read + Write),
+    client_ip: Option<&str>,
+) where
     U: openapi_core::UpstreamForwarder + 'static,
     P: openapi_platform::AttestationPlatform + 'static,
 {
@@ -172,12 +176,13 @@ where
         total += n;
         match ParsedRequest::parse(&buffer[..total]) {
             Ok(Some(req)) => {
-                let response = dispatch_request(
+                let response = dispatch_request_from(
                     app,
                     &req.method,
                     &req.path,
                     req.headers.get("authorization").map(String::as_str),
                     &req.body,
+                    client_ip,
                 );
                 let _ = tls_stream.write_all(&response);
                 let _ = tls_stream.flush();

@@ -60,6 +60,7 @@ where
     U: UpstreamForwarder,
     P: AttestationPlatform,
 {
+    let client_ip = stream.peer_addr().ok().map(|addr| addr.ip().to_string());
     stream.set_read_timeout(Some(std::time::Duration::from_secs(120)))?;
     stream.set_write_timeout(Some(std::time::Duration::from_secs(120)))?;
 
@@ -79,6 +80,7 @@ where
                     &req.path,
                     req.headers.get("authorization").map(String::as_str),
                     &req.body,
+                    client_ip.as_deref(),
                     &mut stream,
                 )?;
                 stream.flush()?;
@@ -112,8 +114,24 @@ where
     U: UpstreamForwarder,
     P: AttestationPlatform,
 {
+    dispatch_request_from(app, method, path, authorization, body, None)
+}
+
+pub fn dispatch_request_from<U, P>(
+    app: &App<U, P>,
+    method: &str,
+    path: &str,
+    authorization: Option<&str>,
+    body: &[u8],
+    client_ip: Option<&str>,
+) -> Vec<u8>
+where
+    U: UpstreamForwarder,
+    P: AttestationPlatform,
+{
     let mut buf = Vec::new();
-    if let Err(e) = dispatch_to_writer(app, method, path, authorization, body, &mut buf) {
+    if let Err(e) = dispatch_to_writer(app, method, path, authorization, body, client_ip, &mut buf)
+    {
         return build_error_response(ApiError::Internal(e.to_string()));
     }
     buf
@@ -125,6 +143,7 @@ pub fn dispatch_to_writer<U, P, W: Write + ?Sized>(
     path: &str,
     authorization: Option<&str>,
     body: &[u8],
+    client_ip: Option<&str>,
     out: &mut W,
 ) -> Result<(), ServerError>
 where
@@ -137,7 +156,14 @@ where
         .unwrap_or(0);
 
     let http_method = HttpMethod::parse(method);
-    match app.handle(http_method.clone(), path, authorization, body, now_ms) {
+    match app.handle_from(
+        http_method.clone(),
+        path,
+        authorization,
+        body,
+        now_ms,
+        client_ip,
+    ) {
         Ok(AppResponse::Json(body)) => {
             let bytes = serde_json::to_vec(&body).unwrap_or_default();
             out.write_all(&build_json_response(200, &bytes, None))

@@ -8,7 +8,7 @@ use crate::auth::AuthContext;
 use crate::remote_auth::EdgeAuthenticator;
 use crate::config::Config;
 use crate::error::ApiError;
-use crate::limits::{Limits, RateLimiter};
+use crate::limits::{InflightGate, Limits, RateLimiter};
 use crate::models::{
     AttestationChallengeRequest, ChatCompletionRequest, ModelsListResponse,
 };
@@ -121,6 +121,8 @@ where
     platform: P,
     usage_signer: UsageSigner,
     rate_limiter: Arc<RateLimiter>,
+    challenge_rate_limiter: Arc<RateLimiter>,
+    challenge_inflight: Arc<InflightGate>,
 }
 
 impl<U, P> App<U, P>
@@ -137,6 +139,8 @@ where
         usage_signer: UsageSigner,
     ) -> Self {
         let rate_limiter = limits.rate_limiter();
+        let challenge_rate_limiter = limits.challenge_rate_limiter();
+        let challenge_inflight = limits.challenge_inflight_gate();
         Self {
             config,
             limits,
@@ -145,6 +149,8 @@ where
             platform,
             usage_signer,
             rate_limiter,
+            challenge_rate_limiter,
+            challenge_inflight,
         }
     }
 
@@ -160,12 +166,25 @@ where
         body: &[u8],
         now_ms: u64,
     ) -> Result<AppResponse, ApiError> {
+        self.handle_from(method, path, authorization, body, now_ms, None)
+    }
+
+    /// Like [`Self::handle`], with optional client IP for public challenge rate limits.
+    pub fn handle_from(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        authorization: Option<&str>,
+        body: &[u8],
+        now_ms: u64,
+        client_ip: Option<&str>,
+    ) -> Result<AppResponse, ApiError> {
         match classify(method.clone(), path) {
             RouteAction::Health => Ok(AppResponse::Json(serde_json::json!({
                 "status": "ok",
                 "region": self.config.region,
             }))),
-            RouteAction::Attestation => self.handle_attestation(body),
+            RouteAction::Attestation => self.handle_attestation(body, client_ip),
             RouteAction::ModelsList => {
                 let auth = self.authenticator.authenticate_bearer(authorization)?;
                 self.enforce_rate_limit(&auth)?;
@@ -295,8 +314,20 @@ where
             .forward_v1_stream(method, path, Some(body), out)
     }
 
-    fn handle_attestation(&self, body: &[u8]) -> Result<AppResponse, ApiError> {
+    fn handle_attestation(
+        &self,
+        body: &[u8],
+        client_ip: Option<&str>,
+    ) -> Result<AppResponse, ApiError> {
         use openapi_platform::CHALLENGE_NONCE_LEN;
+
+        // Keep challenge public (no API key / TeeChat JWT) — rate-limit by IP instead.
+        let ip_key = client_ip
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("unknown");
+        self.challenge_rate_limiter.check(ip_key)?;
+        let _inflight = self.challenge_inflight.try_acquire()?;
 
         self.limits.validate_body_size(body.len())?;
         if body.is_empty() {
@@ -625,6 +656,71 @@ mod tests {
             .handle(HttpMethod::Post, "/v1/attestation/challenge", None, b"", 1)
             .unwrap_err();
         assert!(matches!(err, ApiError::BadRequest(_)));
+    }
+
+    #[test]
+    fn attestation_challenge_rate_limited_per_ip() {
+        let mut limits = Limits::default();
+        limits.challenge_requests_per_minute = 2;
+        let api_key = "sk-teechat-test";
+        let catalog_signing = SigningKey::from_bytes(&[7u8; 32]);
+        let signed = sign_test_catalog(
+            vec![KeyRecord {
+                key_id: "k".into(),
+                key_hash_hex: hash_api_key(api_key),
+                revoked: false,
+            }],
+            &catalog_signing,
+        );
+        let catalog = KeyCatalog::from_signed(signed, catalog_signing.verifying_key()).unwrap();
+        let app = App::new(
+            Config::default(),
+            limits,
+            EdgeAuthenticator::from_catalog(Authenticator::new(catalog)),
+            MockUpstream::default(),
+            TestPlatform,
+            UsageSigner::from_seed([9u8; 32]),
+        );
+        let nonce = URL_SAFE_NO_PAD.encode([1u8; 32]);
+        let body = format!(r#"{{"nonce_b64":"{nonce}"}}"#).into_bytes();
+        app.handle_from(
+            HttpMethod::Post,
+            "/v1/attestation/challenge",
+            None,
+            &body,
+            1,
+            Some("203.0.113.10"),
+        )
+        .unwrap();
+        app.handle_from(
+            HttpMethod::Post,
+            "/v1/attestation/challenge",
+            None,
+            &body,
+            2,
+            Some("203.0.113.10"),
+        )
+        .unwrap();
+        let err = app
+            .handle_from(
+                HttpMethod::Post,
+                "/v1/attestation/challenge",
+                None,
+                &body,
+                3,
+                Some("203.0.113.10"),
+            )
+            .unwrap_err();
+        assert!(matches!(err, ApiError::RateLimited));
+        app.handle_from(
+            HttpMethod::Post,
+            "/v1/attestation/challenge",
+            None,
+            &body,
+            4,
+            Some("203.0.113.11"),
+        )
+        .unwrap();
     }
 
     #[test]

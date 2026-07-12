@@ -32,9 +32,10 @@ where
     P: AttestationPlatform,
     F: Fn(TcpStream) -> Option<Box<dyn ReadWriteConn>> + Send + Sync,
 {
+    let client_ip = stream.peer_addr().ok().map(|a| a.ip().to_string());
     if let Some(accept_tls) = tls.as_ref() {
         match accept_tls(stream) {
-            Some(mut conn) => serve_connection(app, conn.as_mut()),
+            Some(mut conn) => serve_connection(app, conn.as_mut(), client_ip.as_deref()),
             None => warn!("tls accept failed"),
         }
     } else {
@@ -135,8 +136,11 @@ where
     Ok(())
 }
 
-pub fn serve_connection<U, P>(app: &Arc<App<U, P>>, conn: &mut (impl Read + Write + ?Sized))
-where
+pub fn serve_connection<U, P>(
+    app: &Arc<App<U, P>>,
+    conn: &mut (impl Read + Write + ?Sized),
+    client_ip: Option<&str>,
+) where
     U: UpstreamForwarder,
     P: AttestationPlatform,
 {
@@ -160,6 +164,7 @@ where
                     &req.path,
                     req.headers.get("authorization").map(String::as_str),
                     &req.body,
+                    client_ip,
                     conn,
                 )
                 .is_err()

@@ -8,6 +8,10 @@ use crate::error::ApiError;
 pub struct Limits {
     pub requests_per_minute: u32,
     pub max_body_bytes: usize,
+    /// Public `POST /v1/attestation/challenge` per client IP (or shared `unknown`).
+    pub challenge_requests_per_minute: u32,
+    /// Max concurrent challenge handlers (SNP/DCAP quotes are expensive).
+    pub challenge_max_inflight: u32,
 }
 
 impl Default for Limits {
@@ -15,6 +19,9 @@ impl Default for Limits {
         Self {
             requests_per_minute: 120,
             max_body_bytes: 4 * 1024 * 1024,
+            // Hybrid verifiers challenge rarely; monitors need a few probes/min.
+            challenge_requests_per_minute: 10,
+            challenge_max_inflight: 4,
         }
     }
 }
@@ -40,6 +47,9 @@ impl RateLimiter {
     }
 
     pub fn check(&self, key_id: &str) -> Result<(), ApiError> {
+        if self.rpm == 0 {
+            return Err(ApiError::RateLimited);
+        }
         let mut buckets = self.buckets.lock().expect("rate limiter lock");
         let now = Instant::now();
         let bucket = buckets.entry(key_id.to_string()).or_insert(Bucket {
@@ -61,9 +71,54 @@ impl RateLimiter {
     }
 }
 
+/// Bounded concurrency for expensive attestation quotes.
+#[derive(Debug)]
+pub struct InflightGate {
+    max: u32,
+    current: Mutex<u32>,
+}
+
+pub struct InflightPermit<'a> {
+    gate: &'a InflightGate,
+}
+
+impl InflightGate {
+    pub fn new(max: u32) -> Self {
+        Self {
+            max: max.max(1),
+            current: Mutex::new(0),
+        }
+    }
+
+    pub fn try_acquire(&self) -> Result<InflightPermit<'_>, ApiError> {
+        let mut cur = self.current.lock().expect("inflight lock");
+        if *cur >= self.max {
+            return Err(ApiError::RateLimited);
+        }
+        *cur += 1;
+        Ok(InflightPermit { gate: self })
+    }
+}
+
+impl Drop for InflightPermit<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut cur) = self.gate.current.lock() {
+            *cur = cur.saturating_sub(1);
+        }
+    }
+}
+
 impl Limits {
     pub fn rate_limiter(&self) -> Arc<RateLimiter> {
         Arc::new(RateLimiter::new(self.requests_per_minute))
+    }
+
+    pub fn challenge_rate_limiter(&self) -> Arc<RateLimiter> {
+        Arc::new(RateLimiter::new(self.challenge_requests_per_minute))
+    }
+
+    pub fn challenge_inflight_gate(&self) -> Arc<InflightGate> {
+        Arc::new(InflightGate::new(self.challenge_max_inflight))
     }
 
     pub fn validate_body_size(&self, len: usize) -> Result<(), ApiError> {
@@ -102,5 +157,14 @@ mod tests {
         };
         assert!(limits.validate_body_size(10).is_ok());
         assert!(limits.validate_body_size(11).is_err());
+    }
+
+    #[test]
+    fn inflight_gate_caps_concurrency() {
+        let gate = InflightGate::new(1);
+        let a = gate.try_acquire().unwrap();
+        assert!(gate.try_acquire().is_err());
+        drop(a);
+        assert!(gate.try_acquire().is_ok());
     }
 }
