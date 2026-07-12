@@ -46,3 +46,6 @@ ureq = { version = "2.12", default-features = false, features = ["tls"] }
 lto = true
 codegen-units = 1
 strip = true
+
+# Applied only for SGX builds via deploy/sgx/build-enclave.sh (Cargo.toml.sgx-patch).
+# Do not add [patch.crates-io] here — it breaks CVM builds when vendor/ring is absent.

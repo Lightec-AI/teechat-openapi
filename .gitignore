@@ -6,6 +6,9 @@ Cargo.lock
 # Dev artifacts
 /dev/
 
+# Materialized by deploy/sgx/ensure-ring-fortanix-patch.sh (not committed).
+/deploy/sgx/vendor/
+
 # IDE
 .idea/
 .vscode/

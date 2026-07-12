@@ -31,6 +31,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rustls = { workspace = true }
 
 [target.'cfg(target_env = "sgx")'.dependencies]
+ring = { version = "0.17", features = ["less-safe-getrandom-custom-or-rdrand"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 sgx-isa = { version = "0.4", features = ["sgxstd"] }
 
