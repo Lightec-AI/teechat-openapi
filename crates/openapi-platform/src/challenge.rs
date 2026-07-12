@@ -230,23 +230,59 @@ pub fn report_data_matches_v1(
     Ok(bool::from(expected.ct_eq(actual)))
 }
 
+/// Offset of `reportdata` within an SGX REPORT / report body (Intel layout).
+pub const SGX_REPORT_DATA_OFFSET: usize = 320;
+
+/// SGX DCAP Quote3 header size before the ISV enclave report body.
+pub const SGX_DCAP_QUOTE3_HEADER_LEN: usize = 48;
+
+/// Offset of `reportdata` within a Quote3 ECDSA blob (`header || report_body || …`).
+pub const SGX_DCAP_REPORT_DATA_OFFSET: usize = SGX_DCAP_QUOTE3_HEADER_LEN + SGX_REPORT_DATA_OFFSET;
+
 /// Decode a standard-Base64 SGX REPORT and return its `reportdata` field.
 pub fn sgx_report_reportdata(quote_b64: &str) -> Result<[u8; REPORT_DATA_LEN], PlatformError> {
     let raw = STANDARD
         .decode(quote_b64.trim())
         .map_err(|e| PlatformError::Attestation(format!("quote_b64 decode: {e}")))?;
-    // sgx_isa::Report is 512 bytes (aligned). Layout: reportdata at offset 320.
-    // cpusvn(16)+miscselect(4)+res1(28)+attributes(16)+mrenclave(32)+res2(32)+mrsigner(32)
-    // +res3(96)+isvprodid(2)+isvsvn(2)+res4(60) = 320, then reportdata(64).
-    const REPORT_DATA_OFFSET: usize = 320;
-    if raw.len() < REPORT_DATA_OFFSET + REPORT_DATA_LEN {
+    // sgx_isa::Report layout: reportdata at offset 320.
+    if raw.len() < SGX_REPORT_DATA_OFFSET + REPORT_DATA_LEN {
         return Err(PlatformError::Attestation(format!(
             "SGX REPORT too short: {} bytes",
             raw.len()
         )));
     }
     let mut out = [0u8; REPORT_DATA_LEN];
-    out.copy_from_slice(&raw[REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + REPORT_DATA_LEN]);
+    out.copy_from_slice(&raw[SGX_REPORT_DATA_OFFSET..SGX_REPORT_DATA_OFFSET + REPORT_DATA_LEN]);
+    Ok(out)
+}
+
+/// Extract `reportdata` from a standard-Base64 SGX DCAP Quote3 (ECDSA) blob.
+///
+/// This does **not** verify the quote signature or collateral — only layout parse
+/// for challenge binding checks. Callers that need remote trust must verify DCAP.
+pub fn sgx_dcap_quote_reportdata(quote_b64: &str) -> Result<[u8; REPORT_DATA_LEN], PlatformError> {
+    let raw = STANDARD
+        .decode(quote_b64.trim())
+        .map_err(|e| PlatformError::Attestation(format!("quote_b64 decode: {e}")))?;
+    if raw.len() < 2 {
+        return Err(PlatformError::Attestation("DCAP quote too short".into()));
+    }
+    let version = u16::from_le_bytes([raw[0], raw[1]]);
+    if version != 3 {
+        return Err(PlatformError::Attestation(format!(
+            "unsupported DCAP quote version {version} (want 3)"
+        )));
+    }
+    if raw.len() < SGX_DCAP_REPORT_DATA_OFFSET + REPORT_DATA_LEN {
+        return Err(PlatformError::Attestation(format!(
+            "DCAP quote too short for report_data: {} bytes",
+            raw.len()
+        )));
+    }
+    let mut out = [0u8; REPORT_DATA_LEN];
+    out.copy_from_slice(
+        &raw[SGX_DCAP_REPORT_DATA_OFFSET..SGX_DCAP_REPORT_DATA_OFFSET + REPORT_DATA_LEN],
+    );
     Ok(out)
 }
 
@@ -295,11 +331,7 @@ pub fn verify_challenge_report_data(
     }
     let actual = match response.quote_format {
         QuoteFormat::SgxReport => sgx_report_reportdata(&response.quote_b64)?,
-        QuoteFormat::SgxDcapEcdsa => {
-            return Err(PlatformError::Attestation(
-                "sgx_dcap_ecdsa requires a DCAP quote verifier to extract report_data".into(),
-            ));
-        }
+        QuoteFormat::SgxDcapEcdsa => sgx_dcap_quote_reportdata(&response.quote_b64)?,
         QuoteFormat::SnpReport => snp_report_reportdata(&response.quote_b64)?,
     };
     if !report_data_matches_v1(nonce, &response.edge, &actual)? {
@@ -478,5 +510,26 @@ mod tests {
         assert!(QuoteFormat::SgxDcapEcdsa.remotely_verifiable());
         assert!(QuoteFormat::SnpReport.remotely_verifiable());
         assert!(!QuoteFormat::SgxReport.remotely_verifiable());
+    }
+
+    #[test]
+    fn dcap_quote_report_data_offset() {
+        let edge = sample_sgx_edge();
+        let nonce = [5u8; 32];
+        let rd = build_report_data_v1(&nonce, &edge).unwrap();
+        let mut quote = vec![0u8; SGX_DCAP_REPORT_DATA_OFFSET + REPORT_DATA_LEN];
+        quote[0] = 3; // Quote3 version LE
+        quote[1] = 0;
+        quote[SGX_DCAP_REPORT_DATA_OFFSET..SGX_DCAP_REPORT_DATA_OFFSET + 64].copy_from_slice(&rd);
+        let resp = AttestationChallengeResponse::new(
+            edge,
+            &nonce,
+            QuoteFormat::SgxDcapEcdsa,
+            &quote,
+        )
+        .unwrap();
+        assert_eq!(resp.quote_format, QuoteFormat::SgxDcapEcdsa);
+        assert_eq!(sgx_dcap_quote_reportdata(&resp.quote_b64).unwrap(), rd);
+        verify_challenge_report_data(&nonce, &resp).unwrap();
     }
 }

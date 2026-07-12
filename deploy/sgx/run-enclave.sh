@@ -46,6 +46,12 @@ ARGS=(
   "OPENAPI_BUILD_VERSION=${OPENAPI_BUILD_VERSION:-sgx}"
 )
 [[ -n "${OPENAPI_TLS_CERT_PATH:-}" ]] && ARGS+=("OPENAPI_TLS_CERT_PATH=${OPENAPI_TLS_CERT_PATH}")
+[[ -n "${OPENAPI_DCAP_HELPER_URL:-}" ]] && ARGS+=("OPENAPI_DCAP_HELPER_URL=${OPENAPI_DCAP_HELPER_URL}")
 [[ -n "${RUST_LOG:-}" ]] && ARGS+=("RUST_LOG=${RUST_LOG}")
+
+# Default DCAP helper for ECDSA quotes (host openapi-dcap-helper).
+if [[ -z "${OPENAPI_DCAP_HELPER_URL:-}" ]]; then
+  ARGS+=("OPENAPI_DCAP_HELPER_URL=http://127.0.0.1:18500")
+fi
 
 exec ftxsgx-runner --signature coresident "${SIGNED}" "${ARGS[@]}"

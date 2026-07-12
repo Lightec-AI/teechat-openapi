@@ -12,10 +12,11 @@ use std::path::Path;
 
 pub use challenge::{
     build_preimage_v1, build_report_data_v1, canonicalize_digest_field, canonicalize_edge_identity,
-    report_data_matches_v1, sgx_report_reportdata, snp_report_reportdata,
-    verify_challenge_report_data, AttestationChallengeResponse, ChallengeBindError, QuoteFormat,
-    CHALLENGE_MAGIC, CHALLENGE_NONCE_LEN, REPORT_DATA_LEN, REPORT_DATA_VERSION, SCHEMA_VERSION,
-    SNP_REPORT_DATA_OFFSET,
+    report_data_matches_v1, sgx_dcap_quote_reportdata, sgx_report_reportdata,
+    snp_report_reportdata, verify_challenge_report_data, AttestationChallengeResponse,
+    ChallengeBindError, QuoteFormat, CHALLENGE_MAGIC, CHALLENGE_NONCE_LEN, REPORT_DATA_LEN,
+    REPORT_DATA_VERSION, SCHEMA_VERSION, SGX_DCAP_QUOTE3_HEADER_LEN, SGX_DCAP_REPORT_DATA_OFFSET,
+    SGX_REPORT_DATA_OFFSET, SNP_REPORT_DATA_OFFSET,
 };
 pub use profile::{
     load_edge_profile, validate_tls_key_policy, EdgeProfile, ProfileError,

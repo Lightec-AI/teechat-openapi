@@ -102,7 +102,11 @@ curl -sS -X POST http://127.0.0.1:18443/v1/attestation/challenge \
   -H 'Content-Type: application/json' -d '{"nonce_b64":"AAAAAAAAAAAAAAAAAAAAAA"}'
 ```
 
-Inside the enclave, `/v1/attestation/challenge` includes an SGX **REPORT** in `quote_b64` when running on hardware.
+Inside the enclave, `/v1/attestation/challenge` returns a DCAP ECDSA quote (`quote_format: sgx_dcap_ecdsa`) when:
+
+1. PCCS is up (`./deploy/sgx/setup-pccs.sh` with `INTEL_PCS_API_KEY`)
+2. Host helper is running: `./deploy/sgx/run-dcap-helper.sh` (default `127.0.0.1:18500`)
+3. Enclave is launched via `run-enclave.sh` / `dev-run-sgx.sh` (passes `OPENAPI_DCAP_HELPER_URL`)
 
 ## 5. EPC / sizing guardrails
 

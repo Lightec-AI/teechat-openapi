@@ -1,6 +1,7 @@
 //! Fortanix EDP SGX platform backend for teechat-openapi.
 
 mod attest;
+mod dcap;
 mod env;
 mod report;
 mod run;

@@ -9,6 +9,7 @@ members = [
     "crates/openapi-platform-sgx",
     "bins/openapi",
     "bins/openapi-enclave",
+    "bins/openapi-dcap-helper",
     "bins/seal-tls-key",
     "bins/seal-tls-key-sgx",
     "bins/openapi-tls-ceremony",

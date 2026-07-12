@@ -3,16 +3,21 @@ use openapi_platform::{
     Measurement, PlatformError, QuoteFormat, CHALLENGE_NONCE_LEN,
 };
 
+use crate::dcap::DcapHelperClient;
 use crate::report;
 
 #[derive(Debug, Clone)]
 pub struct SgxAttestationPlatform {
     identity: EdgeIdentity,
+    dcap: Option<DcapHelperClient>,
 }
 
 impl SgxAttestationPlatform {
     pub fn new(identity: EdgeIdentity) -> Self {
-        Self { identity }
+        Self {
+            identity,
+            dcap: DcapHelperClient::from_env().ok(),
+        }
     }
 
     pub fn from_env(
@@ -31,7 +36,7 @@ impl SgxAttestationPlatform {
         })
     }
 
-    /// Build a challenge response from a pre-generated REPORT (tests / DCAP bridge).
+    /// Build a challenge response from a pre-generated REPORT/quote (tests).
     pub fn challenge_with_report(
         &self,
         nonce: &[u8],
@@ -47,6 +52,18 @@ impl SgxAttestationPlatform {
         )
         .map_err(Into::into)
     }
+
+    fn dcap_quote(&self, report_data: &[u8; 64]) -> Result<Vec<u8>, PlatformError> {
+        let dcap = self.dcap.as_ref().ok_or_else(|| {
+            PlatformError::Attestation(
+                "DCAP helper unavailable (set OPENAPI_DCAP_HELPER_URL, start openapi-dcap-helper)"
+                    .into(),
+            )
+        })?;
+        let target_info = dcap.qe_targetinfo()?;
+        let report = report::enclave_report_for_target(&target_info, report_data)?;
+        dcap.quote_report(&report)
+    }
 }
 
 impl AttestationPlatform for SgxAttestationPlatform {
@@ -61,14 +78,14 @@ impl AttestationPlatform for SgxAttestationPlatform {
             )));
         }
         let report_data = build_report_data_v1(nonce, &self.identity)?;
-        let report_bytes = report::enclave_report_with_data(&report_data)?;
-        // Local REPORT is hardware-correct for report_data binding. Remote internet
-        // verifiers need DCAP (`sgx_dcap_ecdsa`); that path is not yet linked in-tree.
+        // Production path: QE-targeted REPORT → AESM ECDSA quote. Fail closed —
+        // never return a local REPORT labeled as sgx_dcap_ecdsa.
+        let quote = self.dcap_quote(&report_data)?;
         AttestationChallengeResponse::new(
             self.identity.clone(),
             nonce,
-            QuoteFormat::SgxReport,
-            &report_bytes,
+            QuoteFormat::SgxDcapEcdsa,
+            &quote,
         )
         .map_err(Into::into)
     }
@@ -105,8 +122,16 @@ mod tests {
     }
 
     #[test]
-    fn host_challenge_errors_without_enclave() {
+    fn host_challenge_errors_without_enclave_or_helper() {
         let err = platform().challenge(&[0u8; 32]).unwrap_err();
-        assert!(err.to_string().contains("sgx") || err.to_string().contains("attestation"));
+        let s = err.to_string();
+        assert!(
+            s.contains("sgx")
+                || s.contains("attestation")
+                || s.contains("DCAP")
+                || s.contains("dcap")
+                || s.contains("helper"),
+            "unexpected error: {s}"
+        );
     }
 }

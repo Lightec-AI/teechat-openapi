@@ -1,0 +1,19 @@
+[package]
+name = "openapi-dcap-helper"
+description = "Host-side AESM/DCAP helper for Fortanix EDP enclaves (QE targetinfo + ECDSA quotes)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "openapi-dcap-helper"
+path = "src/main.rs"
+
+[dependencies]
+aesm-client = "0.6.2"
+anyhow = { workspace = true }
+sgx-isa = "0.4"
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
