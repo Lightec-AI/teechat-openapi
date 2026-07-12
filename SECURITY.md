@@ -42,7 +42,26 @@ OPENAPI_MRENCLAVE=... ./scripts/seal-tls-key-sgx.sh key.pem tls-key.sealed.json
 
 ### Attestation challenge
 
-`POST /v1/attestation/challenge` returns edge identity (measurement, code hash, TLS SPKI, build version) bound to a client nonce. SGX deployments include an enclave REPORT in `quote_b64` when running on hardware.
+**Canonical pin:** [`docs/attestation-challenge.md`](docs/attestation-challenge.md) (request/response JSON, `report_data` preimage, quote formats).
+
+`POST /v1/attestation/challenge` is the **Option A** path: clients send a **32-byte** nonce; the edge returns identity fields plus hardware evidence whose **64-byte `report_data`** embeds:
+
+```text
+report_data[0..32]  = SHA-256(preimage)
+report_data[32..64] = 0x00 × 32
+```
+
+`preimage` (version 1) binds magic `teechat-openapi-challenge-v1` + NUL, the nonce, TLS SPKI SHA-256, build/code digests, and measurement (`MRENCLAVE` or launch/image digests). **Never** XOR or otherwise mutate quote bytes after generation.
+
+Production SGX evidence must be a remotely verifiable **`sgx_dcap_ecdsa`** quote (not a local-only `sgx_report`). CVM uses `snp_report`.
+
+#### Three-step verification
+
+1. **Challenge** — Client generates a 32-byte nonce; `POST /v1/attestation/challenge` with `nonce_b64` (URL-safe, no pad). Prefer the same TLS session used for API calls when session-binding matters.
+2. **Attest** — Edge fills `report_data`, obtains a DCAP/SNP quote (QE/aesmd or SNP device). Quote generation is typically tens to hundreds of milliseconds warm; cold PCCS/aesmd failures should surface as `5xx`, not a fake quote.
+3. **Verify** — Client (a) verifies the Intel/AMD quote signature and TCB policy, (b) recomputes `report_data` and checks freshness/binding, (c) pins measurement / `code_hash` / `build_version` to the published regional manifest, and optionally requires `edge.tls_cert_spki_sha256` to match **this** connection’s peer SPKI.
+
+JSON schemas: [`attestation-challenge-request.v1.json`](manifest/schema/attestation-challenge-request.v1.json), [`attestation-challenge-response.v1.json`](manifest/schema/attestation-challenge-response.v1.json).
 
 ### Integrator reminder — attestation
 

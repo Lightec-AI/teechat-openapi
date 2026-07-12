@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teechat.ai/schemas/openapi/attestation-challenge-request.v1.json",
+  "title": "AttestationChallengeRequest",
+  "type": "object",
+  "required": ["nonce_b64"],
+  "properties": {
+    "nonce_b64": {
+      "type": "string",
+      "description": "URL-safe Base64 (no padding) of exactly 32 random bytes."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teechat.ai/schemas/openapi/attestation-challenge-response.v1.json",
+  "title": "AttestationChallengeResponse",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "report_data_version",
+    "edge",
+    "challenge_nonce_b64",
+    "quote_format",
+    "quote_b64"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "report_data_version": { "type": "integer", "const": 1 },
+    "edge": {
+      "type": "object",
+      "required": [
+        "build_version",
+        "code_hash",
+        "measurement",
+        "tls_cert_spki_sha256"
+      ],
+      "properties": {
+        "build_version": { "type": "string", "minLength": 1 },
+        "code_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tls_cert_spki_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "measurement": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind", "value"],
+              "properties": {
+                "kind": { "const": "mrenclave" },
+                "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "launch_digest", "image_digest"],
+              "properties": {
+                "kind": { "const": "launch_digest" },
+                "launch_digest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "image_digest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "challenge_nonce_b64": { "type": "string" },
+    "quote_format": {
+      "type": "string",
+      "enum": ["sgx_dcap_ecdsa", "sgx_report", "snp_report"]
+    },
+    "quote_b64": {
+      "type": "string",
+      "description": "Standard Base64 of quote or report bytes."
+    }
+  },
+  "additionalProperties": false
+}

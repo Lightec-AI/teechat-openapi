@@ -44,7 +44,7 @@
 - **Location:** `crates/openapi-platform-sgx/src/report.rs`
 - **Detail:** `local_enclave_report_b64()` calls `Report::for_self()` then XOR-mixes the client nonce into the serialized REPORT bytes. That mutates a measured structure after generation and is not Intel-standard `report_data` binding.
 - **Impact:** Verifiers cannot prove the enclave saw the challenge nonce at REPORT generation time; recycled/host-tampered quote blobs may be accepted.
-- **Remediation:** Generate REPORT with `reportdata = SHA-256(nonce ‖ SPKI ‖ build)` (or fill `report_data` before `for_self` / `for_target`). Never post-process REPORT bytes. Update `SECURITY.md` and client verifiers.
+- **Remediation:** Implement [`docs/attestation-challenge.md`](./attestation-challenge.md) (`report_data` v1 preimage + `sgx_dcap_ecdsa`). Never post-process REPORT/quote bytes.
 
 ### ATT-002 — High — CVM attestation challenge returns no guest quote
 

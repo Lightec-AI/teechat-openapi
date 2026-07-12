@@ -29,6 +29,8 @@ Non-streaming inference responses include `X-TeeChat-Usage-Report`. Streaming (`
 | `POST` | `/v1/chat/completions` | Bearer API key |
 | `POST` | `/v1/attestation/challenge` | none |
 
+**Attestation (verifying clients):** three-step challenge → quote → verify. Locked wire format: [`docs/attestation-challenge.md`](docs/attestation-challenge.md) · summary in [`SECURITY.md`](SECURITY.md).
+
 ## Build
 
 ```bash
