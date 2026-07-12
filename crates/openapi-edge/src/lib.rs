@@ -1,8 +1,10 @@
 //! Shared edge HTTP server loop (plain TCP + optional TLS).
 
 use std::io::{Read, Write};
-use std::net::TcpListener;
-use std::sync::Arc;
+use std::net::{TcpListener, TcpStream};
+use std::sync::mpsc::sync_channel;
+use std::sync::{Arc, Mutex};
+use std::thread::Builder;
 
 use anyhow::Context;
 use openapi_core::handler::{App, UpstreamForwarder};
@@ -14,7 +16,38 @@ pub trait ReadWriteConn: Read + Write + Send {}
 
 impl<T: Read + Write + Send> ReadWriteConn for T {}
 
-/// Run the edge listener until process exit. Spawns one thread per connection.
+/// Default accept-worker count. On Fortanix EDP each worker needs a TCS
+/// (`ftxsgx-elf2sgxs --threads`); keep this below `SGX_THREADS` (build default 16).
+fn accept_worker_count() -> usize {
+    std::env::var("OPENAPI_ACCEPT_WORKERS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(if cfg!(target_env = "sgx") { 8 } else { 32 })
+}
+
+fn handle_stream<U, P, F>(stream: TcpStream, app: &Arc<App<U, P>>, tls: &Option<Arc<F>>)
+where
+    U: UpstreamForwarder,
+    P: AttestationPlatform,
+    F: Fn(TcpStream) -> Option<Box<dyn ReadWriteConn>> + Send + Sync,
+{
+    if let Some(accept_tls) = tls.as_ref() {
+        match accept_tls(stream) {
+            Some(mut conn) => serve_connection(app, conn.as_mut()),
+            None => warn!("tls accept failed"),
+        }
+    } else {
+        let _ = handle_connection(stream, Arc::clone(app));
+    }
+}
+
+/// Run the edge listener until process exit.
+///
+/// Uses a **bounded worker pool** (`OPENAPI_ACCEPT_WORKERS`) instead of
+/// unbounded `thread::spawn` per connection. On Fortanix EDP, exhausting TCSes
+/// makes `thread::spawn` panic; `Builder::spawn` returns `Err` and we fall back
+/// to serving on the accept thread.
 pub fn run_edge_server<U, P, F>(
     listen_addr: &str,
     app: Arc<App<U, P>>,
@@ -23,33 +56,80 @@ pub fn run_edge_server<U, P, F>(
 where
     U: UpstreamForwarder + 'static,
     P: AttestationPlatform + 'static,
-    F: Fn(std::net::TcpStream) -> Option<Box<dyn ReadWriteConn>> + Send + Sync + 'static,
+    F: Fn(TcpStream) -> Option<Box<dyn ReadWriteConn>> + Send + Sync + 'static,
 {
     let listener = TcpListener::bind(listen_addr).context("bind listen addr")?;
-    info!(addr = ?listener.local_addr()?, "edge listening");
-
+    let local = listener.local_addr()?;
     let tls = tls.map(Arc::new);
 
-    for stream in listener.incoming() {
-        let stream = match stream {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(error = %e, "accept failed");
-                continue;
-            }
-        };
+    let want = accept_worker_count();
+    let (tx, rx) = sync_channel::<TcpStream>(want);
+    let rx = Arc::new(Mutex::new(rx));
+    let mut live = 0usize;
+
+    for i in 0..want {
+        let rx = Arc::clone(&rx);
         let app = Arc::clone(&app);
         let tls = tls.clone();
-        std::thread::spawn(move || {
-            if let Some(accept_tls) = tls.as_ref() {
-                match accept_tls(stream) {
-                    Some(mut conn) => serve_connection(&app, conn.as_mut()),
-                    None => warn!("tls accept failed"),
+        // Never use thread::spawn — it panics when Fortanix is out of TCSes.
+        match Builder::new()
+            .name(format!("edge-accept-{i}"))
+            .spawn(move || {
+                loop {
+                    let stream = {
+                        let guard = match rx.lock() {
+                            Ok(g) => g,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        match guard.recv() {
+                            Ok(s) => s,
+                            Err(_) => return, // sender dropped
+                        }
+                    };
+                    handle_stream(stream, &app, &tls);
                 }
-            } else {
-                let _ = handle_connection(stream, app);
+            }) {
+            Ok(_) => live += 1,
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    spawned = live,
+                    requested = want,
+                    "accept worker spawn failed (likely no free SGX TCS); stopping pool growth"
+                );
+                break;
             }
-        });
+        }
+    }
+
+    if live == 0 {
+        info!(addr = ?local, mode = "serial", "edge listening (no accept workers)");
+        for stream in listener.incoming() {
+            let stream = match stream {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, "accept failed");
+                    continue;
+                }
+            };
+            handle_stream(stream, &app, &tls);
+        }
+    } else {
+        info!(addr = ?local, accept_workers = live, "edge listening");
+        for stream in listener.incoming() {
+            let stream = match stream {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(error = %e, "accept failed");
+                    continue;
+                }
+            };
+            // Back-pressure when all workers are busy (does not spawn more threads).
+            if tx.send(stream).is_err() {
+                warn!("accept workers gone; shutting down listener");
+                break;
+            }
+        }
     }
 
     Ok(())
@@ -106,17 +186,18 @@ mod tests {
     use base64::Engine;
     use ed25519_dalek::SigningKey;
     use openapi_core::auth::Authenticator;
-    use openapi_core::remote_auth::EdgeAuthenticator;
     use openapi_core::catalog::{hash_api_key, sign_test_catalog, KeyCatalog, KeyRecord};
     use openapi_core::config::Config;
     use openapi_core::handler::UpstreamResponse;
     use openapi_core::limits::Limits;
+    use openapi_core::remote_auth::EdgeAuthenticator;
     use openapi_core::usage::UsageSigner;
     use openapi_core::{ApiError, UpstreamForwarder};
     use openapi_platform::{AttestationChallengeResponse, Measurement, PlatformError};
     use rand::rngs::OsRng;
     use std::io::{Read, Write};
     use std::net::TcpStream;
+    use std::thread::Builder;
 
     struct TestUpstream;
     impl UpstreamForwarder for TestUpstream {
@@ -180,11 +261,13 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let app = test_app();
-        std::thread::spawn(move || {
-            if let Ok((stream, _)) = listener.accept() {
-                let _ = handle_connection(stream, app);
-            }
-        });
+        Builder::new()
+            .spawn(move || {
+                if let Ok((stream, _)) = listener.accept() {
+                    let _ = handle_connection(stream, app);
+                }
+            })
+            .unwrap();
         let mut stream = TcpStream::connect(addr).unwrap();
         stream
             .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n")
