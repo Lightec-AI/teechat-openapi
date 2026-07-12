@@ -5,8 +5,10 @@ use openapi_platform::{
     derive_seal_key, seal_tls_private_key, unseal_tls_private_key, SEAL_VERSION,
 };
 use openapi_platform::{
-    Measurement, PlatformError, SealedTlsKeyBlob, Sealer, SEAL_VERSION_SGX_EGETKEY,
+    Measurement, PlatformError, SealedTlsKeyBlob, Sealer, SEAL_VERSION, SEAL_VERSION_SGX_EGETKEY,
 };
+#[cfg(target_env = "sgx")]
+use openapi_platform::unseal_tls_private_key;
 
 /// 16-byte EGETKEY label for TLS key sealing (Fortanix sealing API).
 pub const SGX_TLS_SEAL_LABEL: [u8; 16] = *b"teechat-tls-seal";
@@ -129,10 +131,8 @@ impl Sealer for SgxSealer {
 pub fn local_mrenclave_hex() -> Result<String, PlatformError> {
     #[cfg(target_env = "sgx")]
     {
-        use std::os::fortanix_sgx::Report;
-        let report = Report::for_self()
-            .map_err(|e| PlatformError::Attestation(format!("sgx report: {e:?}")))?;
-        return Ok(hex::encode(report.mrenclave));
+        use sgx_isa::Report;
+        return Ok(hex::encode(Report::for_self().mrenclave));
     }
     #[cfg(not(target_env = "sgx"))]
     {
@@ -147,9 +147,16 @@ pub fn local_mrenclave_hex() -> Result<String, PlatformError> {
 #[cfg(target_env = "sgx")]
 mod hw {
     use super::*;
-    use rand::random;
-    use sgx_isa::{Attributes, ErrorCode, Keyname, Keypolicy, Keyrequest, Miscselect, Report};
+    use aes_gcm::aead::{Aead, KeyInit};
+    use aes_gcm::{Aes256Gcm, Nonce};
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
     use hkdf::Hkdf;
+    use openapi_platform::{measurement_binding_label, SEAL_AAD};
+    use rand::{random, RngCore};
+    use sgx_isa::{
+        Attributes, AttributesFlags, ErrorCode, Keyname, Keypolicy, Keyrequest, Miscselect, Report,
+    };
     use sha2::Sha256;
 
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -175,8 +182,8 @@ mod hw {
                 rand_b64: URL_SAFE_NO_PAD.encode(self.rand),
                 isvsvn: self.isvsvn,
                 cpusvn_b64: URL_SAFE_NO_PAD.encode(self.cpusvn),
-                attributes: self.attributes.as_array(),
-                miscselect: self.miscselect.0,
+                attributes: [self.attributes.flags.bits(), self.attributes.xfrm],
+                miscselect: self.miscselect.bits(),
             }
         }
 
@@ -187,8 +194,11 @@ mod hw {
                 rand,
                 isvsvn: w.isvsvn,
                 cpusvn,
-                attributes: Attributes::from_array(w.attributes),
-                miscselect: Miscselect(w.miscselect),
+                attributes: Attributes {
+                    flags: AttributesFlags::from_bits_truncate(w.attributes[0]),
+                    xfrm: w.attributes[1],
+                },
+                miscselect: Miscselect::from_bits_truncate(w.miscselect),
             })
         }
     }

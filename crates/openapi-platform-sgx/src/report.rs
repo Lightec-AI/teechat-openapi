@@ -7,11 +7,10 @@ const _REPORT_DATA_LEN: usize = 64;
 #[cfg(target_env = "sgx")]
 pub fn local_enclave_report_b64(nonce: &[u8]) -> Result<Option<String>, PlatformError> {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-    use std::os::fortanix_sgx::Report;
+    use sgx_isa::Report;
 
-    let report = Report::for_self()
-        .map_err(|e| PlatformError::Attestation(format!("sgx report: {e:?}")))?;
-    let mut bytes = report.as_ref().to_vec();
+    let report = Report::for_self();
+    let mut bytes = <Report as AsRef<[u8]>>::as_ref(&report).to_vec();
     // Mix nonce into returned blob so host-side auditors can correlate challenge binding.
     let mix_len = nonce.len().min(bytes.len());
     for (i, b) in nonce.iter().take(mix_len).enumerate() {
