@@ -48,12 +48,16 @@ fn snp_report_linux(report_data: &[u8; REPORT_DATA_LEN]) -> Result<Vec<u8>, Plat
         )));
     };
 
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     let tmp = std::env::temp_dir().join(format!(
-        "teechat-openapi-snp-report-{}.bin",
+        "teechat-openapi-snp-report-{}-{stamp}.bin",
         std::process::id()
     ));
     let request = std::env::temp_dir().join(format!(
-        "teechat-openapi-snp-request-{}.bin",
+        "teechat-openapi-snp-request-{}-{stamp}.bin",
         std::process::id()
     ));
     std::fs::write(&request, report_data).map_err(|e| PlatformError::Io(e.to_string()))?;
