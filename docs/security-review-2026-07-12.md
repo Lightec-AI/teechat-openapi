@@ -42,21 +42,21 @@
 
 ### ATT-001 — High — SGX challenge nonce not bound via `REPORT.report_data`
 
-- **Status:** **Mitigated in-tree** (`566d96e`) — `report_data` v1 preimage + `Report::for_target`; response includes `schema_version` / `report_data_version` / `quote_format`. Production SGX still returns `sgx_report` (local REPORT) until DCAP quote generation is linked (`sgx_dcap_ecdsa`).
-- **Location:** `crates/openapi-platform/src/challenge.rs`, `crates/openapi-platform-sgx/src/report.rs`
-- **Remaining:** Wire DCAP ECDSA quote (`aesmd` / QE) and set `quote_format = sgx_dcap_ecdsa` for internet verifiers.
+- **Status:** **Mitigated in-tree** — `report_data` v1 preimage + QE-targeted `Report::for_target` + host `openapi-dcap-helper` (AESM ECDSA) returns `quote_format = sgx_dcap_ecdsa`. Fail-closed if helper/PCCS/aesmd is down (no silent local-REPORT downgrade).
+- **Location:** `crates/openapi-platform/src/challenge.rs`, `crates/openapi-platform-sgx/src/{attest,dcap,report}.rs`, `bins/openapi-dcap-helper`
+- **Ops dependency:** Local PCCS (`deploy/sgx/setup-pccs.sh` + Intel PCS API key) and `./deploy/sgx/run-dcap-helper.sh` beside the enclave.
 
 ### ATT-002 — High — CVM attestation challenge returns no guest quote
 
-- **Status:** **Partially mitigated** (`566d96e`) — challenge builds `report_data` v1 and requires an SNP report (`snpguest report`) with matching `REPORT_DATA`. Hosts without SNP/snpguest fail closed (no empty quote).
+- **Status:** **Mitigated on staging SNP guest** — challenge builds `report_data` v1 and requires an SNP report (`snpguest report` with correct arg order + VMPL 0) with matching `REPORT_DATA`. Verified live on RedSwitches `prod-openapi` (`quote_format=snp_report`, 1184-byte report, binding OK). Hosts without SNP/snpguest fail closed.
 - **Location:** `crates/openapi-platform-cvm/src/{attest,snp_report}.rs`
-- **Remaining:** Prefer in-process `/dev/sev-guest` ioctl; publish VCEK verify recipe for clients.
+- **Remaining:** Prefer in-process `/dev/sev-guest` ioctl (drop CLI); publish VCEK verify recipe for clients.
 
 ### ATT-003 — Medium — Challenge identity payload is unsigned
 
 - **Status:** **Mitigated by Option A (hardware binding)** — we did **not** add an Ed25519 signature over the JSON body. The locked remediation allowed *“or rely solely on hardware quotes.”* Verifying clients recompute `report_data` from the JSON identity fields + nonce and match the quote/`REPORT` user-data; those fields are therefore covered by hardware evidence, not by a separate software signature.
 - **Location:** `crates/openapi-platform/src/challenge.rs` · [`docs/attestation-challenge.md`](./attestation-challenge.md)
-- **Caveat:** Clients that trust JSON fields **without** checking `report_data` (or that accept `sgx_report` without a local/same-platform verifier) still see unsigned claims. Remote SGX internet verify still needs DCAP (ATT-001 remaining). No change for skip-attestation OpenAI clients (by product design).
+- **Caveat:** Clients that trust JSON fields **without** checking `report_data` still see unsigned claims. Remote internet verify must check the DCAP ECDSA quote (not a local `sgx_report`). No change for skip-attestation OpenAI clients (by product design).
 - **Not done:** Manifest-published Ed25519 challenge signing (optional defense-in-depth; not required once hardware binding is verified).
 
 ### NET-001 — High — Revocation push listener has no transport authentication
@@ -144,7 +144,7 @@
 
 | Priority | IDs | Work |
 |----------|-----|------|
-| P0 | ATT-001 remaining | DCAP ECDSA quotes (`sgx_dcap_ecdsa`) for remote SGX verify |
+| P0 | ATT-001 | DCAP ECDSA wired; keep PCCS/helper healthy in ops |
 | P0 | AUTH-001 | Enforce L0 models/rpm at edge |
 | P1 | NET-001, DOS-001 | Push auth + CVM bounded accept |
 | P1 | ATT-002 remaining, METER-001, OPS-001, OPS-002 | SNP ioctl + streaming usage + prod seal guards |

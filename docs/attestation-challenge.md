@@ -201,10 +201,10 @@ assert quote.report_data == expected
 1. Reject nonce ≠ 32 bytes.
 2. Use the **currently serving** TLS leaf SPKI (not a stale env copy that can drift from the acceptor).
 3. Fill `report_data` **before** REPORT/quote generation — **never** post-process quote bytes.
-4. Prefer `quote_format = sgx_dcap_ecdsa` (or `snp_report` on CVM) for any deployment that claims remote verifiability. Until DCAP is linked, SGX may return `sgx_report` (honest local REPORT with correct `report_data`).
+4. Prefer `quote_format = sgx_dcap_ecdsa` (or `snp_report` on CVM) for any deployment that claims remote verifiability. SGX production path uses host `openapi-dcap-helper` + AESM/QE; without PCCS/helper the challenge fails closed (no silent `sgx_report` downgrade).
 5. Canonicalize identity digests before hashing: 64-hex fields are lowercased; non-hex staging values (e.g. `code_hash=unknown`) become `hex(SHA-256(utf8))` in both `report_data` and the JSON response.
 6. On quote infrastructure failure (aesmd / QE / PCCS / snpguest), return a clear `5xx` with a stable error code — do not return a local REPORT labeled as a DCAP quote.
-7. Rate-limit the public challenge endpoint.
+7. Rate-limit the public challenge endpoint by client IP (`OPENAPI_CHALLENGE_RPM`) and cap concurrent quotes (`OPENAPI_CHALLENGE_MAX_INFLIGHT`). Do not require TeeChat JWTs.
 
 ---
 

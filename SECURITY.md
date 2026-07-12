@@ -53,7 +53,7 @@ report_data[32..64] = 0x00 × 32
 
 `preimage` (version 1) binds magic `teechat-openapi-challenge-v1` (28 ASCII bytes), the nonce, TLS SPKI SHA-256, build/code digests, and measurement (`MRENCLAVE` or launch/image digests). **Never** XOR or otherwise mutate quote bytes after generation.
 
-Production SGX evidence must be a remotely verifiable **`sgx_dcap_ecdsa`** quote (not a local-only `sgx_report`). CVM uses `snp_report`.
+Production SGX evidence must be a remotely verifiable **`sgx_dcap_ecdsa`** quote (not a local-only `sgx_report`). CVM uses `snp_report`. On Fortanix EDP, quote generation uses host `openapi-dcap-helper` (AESM/QE) plus a local PCCS (`deploy/sgx/setup-pccs.sh`).
 
 #### Three-step verification
 
@@ -67,7 +67,9 @@ JSON schemas: [`attestation-challenge-request.v1.json`](manifest/schema/attestat
 
 ### Integrator reminder — attestation
 
-**OpenAI-compatible default:** most `base_url` + API key clients **skip** attestation. That is **normally acceptable** for this product: TLS still terminates in the TEE, and **`POST /v1/attestation/challenge` is public** (no API key) so anyone can independently check the live measurement against the published manifest. Skipping does **not** prove *your* connection was verified — only that verification is optional and externally auditable.
+**OpenAI-compatible default:** most `base_url` + API key clients **skip** attestation. That is **normally acceptable** for this product: TLS still terminates in the TEE, and **`POST /v1/attestation/challenge` is public** (no API key, no TeeChat JWT) so anyone can independently check the live measurement against the published manifest. Skipping does **not** prove *your* connection was verified — only that verification is optional and externally auditable.
+
+**DoS control:** the challenge endpoint is rate-limited by **client IP** (`OPENAPI_CHALLENGE_RPM`, default 10/min) and capped for **in-flight quotes** (`OPENAPI_CHALLENGE_MAX_INFLIGHT`, default 4). Do **not** require TeeChat login JWTs for challenge — that would break independent monitors and still not stop account-farmed abuse.
 
 **If your client verifies attestation** (auditors, monitors, custom integrators), use the **hybrid** policy — not a challenge on every prompt:
 
