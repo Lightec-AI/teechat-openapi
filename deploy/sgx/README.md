@@ -17,9 +17,11 @@ sudo apt-get install -y build-essential pkg-config libssl-dev openssl curl
 # Intel AESM / DCAP (distro packages vary)
 # See Intel SGX driver + aesmd install guide for your OS
 
-# Rust
+# Rust (nightly required for Fortanix EDP `sgx_platform`)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup target add x86_64-fortanix-unknown-sgx
+rustup toolchain install nightly
+rustup target add x86_64-fortanix-unknown-sgx --toolchain nightly
+# Optional (CN / slow uplink): RUSTUP_DIST_SERVER=https://rsproxy.cn
 
 # Fortanix EDP tools
 cargo install fortanix-sgx-tools sgxs-tools
@@ -40,20 +42,15 @@ Verify hardware:
 ```bash
 cd /path/to/teechat-openapi
 ./deploy/sgx/build-enclave.sh
+# or: ./scripts/dev-run-sgx.sh   # builds, signs, runs with inline catalog
 ```
 
-This produces a signed enclave at:
+**Fortanix EDP notes (lab):**
 
-`target/x86_64-fortanix-unknown-sgx/release/openapi-enclave.sgxs.signed`
-
-and writes `deploy/sgx/last-build-inspect.txt` including **MRENCLAVE**.
-
-Export:
-
-```bash
-export OPENAPI_MRENCLAVE=<hex from inspect>
-export OPENAPI_SGX_ENCLAVE=$PWD/target/x86_64-fortanix-unknown-sgx/release/openapi-enclave.sgxs.signed
-```
+- Enclave starts with an **empty environment** — pass `OPENAPI_*=…` as `ftxsgx-runner` enclave args (see `run-enclave.sh`). Host `export` does not inject.
+- No host filesystem — use **`OPENAPI_CATALOG_JSON`** (inline), not a catalog file path.
+- Build with enough TCSes (`SGX_THREADS`, default **16**). The edge uses a bounded accept pool (`OPENAPI_ACCEPT_WORKERS`, default **8** on SGX) via `Builder::spawn` — never unbounded `thread::spawn` (that panics when TCSes are exhausted).
+- Default heap **32 MiB** fits ~92 MiB EPC on lab boxes without a PRMRR menu.
 
 ## 3. Configure runtime env
 
