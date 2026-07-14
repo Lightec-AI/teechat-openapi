@@ -96,19 +96,15 @@
 
 ### OPS-001 — Medium — `OPENAPI_ATTESTED_LAUNCH_DIGEST` bypasses snpguest
 
-- **Status:** **Open** (unchanged by Option A). Note: challenge now uses `snpguest` for quotes; this finding is about **sealing** digest override, not the challenge path.
-- **Location:** `crates/openapi-platform-cvm/src/guest_digest.rs`
-- **Detail:** Env override preferred over `snpguest` when set (documented for tests).
-- **Impact:** Rogue guest env write can forge sealing policy digest without hardware attestation.
-- **Remediation:** Ignore override when `OPENAPI_PROFILE=prod`; fail closed to snpguest / `/dev/sev-guest`.
+- **Status:** **Mitigated** — when `OPENAPI_PROFILE=prod`, env override is **fail-closed** (`read_attested_launch_digest`, `validate_tls_key_policy`, ceremony policy). Dev/CI may still use the override. Prod seals require `snpguest` / `/dev/sev-guest`.
+- **Location:** `crates/openapi-platform-cvm/src/guest_digest.rs`, `crates/openapi-platform/src/profile.rs`, `tls_ceremony.rs`
+- **Residual:** Prefer in-process `/dev/sev-guest` ioctl (ATT-002 remaining) over CLI `snpguest`.
 
 ### OPS-002 — Medium — `seal-tls-key-sgx` lacks prod profile refusal
 
-- **Status:** **Open** (unchanged by Option A).
-- **Location:** `bins/seal-tls-key-sgx` vs `bins/seal-tls-key`
-- **Detail:** CVM seal tool bails on `OPENAPI_PROFILE=prod`; SGX tool does not.
-- **Impact:** Host-visible plaintext keys can enter an SGX sealing workflow labeled prod.
-- **Remediation:** Mirror CVM prod bail; prefer in-enclave ceremony for prod.
+- **Status:** **Mitigated** — shared `assert_dev_host_seal_tool` refuses host seal under prod for both `seal-tls-key` and `seal-tls-key-sgx`.
+- **Location:** `bins/seal-tls-key-sgx`, `bins/seal-tls-key`, `crates/openapi-platform/src/profile.rs`
+- **Residual:** Prefer in-enclave ceremony for prod key material (ops process).
 
 ### CFG-001 — Medium — SGX config via CLI args is host-attacker visible
 

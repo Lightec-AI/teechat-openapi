@@ -18,11 +18,11 @@
 |----------|--------------:|-----------------:|-----------------------:|
 | Critical | 0 | 0 | — |
 | High | 0 | 0 | 4 (ATT-001/002, AUTH-001, NET-001) |
-| Medium | **1** (BENCH-001) | 5 (METER, OPS×2, PROXY, CFG) | 3 (ATT-003, DOS-001, IDLE-001) |
+| Medium | **1** (BENCH-001) | 3 (PROXY, CFG + prior residual) | 5 (ATT-003, DOS-001, IDLE-001, OPS-001/002) |
 | Low | **1** (ROUTE-001) | 1 (TLS-001) | — |
 | Info | 0 | — | CRYPTO-001 (unchanged positive) |
 
-**Verdict:** Remediations for attestation, AUTH-001, D6-pull (NET-001), and DOS-001 **hold**; **IDLE-001 mitigated** (TLS path clears arrival idle via `TcpStream::try_clone`). Residual P1: stream metering, CVM/SGX seal ops guards, **prod challenge bench token**. P2: proxy allowlist, measured SGX config, prod TLS-required.
+**Verdict:** Remediations for attestation, AUTH-001, D6-pull (NET-001), DOS-001, IDLE-001, and **OPS-001/002** hold. Residual P1: **BENCH-001** (+ METER if not yet shipped). P2: proxy allowlist, measured SGX config, prod TLS-required.
 
 ---
 
@@ -38,8 +38,8 @@
 | DOS-001 | Medium | **Mitigated** | Bounded pool + 429 shed + per-IP caps; TLS idle clear via socket `try_clone` (IDLE-001) |
 | PROXY-001 | Medium | **Open** | Transparent `/v1/*` default-allow remains |
 | METER-001 | Medium | **Mitigated** | Stream path accumulates SSE `usage` then signs |
-| OPS-001 | Medium | **Open** | `OPENAPI_ATTESTED_LAUNCH_DIGEST` still preferred in prod sealing path |
-| OPS-002 | Medium | **Open** | `seal-tls-key-sgx` still lacks prod profile refusal |
+| OPS-001 | Medium | **Mitigated** | Prod forbids `OPENAPI_ATTESTED_LAUNCH_DIGEST`; hardware-only |
+| OPS-002 | Medium | **Mitigated** | Host seal tools refuse `OPENAPI_PROFILE=prod` |
 | CFG-001 | Medium | **Open** | SGX `OPENAPI_*` via argv still host-visible / unmeasured |
 | TLS-001 | Low | **Open** | Prod does not require successful TLS acceptor |
 | CRYPTO-001 | Info | **Valid** | TLS 1.3-only, prod sealed-key rules, honest quote labels |
@@ -78,7 +78,7 @@
 |----------|-----|------|
 | Done | **IDLE-001** | TLS arrival idle cleared via socket `try_clone` |
 | Done | **METER-001** | Accumulate SSE usage before signing trailer |
-| P1 | OPS-001, OPS-002 | Prod seal guards (ignore attested-digest override; SGX tool prod bail) |
+| Done | **OPS-001, OPS-002** | Prod forbids attested-digest override; host seal tools refuse prod |
 | P1 | **BENCH-001** | Prod-forbid challenge bench token |
 | P2 | PROXY-001 + ROUTE-001 | Prod allowlist + path normalize |
 | P2 | CFG-001, TLS-001 | Measured config; require TLS acceptor in prod |
