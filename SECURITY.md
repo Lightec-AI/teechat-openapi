@@ -25,6 +25,7 @@ Production edge nodes seal the TLS private key to a TEE measurement. Operators s
 - **`OPENAPI_SEAL_ROOT_HEX`** forbidden — seal root is derived inside the TEE, not supplied by the host.
 - **`OPENAPI_ATTESTED_LAUNCH_DIGEST`** forbidden — CVM dev/CI hook only; prod must use `snpguest` / `/dev/sev-guest` (OPS-001).
 - Host-side **`seal-tls-key`** / **`seal-tls-key-sgx`** forbidden — use in-TEE ceremony (OPS-002).
+- **`OPENAPI_CHALLENGE_BENCH_TOKEN`** forbidden — lab-only bypass of challenge RPM / in-flight caps (BENCH-001).
 - **SGX:** runtime **MRENCLAVE** from enclave report must match the sealed blob (fail closed).
 - **CVM:** **`OPENAPI_LAUNCH_DIGEST`** must match the guest-attested launch digest (`snpguest` / `/dev/sev-guest`).
 
@@ -71,7 +72,7 @@ JSON schemas: [`attestation-challenge-request.v1.json`](manifest/schema/attestat
 
 **OpenAI-compatible default:** most `base_url` + API key clients **skip** attestation. That is **normally acceptable** for this product: TLS still terminates in the TEE, and **`POST /v1/attestation/challenge` is public** (no API key, no TeeChat JWT) so anyone can independently check the live measurement against the published manifest. Skipping does **not** prove *your* connection was verified — only that verification is optional and externally auditable.
 
-**DoS control:** the challenge endpoint is rate-limited by **client IP** (`OPENAPI_CHALLENGE_RPM`, default 10/min) and capped for **in-flight quotes** (`OPENAPI_CHALLENGE_MAX_INFLIGHT`, default 4). Do **not** require TeeChat login JWTs for challenge — that would break independent monitors and still not stop account-farmed abuse.
+**DoS control:** the challenge endpoint is rate-limited by **client IP** (`OPENAPI_CHALLENGE_RPM`, default 10/min) and capped for **in-flight quotes** (`OPENAPI_CHALLENGE_MAX_INFLIGHT`, default 4). Do **not** require TeeChat login JWTs for challenge — that would break independent monitors and still not stop account-farmed abuse. Optional `OPENAPI_CHALLENGE_BENCH_TOKEN` (header `X-TeeChat-Challenge-Bench`) may bypass those caps for **dev/lab benches only** — forbidden when `OPENAPI_PROFILE=prod` (BENCH-001).
 
 **If your client verifies attestation** (auditors, monitors, custom integrators), use the **hybrid** policy — not a challenge on every prompt:
 

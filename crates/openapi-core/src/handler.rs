@@ -391,17 +391,23 @@ where
     ) -> Result<AppResponse, ApiError> {
         use openapi_platform::CHALLENGE_NONCE_LEN;
 
-        let bench_bypass = match (
-            self.limits.challenge_bench_token.as_deref(),
-            challenge_bench_header,
-        ) {
-            (Some(expected), Some(got))
-                if !expected.is_empty()
-                    && subtle_constant_time_eq(expected.as_bytes(), got.as_bytes()) =>
-            {
-                true
+        // BENCH-001: never honor bench bypass when OPENAPI_PROFILE=prod (defense in depth;
+        // load-time validate_tls_key_policy already refuses the env on prod units).
+        let bench_bypass = if openapi_platform::load_edge_profile().is_prod() {
+            false
+        } else {
+            match (
+                self.limits.challenge_bench_token.as_deref(),
+                challenge_bench_header,
+            ) {
+                (Some(expected), Some(got))
+                    if !expected.is_empty()
+                        && subtle_constant_time_eq(expected.as_bytes(), got.as_bytes()) =>
+                {
+                    true
+                }
+                _ => false,
             }
-            _ => false,
         };
 
         let _inflight = if bench_bypass {
@@ -818,6 +824,88 @@ mod tests {
             Some("203.0.113.11"),
         )
         .unwrap();
+    }
+
+    /// Serialize tests that mutate `OPENAPI_PROFILE` (process-global).
+    static PROFILE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn challenge_bench_token_bypasses_limits_in_dev() {
+        let _g = PROFILE_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("OPENAPI_PROFILE");
+        let mut limits = Limits::default();
+        limits.challenge_requests_per_minute = 1;
+        limits.challenge_bench_token = Some("lab-token".into());
+        let app = App::new(
+            Config::default(),
+            limits,
+            EdgeAuthenticator::from_catalog(Authenticator::new({
+                let sk = SigningKey::from_bytes(&[7u8; 32]);
+                KeyCatalog::from_signed(sign_test_catalog(vec![], &sk), sk.verifying_key()).unwrap()
+            })),
+            MockUpstream::default(),
+            TestPlatform,
+            UsageSigner::from_seed([9u8; 32]),
+        );
+        let nonce = URL_SAFE_NO_PAD.encode([2u8; 32]);
+        let body = format!(r#"{{"nonce_b64":"{nonce}"}}"#).into_bytes();
+        for i in 0..3 {
+            app.handle_from_ex(
+                HttpMethod::Post,
+                "/v1/attestation/challenge",
+                None,
+                &body,
+                i,
+                Some("198.51.100.50"),
+                Some("lab-token"),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn challenge_bench_token_ignored_when_profile_prod() {
+        let _g = PROFILE_ENV_LOCK.lock().unwrap();
+        std::env::set_var("OPENAPI_PROFILE", "prod");
+        let mut limits = Limits::default();
+        limits.challenge_requests_per_minute = 1;
+        limits.challenge_bench_token = Some("lab-token".into());
+        let app = App::new(
+            Config::default(),
+            limits,
+            EdgeAuthenticator::from_catalog(Authenticator::new({
+                let sk = SigningKey::from_bytes(&[7u8; 32]);
+                KeyCatalog::from_signed(sign_test_catalog(vec![], &sk), sk.verifying_key()).unwrap()
+            })),
+            MockUpstream::default(),
+            TestPlatform,
+            UsageSigner::from_seed([9u8; 32]),
+        );
+        let nonce = URL_SAFE_NO_PAD.encode([3u8; 32]);
+        let body = format!(r#"{{"nonce_b64":"{nonce}"}}"#).into_bytes();
+        app.handle_from_ex(
+            HttpMethod::Post,
+            "/v1/attestation/challenge",
+            None,
+            &body,
+            1,
+            Some("198.51.100.51"),
+            Some("lab-token"),
+        )
+        .unwrap();
+        let err = app
+            .handle_from_ex(
+                HttpMethod::Post,
+                "/v1/attestation/challenge",
+                None,
+                &body,
+                2,
+                Some("198.51.100.51"),
+                Some("lab-token"),
+            )
+            .unwrap_err();
+        std::env::remove_var("OPENAPI_PROFILE");
+        assert!(matches!(err, ApiError::RateLimited));
     }
 
     #[test]

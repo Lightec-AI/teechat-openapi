@@ -30,6 +30,10 @@ pub enum ProfileError {
         "OPENAPI_PROFILE=prod forbids host-side seal-tls-key tools — run the in-TEE ceremony"
     )]
     ProdHostSealTool,
+    #[error(
+        "prod forbids OPENAPI_CHALLENGE_BENCH_TOKEN — challenge DoS caps must stay on (BENCH-001)"
+    )]
+    ProdChallengeBenchToken,
 }
 
 /// Load profile from `OPENAPI_PROFILE` (`dev` default, `prod` / `production` → prod).
@@ -75,6 +79,14 @@ pub fn validate_tls_key_policy(profile: EdgeProfile) -> Result<(), ProfileError>
         {
             return Err(ProfileError::ProdAttestedLaunchOverride);
         }
+        // BENCH-001: challenge rate-limit bypass must never be live on prod.
+        if std::env::var("OPENAPI_CHALLENGE_BENCH_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
+            return Err(ProfileError::ProdChallengeBenchToken);
+        }
     }
     Ok(())
 }
@@ -102,6 +114,7 @@ mod tests {
         env::remove_var("OPENAPI_TLS_KEY_PATH");
         env::remove_var("OPENAPI_SEAL_ROOT_HEX");
         env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
+        env::remove_var("OPENAPI_CHALLENGE_BENCH_TOKEN");
     }
 
     #[test]
@@ -181,5 +194,19 @@ mod tests {
             Err(ProfileError::ProdHostSealTool)
         ));
         assert!(assert_dev_host_seal_tool(EdgeProfile::Dev).is_ok());
+    }
+
+    #[test]
+    fn prod_rejects_challenge_bench_token() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        clear_tls_env();
+        env::set_var("OPENAPI_PROFILE", "prod");
+        env::set_var("OPENAPI_TLS_SEALED_KEY_PATH", "/var/sealed.json");
+        env::set_var("OPENAPI_CHALLENGE_BENCH_TOKEN", "lab-secret");
+        assert!(matches!(
+            validate_tls_key_policy(EdgeProfile::Prod),
+            Err(ProfileError::ProdChallengeBenchToken)
+        ));
+        clear_tls_env();
     }
 }

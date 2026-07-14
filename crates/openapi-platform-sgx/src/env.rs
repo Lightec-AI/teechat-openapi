@@ -91,7 +91,12 @@ impl SgxEdgeEnv {
             max_body_bytes: self.max_body_bytes,
             challenge_requests_per_minute: self.challenge_requests_per_minute,
             challenge_max_inflight: self.challenge_max_inflight,
-            challenge_bench_token: self.challenge_bench_token.clone(),
+            // BENCH-001: never expose bench bypass under prod even if env slipped through.
+            challenge_bench_token: if self.profile().is_prod() {
+                None
+            } else {
+                self.challenge_bench_token.clone()
+            },
             ip_max_connections: self.ip_max_connections,
             ip_requests_per_minute: self.ip_requests_per_minute,
         }

@@ -94,7 +94,12 @@ impl EdgeEnv {
             max_body_bytes: self.max_body_bytes,
             challenge_requests_per_minute: self.challenge_requests_per_minute,
             challenge_max_inflight: self.challenge_max_inflight,
-            challenge_bench_token: self.challenge_bench_token.clone(),
+            // BENCH-001: never expose bench bypass under prod even if env slipped through.
+            challenge_bench_token: if self.profile().is_prod() {
+                None
+            } else {
+                self.challenge_bench_token.clone()
+            },
             ip_max_connections: self.ip_max_connections,
             ip_requests_per_minute: self.ip_requests_per_minute,
         }
@@ -400,5 +405,41 @@ mod tests {
         env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
         env::remove_var("OPENAPI_IP_MAX_CONNS");
         env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
+    }
+
+    #[test]
+    fn prod_strips_challenge_bench_token_from_limits() {
+        env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
+        env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
+        env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
+        env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
+        env::set_var("OPENAPI_CHALLENGE_BENCH_TOKEN", "lab-secret");
+        env::remove_var("OPENAPI_PROFILE");
+
+        let edge = load_edge_env().unwrap();
+        assert_eq!(edge.challenge_bench_token.as_deref(), Some("lab-secret"));
+        assert_eq!(
+            edge.limits().challenge_bench_token.as_deref(),
+            Some("lab-secret"),
+            "dev profile still exposes bench token for lab benches"
+        );
+
+        env::set_var("OPENAPI_PROFILE", "prod");
+        env::set_var("OPENAPI_TLS_SEALED_KEY_PATH", "/var/sealed.json");
+        let edge = load_edge_env().unwrap();
+        assert!(
+            edge.validate_profile().is_err(),
+            "prod + bench token must fail validate_profile"
+        );
+        // limits() still strips even if someone skipped validate_profile.
+        assert_eq!(edge.limits().challenge_bench_token, None);
+
+        env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
+        env::remove_var("OPENAPI_CATALOG_PATH");
+        env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
+        env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
+        env::remove_var("OPENAPI_CHALLENGE_BENCH_TOKEN");
+        env::remove_var("OPENAPI_PROFILE");
+        env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
     }
 }

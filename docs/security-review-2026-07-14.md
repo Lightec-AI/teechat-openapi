@@ -18,11 +18,11 @@
 |----------|--------------:|-----------------:|-----------------------:|
 | Critical | 0 | 0 | — |
 | High | 0 | 0 | 4 (ATT-001/002, AUTH-001, NET-001) |
-| Medium | **1** (BENCH-001) | 3 (PROXY, CFG + prior residual) | 5 (ATT-003, DOS-001, IDLE-001, OPS-001/002) |
+| Medium | **0** new open | 2 (PROXY, CFG) + lows | 6 (+ BENCH-001) |
 | Low | **1** (ROUTE-001) | 1 (TLS-001) | — |
 | Info | 0 | — | CRYPTO-001 (unchanged positive) |
 
-**Verdict:** Remediations for attestation, AUTH-001, D6-pull (NET-001), DOS-001, IDLE-001, and **OPS-001/002** hold. Residual P1: **BENCH-001** (+ METER if not yet shipped). P2: proxy allowlist, measured SGX config, prod TLS-required.
+**Verdict:** Remediations through **BENCH-001** hold (attestation, AUTH, NET, DOS, IDLE, METER, OPS, bench token). Residual P2: proxy allowlist, measured SGX config, prod TLS-required.
 
 ---
 
@@ -56,11 +56,9 @@
 
 ### BENCH-001 — Medium — Challenge bench token has no prod refusal
 
-- **Status:** **Open**.
-- **Location:** `crates/openapi-core/src/handler.rs` (`OPENAPI_CHALLENGE_BENCH_TOKEN` + `X-TeeChat-Challenge-Bench`); env wire-up in `openapi-platform-{cvm,sgx}/src/env.rs`.
-- **Detail:** Matching header skips per-IP challenge RPM and in-flight quote caps (constant-time compare is fine). No `OPENAPI_PROFILE=prod` refusal at load or use.
-- **Impact:** Token left set or leaked in prod bypasses challenge DoS controls → SNP/DCAP exhaustion.
-- **Remediation:** Forbid / ignore bench token when `profile.is_prod()`; fail closed at env load for production units.
+- **Status:** **Mitigated** — `validate_tls_key_policy` fails closed if `OPENAPI_CHALLENGE_BENCH_TOKEN` is set under prod; CVM/SGX `limits()` strip the token; handler never bypasses when `OPENAPI_PROFILE=prod`.
+- **Location:** `crates/openapi-platform/src/profile.rs`, `openapi-platform-{cvm,sgx}/src/env.rs`, `crates/openapi-core/src/handler.rs`
+- **Residual:** Keep bench token out of prod unit files; rotate if ever leaked in lab.
 
 ### ROUTE-001 — Low — Exact-string route classify (query / trailing slash)
 
@@ -79,7 +77,7 @@
 | Done | **IDLE-001** | TLS arrival idle cleared via socket `try_clone` |
 | Done | **METER-001** | Accumulate SSE usage before signing trailer |
 | Done | **OPS-001, OPS-002** | Prod forbids attested-digest override; host seal tools refuse prod |
-| P1 | **BENCH-001** | Prod-forbid challenge bench token |
+| Done | **BENCH-001** | Prod forbids / ignores challenge bench token |
 | P2 | PROXY-001 + ROUTE-001 | Prod allowlist + path normalize |
 | P2 | CFG-001, TLS-001 | Measured config; require TLS acceptor in prod |
 | Hold | ATT-* remaining | Prefer SNP ioctl over `snpguest`; keep PCCS/helper healthy |
