@@ -11,7 +11,8 @@ mod upstream;
 
 pub use attest::CvmAttestationPlatform;
 pub use env::{load_edge_env, write_dev_catalog, EdgeEnv, OpenApiAuthMode};
-pub use push::spawn_push_listener;
+pub use remote_client::{spawn_revocation_poller, UreqL0AuthorizeClient};
+// push.rs kept for reference but unused (D6-pull).
 pub use guest_digest::{read_attested_launch_digest, verify_launch_digest_attested};
 pub use seal::CvmSealer;
 pub use tls::{seal_tls_key_file, spki_sha256_hex_from_cert_path, TlsAcceptor, TlsConfig};

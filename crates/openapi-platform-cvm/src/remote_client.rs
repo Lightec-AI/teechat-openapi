@@ -1,25 +1,50 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use ed25519_dalek::VerifyingKey;
 use openapi_core::authz::SignedAuthz;
 use openapi_core::error::ApiError;
-use openapi_core::remote_auth::L0AuthorizeClient;
+use openapi_core::remote_auth::{L0AuthorizeClient, RevocationDelta, DEFAULT_REVOKE_POLL_SECS};
+use openapi_core::SignedRevocation;
+use tracing::warn;
 use ureq::OrAnyStatus;
 
 #[derive(Debug, Clone)]
 pub struct UreqL0AuthorizeClient {
     authorize_url: String,
+    revocations_url: String,
     internal_token: String,
     agent: ureq::Agent,
 }
 
 impl UreqL0AuthorizeClient {
     pub fn new(authorize_url: String, internal_token: String) -> Self {
+        let revocations_url = revocations_url_from_authorize(&authorize_url);
         Self {
             authorize_url,
+            revocations_url,
             internal_token,
             agent: ureq::Agent::new(),
         }
+    }
+
+    pub fn with_urls(authorize_url: String, revocations_url: String, internal_token: String) -> Self {
+        Self {
+            authorize_url,
+            revocations_url,
+            internal_token,
+            agent: ureq::Agent::new(),
+        }
+    }
+}
+
+fn revocations_url_from_authorize(authorize_url: &str) -> String {
+    if let Some(base) = authorize_url.strip_suffix("/authorize") {
+        format!("{base}/revocations")
+    } else if authorize_url.ends_with('/') {
+        format!("{authorize_url}revocations")
+    } else {
+        format!("{authorize_url}/revocations")
     }
 }
 
@@ -32,7 +57,6 @@ impl L0AuthorizeClient for UreqL0AuthorizeClient {
         let body_bytes = serde_json::to_vec(&body)
             .map_err(|e| ApiError::Internal(format!("l0 authorize json encode: {e}")))?;
         let auth_header = format!("Bearer {}", self.internal_token);
-        // ureq returns non-2xx as Error::Status; accept any status so we can map 401/404 → Unauthorized.
         let resp = self
             .agent
             .post(&self.authorize_url)
@@ -53,12 +77,65 @@ impl L0AuthorizeClient for UreqL0AuthorizeClient {
             .map_err(|e| ApiError::Internal(format!("l0 authorize body: {e}")))?;
         serde_json::from_str(&text).map_err(|e| ApiError::Internal(format!("l0 authorize json: {e}")))
     }
+
+    fn fetch_revocations(&self, since_epoch: u64) -> Result<RevocationDelta, ApiError> {
+        let url = format!(
+            "{}{}since_epoch={}",
+            self.revocations_url,
+            if self.revocations_url.contains('?') {
+                "&"
+            } else {
+                "?"
+            },
+            since_epoch
+        );
+        let auth_header = format!("Bearer {}", self.internal_token);
+        let resp = self
+            .agent
+            .get(&url)
+            .set("Authorization", &auth_header)
+            .call()
+            .or_any_status()
+            .map_err(|e| ApiError::Internal(format!("l0 revocations transport: {e}")))?;
+        let status = resp.status();
+        if status >= 400 {
+            return Err(ApiError::Internal(format!(
+                "l0 revocations status {status}"
+            )));
+        }
+        let text = resp
+            .into_string()
+            .map_err(|e| ApiError::Internal(format!("l0 revocations body: {e}")))?;
+        #[derive(serde::Deserialize)]
+        struct Wire {
+            epoch: u64,
+            #[serde(default)]
+            revocations: Vec<SignedRevocation>,
+        }
+        let wire: Wire = serde_json::from_str(&text)
+            .map_err(|e| ApiError::Internal(format!("l0 revocations json: {e}")))?;
+        Ok(RevocationDelta {
+            epoch: wire.epoch,
+            revocations: wire.revocations,
+        })
+    }
 }
 
+#[allow(dead_code)]
 pub fn build_remote_authenticator(
     verify_key_hex: &str,
     authorize_url: String,
     internal_token: String,
+) -> Result<openapi_core::remote_auth::RemoteAuthenticator, ApiError> {
+    build_remote_authenticator_ex(verify_key_hex, authorize_url, None, internal_token, None)
+}
+
+pub fn build_remote_authenticator_ex(
+    verify_key_hex: &str,
+    authorize_url: String,
+    revocations_url: Option<String>,
+    internal_token: String,
+    poll_secs: Option<u64>,
 ) -> Result<openapi_core::remote_auth::RemoteAuthenticator, ApiError> {
     let verify_bytes = hex::decode(verify_key_hex)
         .map_err(|e| ApiError::Internal(format!("catalog verify hex: {e}")))?;
@@ -69,11 +146,35 @@ pub fn build_remote_authenticator(
             .map_err(|_| ApiError::Internal("catalog verify must be 32 bytes".into()))?,
     )
     .map_err(|e| ApiError::Internal(format!("catalog verify key: {e}")))?;
-    let client = Arc::new(UreqL0AuthorizeClient::new(authorize_url, internal_token));
-    Ok(openapi_core::remote_auth::RemoteAuthenticator::new(
+    let client = Arc::new(match revocations_url {
+        Some(r) => UreqL0AuthorizeClient::with_urls(authorize_url, r, internal_token),
+        None => UreqL0AuthorizeClient::new(authorize_url, internal_token),
+    });
+    let interval = Duration::from_secs(poll_secs.unwrap_or(DEFAULT_REVOKE_POLL_SECS).max(1));
+    Ok(openapi_core::remote_auth::RemoteAuthenticator::with_poll_interval(
         verify_key,
         client,
+        interval,
     ))
+}
+
+pub fn spawn_revocation_poller(remote: Arc<openapi_core::remote_auth::RemoteAuthenticator>) {
+    std::thread::Builder::new()
+        .name("openapi-revoke-poll".into())
+        .spawn(move || loop {
+            remote.poll_clock().wait_until_due();
+            match remote.sync_revocations_from_l0() {
+                Ok(n) if n > 0 => {
+                    tracing::info!(applied = n, epoch = remote.local_epoch(), "revocation poll applied");
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    warn!(error = %e, "revocation poll failed");
+                    remote.poll_clock().reset();
+                }
+            }
+        })
+        .expect("spawn revocation poller");
 }
 
 #[cfg(test)]
@@ -120,5 +221,13 @@ mod tests {
         let err = client.authorize("tcak_bad", "deadbeef").expect_err("must fail");
         assert!(matches!(err, ApiError::Unauthorized));
         assert_eq!(err.status_code(), 401);
+    }
+
+    #[test]
+    fn derives_revocations_url() {
+        assert_eq!(
+            revocations_url_from_authorize("http://gw/internal/openapi/v1/authorize"),
+            "http://gw/internal/openapi/v1/revocations"
+        );
     }
 }

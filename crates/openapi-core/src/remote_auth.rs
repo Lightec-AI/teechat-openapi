@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ed25519_dalek::VerifyingKey;
 use subtle::ConstantTimeEq;
@@ -10,8 +11,20 @@ use crate::authz::{SignedAuthz, SignedRevocation};
 use crate::error::ApiError;
 use crate::key_format::{hash_api_key, parse_api_key, ParsedApiKey};
 
+/// Default outbound revocation poll interval (D6-pull).
+pub const DEFAULT_REVOKE_POLL_SECS: u64 = 15;
+
+#[derive(Debug, Clone)]
+pub struct RevocationDelta {
+    pub epoch: u64,
+    pub revocations: Vec<SignedRevocation>,
+}
+
 pub trait L0AuthorizeClient: Send + Sync {
     fn authorize(&self, key_id: &str, key_hash_hex: &str) -> Result<SignedAuthz, ApiError>;
+
+    /// Pull signed revocation frames with `epoch > since_epoch`.
+    fn fetch_revocations(&self, since_epoch: u64) -> Result<RevocationDelta, ApiError>;
 }
 
 #[derive(Debug, Clone)]
@@ -19,21 +32,83 @@ struct CachedAuthz {
     authz: SignedAuthz,
 }
 
+/// Shared schedule for background poll + convoy timer resets.
+#[derive(Debug)]
+pub struct RevocationPollClock {
+    interval: Duration,
+    next_due: Mutex<Instant>,
+    cvar: Condvar,
+}
+
+impl RevocationPollClock {
+    pub fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            next_due: Mutex::new(Instant::now() + interval),
+            cvar: Condvar::new(),
+        }
+    }
+
+    pub fn reset(&self) {
+        if let Ok(mut due) = self.next_due.lock() {
+            *due = Instant::now() + self.interval;
+            self.cvar.notify_all();
+        }
+    }
+
+    /// Block until due, then return (caller should poll then call `reset`).
+    pub fn wait_until_due(&self) {
+        let mut due = self.next_due.lock().expect("poll clock lock");
+        loop {
+            let now = Instant::now();
+            if now >= *due {
+                return;
+            }
+            let wait = *due - now;
+            let (guard, _) = self
+                .cvar
+                .wait_timeout(due, wait)
+                .expect("poll clock wait");
+            due = guard;
+        }
+    }
+}
+
 pub struct RemoteAuthenticator {
     verify_key: VerifyingKey,
     client: Arc<dyn L0AuthorizeClient>,
     revocations: RwLock<HashSet<String>>,
     cache: RwLock<HashMap<String, CachedAuthz>>,
+    local_epoch: AtomicU64,
+    poll_clock: Arc<RevocationPollClock>,
 }
 
 impl RemoteAuthenticator {
     pub fn new(verify_key: VerifyingKey, client: Arc<dyn L0AuthorizeClient>) -> Self {
+        Self::with_poll_interval(verify_key, client, Duration::from_secs(DEFAULT_REVOKE_POLL_SECS))
+    }
+
+    pub fn with_poll_interval(
+        verify_key: VerifyingKey,
+        client: Arc<dyn L0AuthorizeClient>,
+        poll_interval: Duration,
+    ) -> Self {
         Self {
             verify_key,
             client,
             revocations: RwLock::new(HashSet::new()),
             cache: RwLock::new(HashMap::new()),
+            local_epoch: AtomicU64::new(0),
+            poll_clock: Arc::new(RevocationPollClock::new(poll_interval)),
         }
+    }
+
+    pub fn poll_clock(&self) -> Arc<RevocationPollClock> {
+        Arc::clone(&self.poll_clock)
+    }
+
+    pub fn local_epoch(&self) -> u64 {
+        self.local_epoch.load(Ordering::Acquire)
     }
 
     pub fn apply_revocation(&self, revocation: &SignedRevocation) -> Result<(), ApiError> {
@@ -46,6 +121,32 @@ impl RemoteAuthenticator {
             .write()
             .map_err(|_| ApiError::Internal("cache lock poisoned".into()))?
             .remove(&revocation.key_id);
+        Ok(())
+    }
+
+    /// Fetch + apply revoke deltas; advances `local_epoch`; resets poll timer.
+    pub fn sync_revocations_from_l0(&self) -> Result<usize, ApiError> {
+        let since = self.local_epoch();
+        let delta = self.client.fetch_revocations(since)?;
+        let mut applied = 0usize;
+        for frame in &delta.revocations {
+            self.apply_revocation(frame)?;
+            applied += 1;
+        }
+        if delta.epoch > since {
+            self.local_epoch.store(delta.epoch, Ordering::Release);
+        }
+        self.poll_clock.reset();
+        Ok(applied)
+    }
+
+    fn convoy_after_authorize(&self, authz_epoch: u64) -> Result<(), ApiError> {
+        if authz_epoch > self.local_epoch() {
+            self.sync_revocations_from_l0()?;
+        } else {
+            // Already current — still postpone next background poll.
+            self.poll_clock.reset();
+        }
         Ok(())
     }
 
@@ -83,10 +184,7 @@ impl RemoteAuthenticator {
         self.cache
             .write()
             .map_err(|_| ApiError::Internal("cache lock poisoned".into()))?
-            .insert(
-                authz.key_id.clone(),
-                CachedAuthz { authz },
-            );
+            .insert(authz.key_id.clone(), CachedAuthz { authz });
         Ok(())
     }
 
@@ -115,8 +213,11 @@ impl RemoteAuthenticator {
         if !hash_match {
             return Err(ApiError::Unauthorized);
         }
+        let epoch = authz.epoch;
         let policy = authz.policy.clone();
         self.store_cache(authz)?;
+        // Convoy: pull if L0 epoch advanced; always reset poll countdown.
+        let _ = self.convoy_after_authorize(epoch);
         Ok(AuthContext {
             key_id: parsed.key_id.clone(),
             policy,
@@ -174,11 +275,28 @@ mod tests {
 
     struct MockClient {
         authz: SignedAuthz,
+        delta: Mutex<RevocationDelta>,
+        fetch_count: Mutex<u32>,
     }
 
     impl L0AuthorizeClient for MockClient {
         fn authorize(&self, _key_id: &str, _key_hash_hex: &str) -> Result<SignedAuthz, ApiError> {
             Ok(self.authz.clone())
+        }
+
+        fn fetch_revocations(&self, since_epoch: u64) -> Result<RevocationDelta, ApiError> {
+            *self.fetch_count.lock().unwrap() += 1;
+            let d = self.delta.lock().unwrap().clone();
+            let frames: Vec<_> = d
+                .revocations
+                .iter()
+                .filter(|r| r.epoch > since_epoch)
+                .cloned()
+                .collect();
+            Ok(RevocationDelta {
+                epoch: d.epoch,
+                revocations: frames,
+            })
         }
     }
 
@@ -195,20 +313,121 @@ mod tests {
         let api_key = format!("sk-teechat-tcak_ab12CD34.{secret}");
         let hash = hash_api_key(&api_key);
         let authz = signed_authz(&signing, "tcak_ab12CD34", &hash, RemoteAuthenticator::now_ms() + 60_000);
-        let client = Arc::new(MockClient { authz });
-        let remote = RemoteAuthenticator::new(verify_key, client);
+        let client = Arc::new(MockClient {
+            authz,
+            delta: Mutex::new(RevocationDelta {
+                epoch: 1,
+                revocations: vec![],
+            }),
+            fetch_count: Mutex::new(0),
+        });
+        let remote = RemoteAuthenticator::new(verify_key, client.clone());
         let ctx = remote
             .authenticate_bearer(Some(&format!("Bearer {api_key}")))
             .unwrap();
         assert_eq!(ctx.key_id, "tcak_ab12CD34");
         assert!(ctx.policy.allows_model("any"));
         assert_eq!(ctx.policy.rpm, 120);
-        // second call uses cache — still ok if mock stopped working
         let ctx2 = remote
             .authenticate_bearer(Some(&format!("Bearer {api_key}")))
             .unwrap();
         assert_eq!(ctx2.key_id, ctx.key_id);
         assert_eq!(ctx2.policy, ctx.policy);
+        // Convoy on first authorize calls fetch once.
+        assert!(*client.fetch_count.lock().unwrap() >= 1);
+    }
+
+    #[test]
+    fn convoy_pulls_when_authz_epoch_ahead() {
+        let mut csprng = OsRng;
+        let signing = SigningKey::generate(&mut csprng);
+        let verify_key = signing.verifying_key();
+        let secret = "C".repeat(32);
+        let api_key = format!("sk-teechat-tcak_ef90AB12.{secret}");
+        let hash = hash_api_key(&api_key);
+        let authz = sign_test_authz_with_policy(
+            "tcak_ef90AB12",
+            &hash,
+            RemoteAuthenticator::now_ms() + 60_000,
+            OpenApiKeyPolicy {
+                models: vec!["*".into()],
+                rpm: 180,
+            },
+            5,
+            &signing,
+        );
+        let victim = "tcak_deadbeef";
+        let rev = sign_test_revocation(victim, 1, 5, &signing);
+        let client = Arc::new(MockClient {
+            authz,
+            delta: Mutex::new(RevocationDelta {
+                epoch: 5,
+                revocations: vec![rev],
+            }),
+            fetch_count: Mutex::new(0),
+        });
+        let remote = RemoteAuthenticator::new(verify_key, client);
+        remote
+            .authenticate_bearer(Some(&format!("Bearer {api_key}")))
+            .unwrap();
+        assert_eq!(remote.local_epoch(), 5);
+        assert!(remote
+            .revocations
+            .read()
+            .unwrap()
+            .contains(victim));
+    }
+
+    #[test]
+    fn convoy_resets_poll_timer_when_epoch_current() {
+        let mut csprng = OsRng;
+        let signing = SigningKey::generate(&mut csprng);
+        let verify_key = signing.verifying_key();
+        let secret = "E".repeat(32);
+        let api_key = format!("sk-teechat-tcak_aa11BB22.{secret}");
+        let hash = hash_api_key(&api_key);
+        let authz = sign_test_authz_with_policy(
+            "tcak_aa11BB22",
+            &hash,
+            RemoteAuthenticator::now_ms() + 60_000,
+            OpenApiKeyPolicy {
+                models: vec!["*".into()],
+                rpm: 60,
+            },
+            1,
+            &signing,
+        );
+        let client = Arc::new(MockClient {
+            authz,
+            delta: Mutex::new(RevocationDelta {
+                epoch: 1,
+                revocations: vec![],
+            }),
+            fetch_count: Mutex::new(0),
+        });
+        let remote = RemoteAuthenticator::with_poll_interval(
+            verify_key,
+            client,
+            Duration::from_secs(30),
+        );
+        // Make next poll "soon"; authorize convoy should push it out by ~30s.
+        {
+            let clock = remote.poll_clock();
+            let mut due = clock.next_due.lock().unwrap();
+            *due = Instant::now() + Duration::from_millis(5);
+        }
+        remote
+            .authenticate_bearer(Some(&format!("Bearer {api_key}")))
+            .unwrap();
+        let remaining = {
+            let clock = remote.poll_clock();
+            let due = clock.next_due.lock().unwrap();
+            due.saturating_duration_since(Instant::now())
+        };
+        assert!(
+            remaining > Duration::from_secs(20),
+            "expected poll timer reset toward full interval, remaining={remaining:?}"
+        );
     }
 
     #[test]
@@ -228,9 +447,18 @@ mod tests {
             &hash,
             RemoteAuthenticator::now_ms() + 60_000,
             policy.clone(),
+            1,
             &signing,
         );
-        let remote = RemoteAuthenticator::new(verify_key, Arc::new(MockClient { authz }));
+        let client = Arc::new(MockClient {
+            authz,
+            delta: Mutex::new(RevocationDelta {
+                epoch: 0,
+                revocations: vec![],
+            }),
+            fetch_count: Mutex::new(0),
+        });
+        let remote = RemoteAuthenticator::new(verify_key, client);
         let ctx = remote
             .authenticate_bearer(Some(&format!("Bearer {api_key}")))
             .unwrap();
@@ -250,12 +478,45 @@ mod tests {
         let api_key = format!("sk-teechat-tcak_cd56EF78.{secret}");
         let hash = hash_api_key(&api_key);
         let authz = signed_authz(&signing, "tcak_cd56EF78", &hash, RemoteAuthenticator::now_ms() + 60_000);
-        let client = Arc::new(MockClient { authz });
+        let client = Arc::new(MockClient {
+            authz,
+            delta: Mutex::new(RevocationDelta {
+                epoch: 0,
+                revocations: vec![],
+            }),
+            fetch_count: Mutex::new(0),
+        });
         let remote = RemoteAuthenticator::new(verify_key, client);
         let revocation = sign_test_revocation("tcak_cd56EF78", 1, 2, &signing);
         remote.apply_revocation(&revocation).unwrap();
         assert!(remote
             .authenticate_bearer(Some(&format!("Bearer {api_key}")))
             .is_err());
+    }
+
+    #[test]
+    fn sync_revocations_applies_delta() {
+        let mut csprng = OsRng;
+        let signing = SigningKey::generate(&mut csprng);
+        let verify_key = signing.verifying_key();
+        let rev = sign_test_revocation("tcak_gone0001", 9, 3, &signing);
+        let authz = signed_authz(
+            &signing,
+            "tcak_other001",
+            "aa",
+            RemoteAuthenticator::now_ms() + 60_000,
+        );
+        let client = Arc::new(MockClient {
+            authz,
+            delta: Mutex::new(RevocationDelta {
+                epoch: 3,
+                revocations: vec![rev],
+            }),
+            fetch_count: Mutex::new(0),
+        });
+        let remote = RemoteAuthenticator::new(verify_key, client);
+        assert_eq!(remote.sync_revocations_from_l0().unwrap(), 1);
+        assert_eq!(remote.local_epoch(), 3);
+        assert!(remote.revocations.read().unwrap().contains("tcak_gone0001"));
     }
 }

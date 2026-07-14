@@ -250,6 +250,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let (ready_tx, ready_rx) = mpsc::channel();
+        let (hold_tx, hold_rx) = mpsc::channel::<()>();
         let server = thread::spawn(move || {
             ready_tx.send(()).unwrap();
             let (mut stream, _) = listener.accept().unwrap();
@@ -273,6 +274,8 @@ mod tests {
             stream.write_all(resp.as_bytes()).unwrap();
             stream.write_all(body).unwrap();
             stream.flush().unwrap();
+            // Keep socket open until the client finishes reading (avoid RST on drop).
+            let _ = hold_rx.recv();
         });
 
         ready_rx.recv().unwrap();
@@ -289,6 +292,7 @@ mod tests {
             .unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("data: {\"t\":1}"));
+        let _ = hold_tx.send(());
         server.join().unwrap();
     }
 }

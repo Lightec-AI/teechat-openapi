@@ -6,6 +6,8 @@ use openapi_core::authz::SignedRevocation;
 use openapi_core::remote_auth::RemoteAuthenticator;
 use tracing::{info, warn};
 
+/// Deprecated: D6-pull replaced inbound push. Kept for reference until deleted.
+#[allow(dead_code)]
 pub fn spawn_push_listener(
     listen_addr: String,
     remote: Arc<RemoteAuthenticator>,

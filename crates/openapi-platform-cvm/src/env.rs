@@ -22,8 +22,9 @@ pub struct EdgeEnv {
     pub catalog_verify_key_hex: String,
     pub auth_mode: OpenApiAuthMode,
     pub l0_authorize_url: Option<String>,
+    pub l0_revocations_url: Option<String>,
     pub l0_internal_token: Option<String>,
-    pub push_listen_addr: Option<String>,
+    pub revoke_poll_secs: u64,
     pub usage_sign_seed_hex: String,
     pub build_version: String,
     pub code_hash: String,
@@ -129,10 +130,12 @@ impl EdgeEnv {
                     .l0_internal_token
                     .clone()
                     .ok_or(EnvError::Missing("OPENAPI_L0_INTERNAL_TOKEN"))?;
-                let remote = crate::remote_client::build_remote_authenticator(
+                let remote = crate::remote_client::build_remote_authenticator_ex(
                     &self.catalog_verify_key_hex,
                     authorize_url,
+                    self.l0_revocations_url.clone(),
                     token,
+                    Some(self.revoke_poll_secs),
                 )
                 .map_err(|e| EnvError::Catalog(e.to_string()))?;
                 Ok(EdgeAuthenticator::from_remote(remote))
@@ -207,8 +210,11 @@ pub fn load_edge_env() -> Result<EdgeEnv, EnvError> {
         catalog_verify_key_hex: req("OPENAPI_CATALOG_VERIFY_KEY_HEX")?,
         auth_mode,
         l0_authorize_url: opt("OPENAPI_L0_AUTHORIZE_URL"),
+        l0_revocations_url: opt("OPENAPI_L0_REVOCATIONS_URL"),
         l0_internal_token: opt("OPENAPI_L0_INTERNAL_TOKEN"),
-        push_listen_addr: opt("OPENAPI_PUSH_LISTEN_ADDR"),
+        revoke_poll_secs: opt("OPENAPI_REVOKE_POLL_SECS")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(15),
         usage_sign_seed_hex: req("OPENAPI_USAGE_SIGN_SEED_HEX")?,
         build_version: opt("OPENAPI_BUILD_VERSION").unwrap_or_else(|| "dev".into()),
         code_hash: opt("OPENAPI_CODE_HASH").unwrap_or_else(|| "unknown".into()),
@@ -223,7 +229,7 @@ pub fn load_edge_env() -> Result<EdgeEnv, EnvError> {
             .unwrap_or(4 * 1024 * 1024),
         requests_per_minute: opt("OPENAPI_REQUESTS_PER_MINUTE")
             .and_then(|v| v.parse().ok())
-            .unwrap_or(120),
+            .unwrap_or(5000),
         challenge_requests_per_minute: opt("OPENAPI_CHALLENGE_RPM")
             .and_then(|v| v.parse().ok())
             .unwrap_or(10),

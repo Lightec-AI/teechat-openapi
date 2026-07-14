@@ -3,6 +3,7 @@
 mod attest;
 mod dcap;
 mod env;
+mod remote_client;
 mod report;
 mod run;
 mod seal;
@@ -10,7 +11,10 @@ mod tls;
 mod upstream;
 
 pub use attest::SgxAttestationPlatform;
-pub use env::{load_sgx_edge_env, parse_seal_root_hex, write_dev_catalog, SgxEdgeEnv};
+pub use env::{
+    load_sgx_edge_env, parse_seal_root_hex, write_dev_catalog, OpenApiAuthMode, SgxEdgeEnv,
+};
+pub use remote_client::{spawn_revocation_poller, TcpL0Client};
 pub use run::run;
 pub use seal::{local_mrenclave_hex, SgxSealer, SGX_SEAL_ROOT_LABEL, SGX_TLS_SEAL_LABEL};
 pub use tls::{seal_tls_key_file, spki_sha256_hex_from_cert_path, TlsAcceptor, TlsConfig};

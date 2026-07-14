@@ -133,6 +133,7 @@ pub fn sign_test_authz(
             models: vec!["*".into()],
             rpm: 120,
         },
+        1,
         signing_key,
     )
 }
@@ -144,6 +145,7 @@ pub fn sign_test_authz_with_policy(
     key_hash_hex: &str,
     exp_ms: u64,
     policy: OpenApiKeyPolicy,
+    epoch: u64,
     signing_key: &ed25519_dalek::SigningKey,
 ) -> SignedAuthz {
     use ed25519_dalek::Signer;
@@ -155,7 +157,7 @@ pub fn sign_test_authz_with_policy(
         account_id: "usr".into(),
         policy,
         exp_ms,
-        epoch: 1,
+        epoch,
     };
     let payload = serde_json::to_vec(&unsigned).unwrap();
     let sig = signing_key.sign(&payload);

@@ -47,12 +47,19 @@ pub fn run() -> anyhow::Result<()> {
     let upstream = TcpHttpUpstream::new(&env.upstream_base_url)
         .map_err(|e| anyhow::anyhow!("upstream: {e}"))?;
 
+    let authenticator = env.edge_authenticator().context("auth")?;
+    if let Some(remote) = authenticator.remote_arc() {
+        crate::remote_client::spawn_revocation_poller(remote);
+        info!(
+            poll_secs = env.revoke_poll_secs,
+            "D6-pull revocation poller started"
+        );
+    }
+
     let app = Arc::new(App::new(
         env.config(),
         env.limits(),
-        openapi_core::remote_auth::EdgeAuthenticator::from_catalog(
-            env.authenticator().context("catalog")?,
-        ),
+        authenticator,
         upstream,
         platform,
         env.usage_signer().context("usage signer")?,

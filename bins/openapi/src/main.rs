@@ -43,12 +43,12 @@ fn main() -> anyhow::Result<()> {
 
     let authenticator = env.edge_authenticator().context("auth")?;
 
-    if let (Some(push_addr), Some(remote)) = (
-        env.push_listen_addr.as_ref(),
-        authenticator.remote_arc(),
-    ) {
-        openapi_platform_cvm::spawn_push_listener(push_addr.clone(), remote)
-            .context("push listener")?;
+    if let Some(remote) = authenticator.remote_arc() {
+        openapi_platform_cvm::spawn_revocation_poller(remote);
+        info!(
+            poll_secs = env.revoke_poll_secs,
+            "D6-pull revocation poller started"
+        );
     }
 
     let app = Arc::new(App::new(

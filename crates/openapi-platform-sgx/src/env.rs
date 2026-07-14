@@ -6,12 +6,28 @@ use openapi_core::auth::Authenticator;
 use openapi_core::catalog::{KeyCatalog, SignedKeyCatalog};
 use openapi_core::config::Config;
 use openapi_core::limits::Limits;
+use openapi_core::remote_auth::EdgeAuthenticator;
 use openapi_core::usage::UsageSigner;
 use thiserror::Error;
 
 use openapi_platform::{load_edge_profile, validate_tls_key_policy, EdgeProfile, ProfileError};
 
 use crate::seal::{local_mrenclave_hex, SgxSealer};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenApiAuthMode {
+    Catalog,
+    Remote,
+}
+
+impl OpenApiAuthMode {
+    fn parse(raw: &str) -> Self {
+        match raw.trim().to_lowercase().as_str() {
+            "remote" | "d6" => Self::Remote,
+            _ => Self::Catalog,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct SgxEdgeEnv {
@@ -22,6 +38,11 @@ pub struct SgxEdgeEnv {
     /// Inline catalog JSON (Fortanix: no host filesystem). Takes precedence over path.
     pub catalog_json: Option<String>,
     pub catalog_verify_key_hex: String,
+    pub auth_mode: OpenApiAuthMode,
+    pub l0_authorize_url: Option<String>,
+    pub l0_revocations_url: Option<String>,
+    pub l0_internal_token: Option<String>,
+    pub revoke_poll_secs: u64,
     pub usage_sign_seed_hex: String,
     pub build_version: String,
     pub code_hash: String,
@@ -92,6 +113,34 @@ impl SgxEdgeEnv {
         KeyCatalog::from_signed(signed, verify_key).map_err(|e| EnvError::Catalog(e.to_string()))
     }
 
+    pub fn edge_authenticator(&self) -> Result<EdgeAuthenticator, EnvError> {
+        match self.auth_mode {
+            OpenApiAuthMode::Catalog => Ok(EdgeAuthenticator::from_catalog(
+                Authenticator::new(self.load_catalog()?),
+            )),
+            OpenApiAuthMode::Remote => {
+                let authorize_url = self
+                    .l0_authorize_url
+                    .as_deref()
+                    .ok_or(EnvError::Missing("OPENAPI_L0_AUTHORIZE_URL"))?;
+                let token = self
+                    .l0_internal_token
+                    .clone()
+                    .ok_or(EnvError::Missing("OPENAPI_L0_INTERNAL_TOKEN"))?;
+                let remote = crate::remote_client::build_remote_authenticator(
+                    &self.catalog_verify_key_hex,
+                    authorize_url,
+                    self.l0_revocations_url.as_deref(),
+                    token,
+                    Some(self.revoke_poll_secs),
+                )
+                .map_err(|e| EnvError::Catalog(e.to_string()))?;
+                Ok(EdgeAuthenticator::from_remote(remote))
+            }
+        }
+    }
+
+    /// Lab/dev file catalog only. Prefer `edge_authenticator`.
     pub fn authenticator(&self) -> Result<Authenticator, EnvError> {
         Ok(Authenticator::new(self.load_catalog()?))
     }
@@ -153,13 +202,30 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
         std::env::var(name).ok().filter(|s| !s.is_empty())
     }
 
-    let env = SgxEdgeEnv {
+    let auth_mode = OpenApiAuthMode::parse(
+        &opt("OPENAPI_AUTH_MODE").unwrap_or_else(|| "catalog".into()),
+    );
+    let catalog_json = opt("OPENAPI_CATALOG_JSON");
+    let catalog_path = opt("OPENAPI_CATALOG_PATH").unwrap_or_default();
+    if auth_mode == OpenApiAuthMode::Catalog && catalog_json.is_none() && catalog_path.is_empty()
+    {
+        return Err(EnvError::Missing("OPENAPI_CATALOG_JSON|OPENAPI_CATALOG_PATH"));
+    }
+
+    Ok(SgxEdgeEnv {
         listen_addr: opt("OPENAPI_LISTEN_ADDR").unwrap_or_else(|| "0.0.0.0:8443".into()),
         region: opt("OPENAPI_REGION").unwrap_or_else(|| "global".into()),
         upstream_base_url: req("OPENAPI_UPSTREAM_BASE_URL")?,
-        catalog_json: opt("OPENAPI_CATALOG_JSON"),
-        catalog_path: opt("OPENAPI_CATALOG_PATH").unwrap_or_default(),
+        catalog_json,
+        catalog_path,
         catalog_verify_key_hex: req("OPENAPI_CATALOG_VERIFY_KEY_HEX")?,
+        auth_mode,
+        l0_authorize_url: opt("OPENAPI_L0_AUTHORIZE_URL"),
+        l0_revocations_url: opt("OPENAPI_L0_REVOCATIONS_URL"),
+        l0_internal_token: opt("OPENAPI_L0_INTERNAL_TOKEN"),
+        revoke_poll_secs: opt("OPENAPI_REVOKE_POLL_SECS")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(15),
         usage_sign_seed_hex: req("OPENAPI_USAGE_SIGN_SEED_HEX")?,
         build_version: opt("OPENAPI_BUILD_VERSION").unwrap_or_else(|| "dev".into()),
         code_hash: opt("OPENAPI_CODE_HASH").unwrap_or_else(|| "unknown".into()),
@@ -173,7 +239,7 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
             .unwrap_or(4 * 1024 * 1024),
         requests_per_minute: opt("OPENAPI_REQUESTS_PER_MINUTE")
             .and_then(|v| v.parse().ok())
-            .unwrap_or(128),
+            .unwrap_or(5000),
         challenge_requests_per_minute: opt("OPENAPI_CHALLENGE_RPM")
             .and_then(|v| v.parse().ok())
             .unwrap_or(10),
@@ -181,11 +247,7 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
             .and_then(|v| v.parse().ok())
             .unwrap_or(4),
         challenge_bench_token: opt("OPENAPI_CHALLENGE_BENCH_TOKEN"),
-    };
-    if env.catalog_json.is_none() && env.catalog_path.is_empty() {
-        return Err(EnvError::Missing("OPENAPI_CATALOG_JSON|OPENAPI_CATALOG_PATH"));
-    }
-    Ok(env)
+    })
 }
 
 pub fn parse_seal_root_hex(raw: Option<&str>) -> Result<Option<[u8; 32]>, EnvError> {

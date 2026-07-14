@@ -23,5 +23,8 @@ pub use handler::{App, AppResponse, HttpMethod, StreamForwardResult, UpstreamFor
 pub use key_format::{hash_api_key, parse_api_key};
 pub use limits::Limits;
 pub use models::*;
-pub use remote_auth::{EdgeAuthenticator, L0AuthorizeClient, RemoteAuthenticator};
+pub use remote_auth::{
+    EdgeAuthenticator, L0AuthorizeClient, RemoteAuthenticator, RevocationDelta,
+    RevocationPollClock, DEFAULT_REVOKE_POLL_SECS,
+};
 pub use usage::{UsageReport, UsageSigner};

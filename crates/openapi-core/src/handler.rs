@@ -859,6 +859,16 @@ mod tests {
             ) -> Result<crate::authz::SignedAuthz, ApiError> {
                 Ok(self.authz.clone())
             }
+
+            fn fetch_revocations(
+                &self,
+                _since_epoch: u64,
+            ) -> Result<crate::remote_auth::RevocationDelta, ApiError> {
+                Ok(crate::remote_auth::RevocationDelta {
+                    epoch: self.authz.epoch,
+                    revocations: vec![],
+                })
+            }
         }
 
         let secret = "D".repeat(32);
@@ -870,6 +880,7 @@ mod tests {
             &hash,
             9_999_999_999_999,
             policy,
+            1,
             &signing,
         );
         let remote = RemoteAuthenticator::new(

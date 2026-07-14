@@ -18,12 +18,12 @@
 | Severity | Open at review | Status after remediations |
 |----------|---------------:|-----------------------------------|
 | Critical | 0 | — |
-| High | 4 | **3 mitigated** (ATT-001, ATT-002, AUTH-001); **1 open** (NET-001) |
+| High | 4 | **4 mitigated** (ATT-001, ATT-002, AUTH-001, NET-001) |
 | Medium | 7 | **1 mitigated** (ATT-003 via hardware binding); **6 open** |
 | Low | 1 | open (TLS-001) |
 | Info / positive | 1 | unchanged (CRYPTO-001) |
 
-**Verdict (updated):** Attestation binding (ATT-001/002/003) and L0 policy enforcement (AUTH-001) are addressed in-tree. Residual high risk is **push / accept hardening (NET-001, DOS-001)**, plus metering and ops guards.
+**Verdict (updated):** Attestation binding (ATT-001/002/003), L0 policy enforcement (AUTH-001), and revoke transport (NET-001 → D6-pull) are addressed in-tree. Residual risk is accept/DoS hardening (DOS-001), metering, and ops guards.
 
 ---
 
@@ -34,7 +34,7 @@
 | TLS terminate (when configured), API key verify, usage sign | Host / hypervisor (rogue ops) |
 | Sealed TLS key unseal, optional attestation challenge | L0 catalog signing and billing |
 | SGX: Fortanix EDP enclave · CVM: guest + measurement | Upstream engine (HTTP, private LAN) |
-| | Client skip-attestation; SGX CLI argv; push network path |
+| | Client skip-attestation; SGX CLI argv; L0 (outward) revoke poll |
 
 ---
 
@@ -61,11 +61,9 @@
 
 ### NET-001 — High — Revocation push listener has no transport authentication
 
-- **Status:** **Open** (unchanged by Option A).
-- **Location:** `crates/openapi-platform-cvm/src/push.rs`
-- **Detail:** Plain TCP accept, naive HTTP body parse, Ed25519 on `SignedRevocation` only. Unbounded `thread::spawn`. No mTLS / internal Bearer / IP ACL in code.
-- **Impact:** Reachable push port → DoS / parse load; catalog verify-key compromise becomes a remote revoke oracle with a larger surface than necessary.
-- **Remediation:** Require `OPENAPI_L0_INTERNAL_TOKEN` (or mTLS); default bind `127.0.0.1`; bounded accept pool; reject non-POST early.
+- **Status:** **Mitigated by design** — correctness path is **D6-pull** (outbound poll every 15s + convoy on `SignedAuthz.epoch`); inbound push listener is not started; `OPENAPI_PUSH_LISTEN_ADDR` unwired. L0 `push/register` returns **410**. Authz cache TTL **10 min** bounds stop-loss if pull fails. Legacy `push.rs` may remain dead code until deleted.
+- **Location:** `crates/openapi-core/src/remote_auth.rs`, `openapi-platform-{cvm,sgx}/src/remote_client.rs`, L0 `server/openapi/authorize-service.ts`
+- **Prior detail:** Plain TCP accept push had no mTLS / Bearer — removed from the prod path rather than hardened.
 
 ### AUTH-001 — High — L0 `SignedAuthz.policy` (models / rpm) not enforced
 
@@ -146,7 +144,7 @@
 |----------|-----|------|
 | P0 | ATT-001 | DCAP ECDSA wired; keep PCCS/helper healthy in ops |
 | P0 | AUTH-001 | **Done** — enforce L0 models/rpm at edge |
-| P1 | NET-001, DOS-001 | Push auth + CVM bounded accept |
+| P1 | DOS-001 | CVM bounded accept (NET-001 closed via D6-pull) |
 | P1 | ATT-002 remaining, METER-001, OPS-001, OPS-002 | SNP ioctl + streaming usage + prod seal guards |
 | P2 | PROXY-001, CFG-001, TLS-001 | Hardening and measured config |
 | Done | ATT-003 | Satisfied by hardware `report_data` binding for verifying clients |
