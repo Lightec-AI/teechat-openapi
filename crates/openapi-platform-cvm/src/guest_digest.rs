@@ -2,21 +2,45 @@
 //!
 //! **Target path:** vTPM guest-seal (see repo `SECURITY.md`).
 //! **Minimum today:** cross-check `OPENAPI_LAUNCH_DIGEST` against SNP attestation.
+//!
+//! **OPS-001:** `OPENAPI_ATTESTED_LAUNCH_DIGEST` is a **dev/CI-only** bypass. When
+//! `OPENAPI_PROFILE=prod`, the override is forbidden (fail closed); prod must use
+//! `snpguest` / `/dev/sev-guest`.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use openapi_platform::PlatformError;
+use openapi_platform::{load_edge_profile, PlatformError};
 
-/// Test hook: bypass hardware when set (dev/CI only).
+/// Test hook: bypass hardware when set (**dev/CI only** — forbidden in prod).
 const ATTESTED_DIGEST_ENV: &str = "OPENAPI_ATTESTED_LAUNCH_DIGEST";
+
+/// Unit-test inject: supplies an attested digest without the env bypass (works under
+/// `OPENAPI_PROFILE=prod` so ceremony/seal tests can exercise the prod code path).
+#[cfg(test)]
+static TEST_ATTESTED_DIGEST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// Read launch digest attested by guest hardware.
 ///
-/// Order: test env → `snpguest` report → error.
+/// Order (prod): `snpguest` / `/dev/sev-guest` only.  
+/// Order (dev): env override → `snpguest` → error.
 pub fn read_attested_launch_digest() -> Result<String, PlatformError> {
+    #[cfg(test)]
+    {
+        if let Some(v) = TEST_ATTESTED_DIGEST.lock().unwrap().clone() {
+            return Ok(v);
+        }
+    }
+
     if let Ok(v) = std::env::var(ATTESTED_DIGEST_ENV) {
         if !v.is_empty() && v != "unknown" {
+            if load_edge_profile().is_prod() {
+                return Err(PlatformError::Seal(
+                    "OPENAPI_ATTESTED_LAUNCH_DIGEST is forbidden when OPENAPI_PROFILE=prod; \
+                     use snpguest / /dev/sev-guest (OPS-001)"
+                        .into(),
+                ));
+            }
             return Ok(v);
         }
     }
@@ -28,6 +52,12 @@ pub fn read_attested_launch_digest() -> Result<String, PlatformError> {
     Err(PlatformError::Attestation(
         "no attested launch digest source (/dev/sev-guest or OPENAPI_ATTESTED_LAUNCH_DIGEST)".into(),
     ))
+}
+
+/// cfg(test) only — inject attested digest for prod-path unit tests (not via env).
+#[cfg(test)]
+pub(crate) fn set_test_attested_launch_digest(v: Option<String>) {
+    *TEST_ATTESTED_DIGEST.lock().unwrap() = v;
 }
 
 fn snpguest_bin() -> String {
@@ -142,8 +172,12 @@ mod tests {
     fn with_attested_env(f: impl FnOnce()) {
         let _guard = ATTESTED_ENV_TEST_LOCK.lock().unwrap();
         std::env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
+        std::env::remove_var("OPENAPI_PROFILE");
+        set_test_attested_launch_digest(None);
         f();
         std::env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
+        std::env::remove_var("OPENAPI_PROFILE");
+        set_test_attested_launch_digest(None);
     }
 
     #[test]
@@ -191,6 +225,32 @@ B1 1B 47 5C 6B EC FA B0 18 5A A0 8A CC FD 14 46
         with_attested_env(|| {
             let d = "c".repeat(64);
             std::env::set_var("OPENAPI_ATTESTED_LAUNCH_DIGEST", &d);
+            verify_launch_digest_attested(&d).unwrap();
+        });
+    }
+
+    #[test]
+    fn prod_forbids_env_attested_launch_override() {
+        with_attested_env(|| {
+            std::env::set_var("OPENAPI_PROFILE", "prod");
+            std::env::set_var("OPENAPI_ATTESTED_LAUNCH_DIGEST", "a".repeat(64));
+            let err = read_attested_launch_digest().unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("OPENAPI_ATTESTED_LAUNCH_DIGEST") && msg.contains("prod"),
+                "got: {msg}"
+            );
+            assert!(verify_launch_digest_attested(&("a".repeat(64))).is_err());
+        });
+    }
+
+    #[test]
+    fn prod_allows_test_inject_not_env() {
+        with_attested_env(|| {
+            let d = "f".repeat(64);
+            std::env::set_var("OPENAPI_PROFILE", "prod");
+            set_test_attested_launch_digest(Some(d.clone()));
+            assert_eq!(read_attested_launch_digest().unwrap(), d);
             verify_launch_digest_attested(&d).unwrap();
         });
     }

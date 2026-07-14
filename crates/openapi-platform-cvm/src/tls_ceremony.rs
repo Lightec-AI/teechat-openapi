@@ -98,6 +98,16 @@ pub fn assert_prod_ceremony_policy() -> Result<(), CeremonyError> {
             "OPENAPI_SEAL_ROOT_HEX must not be set during ceremony".into(),
         ));
     }
+    // OPS-001: test hook must not be present on prod ceremony units.
+    if std::env::var("OPENAPI_ATTESTED_LAUNCH_DIGEST")
+        .ok()
+        .filter(|s| !s.is_empty() && s != "unknown")
+        .is_some()
+    {
+        return Err(CeremonyError::Policy(
+            "OPENAPI_ATTESTED_LAUNCH_DIGEST is forbidden during prod ceremony (OPS-001)".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -266,7 +276,9 @@ pub fn assert_no_plaintext_privkey_on_disk(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::guest_digest::ATTESTED_ENV_TEST_LOCK;
+    use crate::guest_digest::{
+        set_test_attested_launch_digest, ATTESTED_ENV_TEST_LOCK,
+    };
     use openapi_platform::Sealer;
     use std::env;
     use std::sync::Mutex;
@@ -281,12 +293,14 @@ mod tests {
         env::remove_var("OPENAPI_TLS_KEY_PATH");
         env::remove_var("OPENAPI_SEAL_ROOT_HEX");
         env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
+        set_test_attested_launch_digest(None);
         f();
         env::remove_var("OPENAPI_PROFILE");
         env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
         env::remove_var("OPENAPI_TLS_KEY_PATH");
         env::remove_var("OPENAPI_SEAL_ROOT_HEX");
         env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
+        set_test_attested_launch_digest(None);
     }
 
     fn write_pem(dir: &Path, name: &str, body: &str) {
@@ -378,6 +392,19 @@ mod tests {
     }
 
     #[test]
+    fn assert_prod_ceremony_rejects_attested_launch_override() {
+        with_env(|| {
+            env::set_var("OPENAPI_PROFILE", "prod");
+            env::set_var("OPENAPI_ATTESTED_LAUNCH_DIGEST", "a".repeat(64));
+            let err = assert_prod_ceremony_policy().unwrap_err();
+            assert!(
+                err.to_string().contains("OPENAPI_ATTESTED_LAUNCH_DIGEST"),
+                "got: {err}"
+            );
+        });
+    }
+
+    #[test]
     fn install_cert_chain_copies_fullchain() {
         let dir = std::env::temp_dir().join(format!("ceremony-cert-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -406,7 +433,8 @@ mod tests {
         with_env(|| {
             let launch = "a".repeat(64);
             env::set_var("OPENAPI_PROFILE", "prod");
-            env::set_var("OPENAPI_ATTESTED_LAUNCH_DIGEST", &launch);
+            // OPS-001: prod forbids env override — use test inject for hardware.
+            set_test_attested_launch_digest(Some(launch.clone()));
 
             let dir = std::env::temp_dir().join(format!("ceremony-seal-{}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
@@ -434,6 +462,31 @@ mod tests {
                 .unwrap();
             assert!(plain.windows(b"BEGIN".len()).any(|w| w == b"BEGIN"));
 
+            let _ = fs::remove_dir_all(&dir);
+        });
+    }
+
+    #[test]
+    fn seal_from_acme_fails_when_prod_env_override_set() {
+        with_env(|| {
+            let launch = "a".repeat(64);
+            env::set_var("OPENAPI_PROFILE", "prod");
+            env::set_var("OPENAPI_ATTESTED_LAUNCH_DIGEST", &launch);
+            set_test_attested_launch_digest(Some(launch.clone()));
+
+            let dir = std::env::temp_dir().join(format!("ceremony-ops001-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            let le = dir.join("letsencrypt");
+            let etc = dir.join("etc");
+            fs::create_dir_all(&etc).unwrap();
+            let live = setup_acme_tree(&le, "openapi.teechat.ai");
+            let paths = TlsCeremonyPaths {
+                cert_path: etc.join("openapi-tls.crt"),
+                sealed_key_path: etc.join("openapi-tls-key.sealed.json"),
+                launch_digest: launch,
+                image_digest: "image-id".into(),
+            };
+            assert!(seal_from_acme_live(&paths, &live, &le, "openapi.teechat.ai").is_err());
             let _ = fs::remove_dir_all(&dir);
         });
     }

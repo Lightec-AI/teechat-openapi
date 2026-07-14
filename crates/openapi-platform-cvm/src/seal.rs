@@ -109,7 +109,9 @@ mod tests {
     use super::*;
     use openapi_platform::{seal_tls_private_key, unseal_tls_private_key};
 
-    use crate::guest_digest::ATTESTED_ENV_TEST_LOCK;
+    use crate::guest_digest::{
+        set_test_attested_launch_digest, ATTESTED_ENV_TEST_LOCK,
+    };
 
     const KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----\ncvm-test\n-----END PRIVATE KEY-----\n";
 
@@ -128,8 +130,12 @@ mod tests {
     fn with_attested_env(f: impl FnOnce()) {
         let _guard = ATTESTED_ENV_TEST_LOCK.lock().unwrap();
         clear_attested();
+        std::env::remove_var("OPENAPI_PROFILE");
+        set_test_attested_launch_digest(None);
         f();
         clear_attested();
+        std::env::remove_var("OPENAPI_PROFILE");
+        set_test_attested_launch_digest(None);
     }
 
     #[test]
@@ -218,6 +224,21 @@ mod tests {
             let sealer = CvmSealer::with_profile(&launch, "id-prod", true);
             let root = sealer.resolve_seal_root(None).unwrap();
             assert!(root.is_some());
+        });
+    }
+
+    #[test]
+    fn ops001_prod_profile_rejects_env_attested_override() {
+        with_attested_env(|| {
+            let launch = launch_hex();
+            std::env::set_var("OPENAPI_PROFILE", "prod");
+            set_attested(&launch);
+            let sealer = CvmSealer::with_profile(&launch, "id-prod", true);
+            assert!(sealer.seal_tls_key(KEY, None).is_err());
+            // Test inject still allows exercising the prod sealer path.
+            set_test_attested_launch_digest(Some(launch.clone()));
+            let blob = sealer.seal_tls_key(KEY, None).unwrap();
+            assert_eq!(sealer.unseal_tls_key(&blob, None).unwrap(), KEY);
         });
     }
 }

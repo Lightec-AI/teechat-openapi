@@ -22,6 +22,14 @@ pub enum ProfileError {
     ProdMissingSealedTlsKey,
     #[error("prod forbids host-supplied OPENAPI_SEAL_ROOT_HEX — seal root is derived inside TEE")]
     ProdHostSealRoot,
+    #[error(
+        "prod forbids OPENAPI_ATTESTED_LAUNCH_DIGEST — use snpguest / /dev/sev-guest (OPS-001)"
+    )]
+    ProdAttestedLaunchOverride,
+    #[error(
+        "OPENAPI_PROFILE=prod forbids host-side seal-tls-key tools — run the in-TEE ceremony"
+    )]
+    ProdHostSealTool,
 }
 
 /// Load profile from `OPENAPI_PROFILE` (`dev` default, `prod` / `production` → prod).
@@ -59,6 +67,22 @@ pub fn validate_tls_key_policy(profile: EdgeProfile) -> Result<(), ProfileError>
         {
             return Err(ProfileError::ProdHostSealRoot);
         }
+        // OPS-001: CVM test hook must never be live on prod units.
+        if std::env::var("OPENAPI_ATTESTED_LAUNCH_DIGEST")
+            .ok()
+            .filter(|s| !s.is_empty() && s != "unknown")
+            .is_some()
+        {
+            return Err(ProfileError::ProdAttestedLaunchOverride);
+        }
+    }
+    Ok(())
+}
+
+/// Host-side `seal-tls-key` / `seal-tls-key-sgx` are **dev/lab only** (OPS-002).
+pub fn assert_dev_host_seal_tool(profile: EdgeProfile) -> Result<(), ProfileError> {
+    if profile.is_prod() {
+        return Err(ProfileError::ProdHostSealTool);
     }
     Ok(())
 }
@@ -77,6 +101,7 @@ mod tests {
         env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
         env::remove_var("OPENAPI_TLS_KEY_PATH");
         env::remove_var("OPENAPI_SEAL_ROOT_HEX");
+        env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
     }
 
     #[test]
@@ -133,5 +158,28 @@ mod tests {
             Err(ProfileError::ProdHostSealRoot)
         ));
         clear_tls_env();
+    }
+
+    #[test]
+    fn prod_rejects_attested_launch_override() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        clear_tls_env();
+        env::set_var("OPENAPI_PROFILE", "prod");
+        env::set_var("OPENAPI_TLS_SEALED_KEY_PATH", "/var/sealed.json");
+        env::set_var("OPENAPI_ATTESTED_LAUNCH_DIGEST", "a".repeat(64));
+        assert!(matches!(
+            validate_tls_key_policy(EdgeProfile::Prod),
+            Err(ProfileError::ProdAttestedLaunchOverride)
+        ));
+        clear_tls_env();
+    }
+
+    #[test]
+    fn host_seal_tool_forbidden_in_prod() {
+        assert!(matches!(
+            assert_dev_host_seal_tool(EdgeProfile::Prod),
+            Err(ProfileError::ProdHostSealTool)
+        ));
+        assert!(assert_dev_host_seal_tool(EdgeProfile::Dev).is_ok());
     }
 }

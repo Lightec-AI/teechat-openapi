@@ -19,7 +19,8 @@ pub use challenge::{
     SGX_REPORT_DATA_OFFSET, SNP_REPORT_DATA_OFFSET,
 };
 pub use profile::{
-    load_edge_profile, validate_tls_key_policy, EdgeProfile, ProfileError,
+    assert_dev_host_seal_tool, load_edge_profile, validate_tls_key_policy, EdgeProfile,
+    ProfileError,
 };
 pub use seal::{
     derive_cvm_seal_root, derive_seal_key, measurement_binding_label, seal_tls_private_key,
