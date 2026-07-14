@@ -83,7 +83,7 @@
 
 ### DOS-001 — Medium — CVM edge unbounded `thread::spawn` per connection
 
-- **Status:** **Mitigated** — CVM uses `openapi_edge::run_edge_server` (same as SGX): bounded workers sized for **concurrent streaming sessions** (`OPENAPI_ACCEPT_WORKERS`; default **512** CVM / **8** SGX), small accept queue with **try_send shed**, and short **request-arrival idle** (`OPENAPI_CONN_IDLE_SECS`, default **3s**). After the HTTP request is fully received, idle timeouts are cleared for multi-minute streams. **Capacity:** each worker ≈ one live session for TTFT+stream; set `OPENAPI_ACCEPT_WORKERS` to peak concurrency. SGX stays TCS-bound until enclave thread count is raised or I/O is demuxed.
+- **Status:** **Mitigated** — CVM uses `openapi_edge::run_edge_server` (same as SGX): bounded workers sized for **concurrent streaming sessions** (`OPENAPI_ACCEPT_WORKERS`; default **512** CVM / **8** SGX), small accept queue with **try_send shed**, and short **request-arrival idle** (`OPENAPI_CONN_IDLE_SECS`, default **3s**). After the HTTP request is fully received, idle timeouts are cleared for multi-minute streams (plain TCP and TLS via pre-accept `TcpStream::try_clone` — IDLE-001). **Capacity:** each worker ≈ one live session for TTFT+stream; set `OPENAPI_ACCEPT_WORKERS` to peak concurrency. SGX stays TCS-bound until enclave thread count is raised or I/O is demuxed.
 - **Location:** `bins/openapi/src/main.rs`, `crates/openapi-edge/src/lib.rs`, `crates/openapi-http/src/server.rs`
 - **Also shipped:** per-IP connection cap (`OPENAPI_IP_MAX_CONNS`, default **16**) and per-IP API RPM (`OPENAPI_IP_REQUESTS_PER_MINUTE`, default **180**) in addition to per-`key_id` RPM. Challenge remains on its own per-IP RPM. L4/network ACLs still recommended in front of public edges.
 

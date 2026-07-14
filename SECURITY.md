@@ -107,6 +107,8 @@ OPENAPI_TLS_VERIFY_HOST=openapi.teechat.ai OPENAPI_TLS_VERIFY_PORT=443 bash scri
 
 This repository implements the **Edge OpenAI proxy** (L1 Edge KMS). It does **not** hold user prompts at rest, Platform KMS keys, or billing/catalog signing keys — those live in separate TeaChat control-plane services.
 
-**Security reviews:** [docs/security-review-2026-07-12.md](docs/security-review-2026-07-12.md) (static review · Cursor Grok 4.5 High Fast).
+**Security reviews:**
+- [docs/security-review-2026-07-12.md](docs/security-review-2026-07-12.md) (static review · Cursor Grok 4.5 High Fast)
+- [docs/security-review-2026-07-14.md](docs/security-review-2026-07-14.md) (follow-up at tip `d8feabf` · Cursor Composer)
 
 Product documentation: [openapi.teechat.ai](https://openapi.teechat.ai) (when published).
