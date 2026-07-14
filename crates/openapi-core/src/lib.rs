@@ -21,7 +21,7 @@ pub use config::Config;
 pub use error::{ApiError, ApiErrorBody};
 pub use handler::{App, AppResponse, HttpMethod, StreamForwardResult, UpstreamForwarder, UpstreamResponse};
 pub use key_format::{hash_api_key, parse_api_key};
-pub use limits::Limits;
+pub use limits::{IpConnPermit, IpConnTracker, Limits};
 pub use models::*;
 pub use remote_auth::{
     EdgeAuthenticator, L0AuthorizeClient, RemoteAuthenticator, RevocationDelta,

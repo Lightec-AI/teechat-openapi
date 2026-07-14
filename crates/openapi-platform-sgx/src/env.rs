@@ -56,6 +56,8 @@ pub struct SgxEdgeEnv {
     pub challenge_requests_per_minute: u32,
     pub challenge_max_inflight: u32,
     pub challenge_bench_token: Option<String>,
+    pub ip_max_connections: u32,
+    pub ip_requests_per_minute: u32,
 }
 
 #[derive(Debug, Error)]
@@ -90,6 +92,8 @@ impl SgxEdgeEnv {
             challenge_requests_per_minute: self.challenge_requests_per_minute,
             challenge_max_inflight: self.challenge_max_inflight,
             challenge_bench_token: self.challenge_bench_token.clone(),
+            ip_max_connections: self.ip_max_connections,
+            ip_requests_per_minute: self.ip_requests_per_minute,
         }
     }
 
@@ -247,6 +251,12 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
             .and_then(|v| v.parse().ok())
             .unwrap_or(4),
         challenge_bench_token: opt("OPENAPI_CHALLENGE_BENCH_TOKEN"),
+        ip_max_connections: opt("OPENAPI_IP_MAX_CONNS")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(16),
+        ip_requests_per_minute: opt("OPENAPI_IP_REQUESTS_PER_MINUTE")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(180),
     })
 }
 
@@ -323,5 +333,36 @@ mod tests {
         env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
         env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
         env::remove_var("OPENAPI_MRENCLAVE");
+    }
+
+    #[test]
+    fn sgx_env_loads_per_ip_limits() {
+        env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:8000");
+        env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
+        env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
+        env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
+        env::set_var("OPENAPI_MRENCLAVE", "abc123");
+        env::remove_var("OPENAPI_IP_MAX_CONNS");
+        env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
+
+        let edge = load_sgx_edge_env().unwrap();
+        let limits = edge.limits();
+        assert_eq!(limits.ip_max_connections, 16);
+        assert_eq!(limits.ip_requests_per_minute, 180);
+
+        env::set_var("OPENAPI_IP_MAX_CONNS", "5");
+        env::set_var("OPENAPI_IP_REQUESTS_PER_MINUTE", "42");
+        let edge = load_sgx_edge_env().unwrap();
+        let limits = edge.limits();
+        assert_eq!(limits.ip_max_connections, 5);
+        assert_eq!(limits.ip_requests_per_minute, 42);
+
+        env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
+        env::remove_var("OPENAPI_CATALOG_PATH");
+        env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
+        env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
+        env::remove_var("OPENAPI_MRENCLAVE");
+        env::remove_var("OPENAPI_IP_MAX_CONNS");
+        env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
     }
 }

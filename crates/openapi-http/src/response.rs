@@ -57,12 +57,16 @@ pub fn build_error_response(err: ApiError) -> Vec<u8> {
         _ => "Internal Server Error",
     };
     let mut out = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
         body.len()
-    )
-    .into_bytes();
-    out.extend_from_slice(&body);
-    out
+    );
+    if status == 429 {
+        out.push_str("Retry-After: 1\r\n");
+    }
+    out.push_str("Connection: close\r\n\r\n");
+    let mut bytes = out.into_bytes();
+    bytes.extend_from_slice(&body);
+    bytes
 }
 
 #[cfg(test)]
@@ -87,6 +91,15 @@ mod tests {
         assert!(text.starts_with("HTTP/1.1 403"));
         assert!(text.contains("model_not_allowed"));
         assert!(text.contains("not allowed"));
+    }
+
+    #[test]
+    fn rate_limited_is_429_with_retry_after() {
+        let bytes = build_error_response(ApiError::RateLimited);
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.starts_with("HTTP/1.1 429"));
+        assert!(text.contains("Retry-After: 1"));
+        assert!(text.contains("rate_limit_exceeded"));
     }
 
     #[test]

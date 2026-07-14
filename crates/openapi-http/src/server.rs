@@ -61,8 +61,23 @@ where
     P: AttestationPlatform,
 {
     let client_ip = stream.peer_addr().ok().map(|addr| addr.ip().to_string());
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(120)))?;
-    stream.set_write_timeout(Some(std::time::Duration::from_secs(120)))?;
+    let _ip_permit = match app.try_acquire_ip_conn(client_ip.as_deref()) {
+        Ok(p) => p,
+        Err(e) => {
+            let err = build_error_response(e);
+            let _ = stream.write_all(&err);
+            return Ok(());
+        }
+    };
+    // Short idle for TLS/header phase (slowloris); cleared once the request is parsed.
+    let idle_secs = std::env::var("OPENAPI_CONN_IDLE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n: &u64| n > 0)
+        .unwrap_or(3);
+    let idle = std::time::Duration::from_secs(idle_secs);
+    stream.set_read_timeout(Some(idle))?;
+    stream.set_write_timeout(Some(idle))?;
 
     let mut buffer = vec![0u8; 1024 * 256];
     let mut total = 0usize;
@@ -74,6 +89,9 @@ where
         total += n;
         match ParsedRequest::parse(&buffer[..total]) {
             Ok(Some(req)) => {
+                // Long / streaming responses must not hit header idle timeouts.
+                let _ = stream.set_read_timeout(None);
+                let _ = stream.set_write_timeout(None);
                 dispatch_to_writer(
                     &app,
                     req.method.as_str(),
@@ -279,6 +297,10 @@ mod tests {
     }
 
     fn test_app() -> Arc<App<TestUpstream, TestPlatform>> {
+        test_app_with(Limits::default())
+    }
+
+    fn test_app_with(limits: Limits) -> Arc<App<TestUpstream, TestPlatform>> {
         let api_key = "sk-teechat-http";
         let mut csprng = OsRng;
         let signing = SigningKey::generate(&mut csprng);
@@ -292,7 +314,7 @@ mod tests {
         let catalog = KeyCatalog::from_signed(signed, verify).unwrap();
         Arc::new(App::new(
             Config::default(),
-            Limits::default(),
+            limits,
             EdgeAuthenticator::from_catalog(Authenticator::new(catalog)),
             TestUpstream,
             TestPlatform,
@@ -418,5 +440,44 @@ mod tests {
         stream.read_to_string(&mut resp).unwrap();
         assert!(resp.contains("200"));
         assert!(resp.contains("\"status\":\"ok\""));
+    }
+
+    #[test]
+    fn integration_per_ip_conn_limit_returns_429() {
+        std::env::set_var("OPENAPI_CONN_IDLE_SECS", "30");
+        let mut limits = Limits::default();
+        limits.ip_max_connections = 1;
+        let app = test_app_with(limits);
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { continue };
+                let app = Arc::clone(&app);
+                std::thread::spawn(move || {
+                    let _ = handle_connection(stream, app);
+                });
+            }
+        });
+
+        let holder = std::net::TcpStream::connect(addr).unwrap();
+        // Allow accept + try_acquire_ip_conn on the first connection.
+        std::thread::sleep(Duration::from_millis(80));
+
+        let mut stream = std::net::TcpStream::connect(addr).unwrap();
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        stream
+            .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        let mut resp = String::new();
+        let _ = stream.read_to_string(&mut resp);
+        drop(holder);
+        std::env::remove_var("OPENAPI_CONN_IDLE_SECS");
+        assert!(
+            resp.contains("HTTP/1.1 429"),
+            "second concurrent conn should 429, got: {resp}"
+        );
+        assert!(resp.contains("rate_limit_exceeded"));
     }
 }

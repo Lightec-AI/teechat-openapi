@@ -8,7 +8,7 @@ use crate::auth::AuthContext;
 use crate::remote_auth::EdgeAuthenticator;
 use crate::config::Config;
 use crate::error::ApiError;
-use crate::limits::{InflightGate, Limits, RateLimiter};
+use crate::limits::{InflightGate, IpConnPermit, IpConnTracker, Limits, RateLimiter};
 use crate::models::{
     AttestationChallengeRequest, ChatCompletionRequest, ModelsListResponse,
 };
@@ -123,6 +123,8 @@ where
     rate_limiter: Arc<RateLimiter>,
     challenge_rate_limiter: Arc<RateLimiter>,
     challenge_inflight: Arc<InflightGate>,
+    ip_conn_tracker: Arc<IpConnTracker>,
+    ip_rate_limiter: Arc<RateLimiter>,
 }
 
 impl<U, P> App<U, P>
@@ -141,6 +143,8 @@ where
         let rate_limiter = limits.rate_limiter();
         let challenge_rate_limiter = limits.challenge_rate_limiter();
         let challenge_inflight = limits.challenge_inflight_gate();
+        let ip_conn_tracker = limits.ip_conn_tracker();
+        let ip_rate_limiter = limits.ip_rate_limiter();
         Self {
             config,
             limits,
@@ -151,11 +155,19 @@ where
             rate_limiter,
             challenge_rate_limiter,
             challenge_inflight,
+            ip_conn_tracker,
+            ip_rate_limiter,
         }
     }
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Acquire a per-IP connection slot for the TCP/TLS session lifetime.
+    pub fn try_acquire_ip_conn(&self, client_ip: Option<&str>) -> Result<IpConnPermit<'_>, ApiError> {
+        self.ip_conn_tracker
+            .try_acquire(client_ip.unwrap_or("unknown"))
     }
 
     pub fn handle(
@@ -202,12 +214,14 @@ where
                 self.handle_attestation(body, client_ip, challenge_bench_header)
             }
             RouteAction::ModelsList => {
+                self.enforce_ip_api_limit(client_ip)?;
                 let auth = self.authenticator.authenticate_bearer(authorization)?;
                 self.enforce_rate_limit(&auth)?;
                 let models = self.upstream.list_models()?;
                 Ok(AppResponse::Json(serde_json::to_value(models).unwrap()))
             }
             RouteAction::InferencePost => {
+                self.enforce_ip_api_limit(client_ip)?;
                 let auth = self.authenticator.authenticate_bearer(authorization)?;
                 self.enforce_rate_limit(&auth)?;
                 self.limits.validate_body_size(body.len())?;
@@ -219,6 +233,7 @@ where
                 }
             }
             RouteAction::ProxyGet | RouteAction::ProxyPost => {
+                self.enforce_ip_api_limit(client_ip)?;
                 let auth = self.authenticator.authenticate_bearer(authorization)?;
                 self.enforce_rate_limit(&auth)?;
                 if !body.is_empty() {
@@ -251,6 +266,7 @@ where
                 Ok(upstream_to_json_response(upstream))
             }
             RouteAction::NotImplemented(reason) => {
+                self.enforce_ip_api_limit(client_ip)?;
                 let _ = self.authenticator.authenticate_bearer(authorization)?;
                 Err(ApiError::NotImplemented(reason.into()))
             }
@@ -264,6 +280,15 @@ where
             .policy
             .effective_rpm(self.limits.requests_per_minute);
         self.rate_limiter.check_with_rpm(&auth.key_id, rpm)
+    }
+
+    fn enforce_ip_api_limit(&self, client_ip: Option<&str>) -> Result<(), ApiError> {
+        let rpm = self.limits.ip_requests_per_minute;
+        if rpm == 0 {
+            return Ok(());
+        }
+        let ip = client_ip.unwrap_or("unknown");
+        self.ip_rate_limiter.check_with_rpm(ip, rpm)
     }
 
     fn enforce_model_policy(&self, auth: &AuthContext, body: &[u8]) -> Result<(), ApiError> {
@@ -799,6 +824,171 @@ mod tests {
             }
             _ => panic!("expected sse passthrough"),
         }
+    }
+
+    #[test]
+    fn api_rate_limited_per_ip_before_key_rpm() {
+        let mut limits = Limits::default();
+        limits.ip_requests_per_minute = 2;
+        limits.requests_per_minute = 1000;
+        let api_key = "sk-teechat-test";
+        let catalog_signing = SigningKey::from_bytes(&[7u8; 32]);
+        let signed = sign_test_catalog(
+            vec![KeyRecord {
+                key_id: "k".into(),
+                key_hash_hex: hash_api_key(api_key),
+                revoked: false,
+            }],
+            &catalog_signing,
+        );
+        let catalog = KeyCatalog::from_signed(signed, catalog_signing.verifying_key()).unwrap();
+        let auth = format!("Bearer {api_key}");
+        let upstream = MockUpstream::default().with(
+            "/v1/models",
+            UpstreamResponse::Json(serde_json::json!({
+                "object": "list",
+                "data": []
+            })),
+        );
+        let app = App::new(
+            Config::default(),
+            limits,
+            EdgeAuthenticator::from_catalog(Authenticator::new(catalog)),
+            upstream,
+            TestPlatform,
+            UsageSigner::from_seed([9u8; 32]),
+        );
+        app.handle_from(
+            HttpMethod::Get,
+            "/v1/models",
+            Some(&auth),
+            b"",
+            1,
+            Some("198.51.100.7"),
+        )
+        .unwrap();
+        app.handle_from(
+            HttpMethod::Get,
+            "/v1/models",
+            Some(&auth),
+            b"",
+            2,
+            Some("198.51.100.7"),
+        )
+        .unwrap();
+        let err = app
+            .handle_from(
+                HttpMethod::Get,
+                "/v1/models",
+                Some(&auth),
+                b"",
+                3,
+                Some("198.51.100.7"),
+            )
+            .unwrap_err();
+        assert!(matches!(err, ApiError::RateLimited));
+        // Different IP still OK.
+        app.handle_from(
+            HttpMethod::Get,
+            "/v1/models",
+            Some(&auth),
+            b"",
+            4,
+            Some("198.51.100.8"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn healthz_exempt_from_ip_api_rpm() {
+        let mut limits = Limits::default();
+        limits.ip_requests_per_minute = 1;
+        let app = App::new(
+            Config::default(),
+            limits,
+            EdgeAuthenticator::from_catalog(Authenticator::new({
+                let sk = SigningKey::from_bytes(&[8u8; 32]);
+                KeyCatalog::from_signed(
+                    sign_test_catalog(vec![], &sk),
+                    sk.verifying_key(),
+                )
+                .unwrap()
+            })),
+            MockUpstream::default(),
+            TestPlatform,
+            UsageSigner::from_seed([1u8; 32]),
+        );
+        for i in 0..5 {
+            app.handle_from(HttpMethod::Get, "/healthz", None, b"", i, Some("198.51.100.9"))
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn ip_api_rpm_zero_is_unlimited() {
+        let mut limits = Limits::default();
+        limits.ip_requests_per_minute = 0;
+        limits.requests_per_minute = 10_000;
+        let api_key = "sk-teechat-ip0";
+        let sk = SigningKey::from_bytes(&[3u8; 32]);
+        let signed = sign_test_catalog(
+            vec![KeyRecord {
+                key_id: "k".into(),
+                key_hash_hex: hash_api_key(api_key),
+                revoked: false,
+            }],
+            &sk,
+        );
+        let catalog = KeyCatalog::from_signed(signed, sk.verifying_key()).unwrap();
+        let auth = format!("Bearer {api_key}");
+        let upstream = MockUpstream::default().with(
+            "/v1/models",
+            UpstreamResponse::Json(serde_json::json!({"object":"list","data":[]})),
+        );
+        let app = App::new(
+            Config::default(),
+            limits,
+            EdgeAuthenticator::from_catalog(Authenticator::new(catalog)),
+            upstream,
+            TestPlatform,
+            UsageSigner::from_seed([2u8; 32]),
+        );
+        for i in 0..20 {
+            app.handle_from(
+                HttpMethod::Get,
+                "/v1/models",
+                Some(&auth),
+                b"",
+                i,
+                Some("203.0.113.50"),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn app_try_acquire_ip_conn_caps_and_releases() {
+        let sk = SigningKey::from_bytes(&[4u8; 32]);
+        let catalog = KeyCatalog::from_signed(sign_test_catalog(vec![], &sk), sk.verifying_key())
+            .unwrap();
+        let mut limits = Limits::default();
+        limits.ip_max_connections = 1;
+        let app = App::new(
+            Config::default(),
+            limits,
+            EdgeAuthenticator::from_catalog(Authenticator::new(catalog)),
+            MockUpstream::default(),
+            TestPlatform,
+            UsageSigner::from_seed([4u8; 32]),
+        );
+        let a = app.try_acquire_ip_conn(Some("198.51.100.1")).unwrap();
+        match app.try_acquire_ip_conn(Some("198.51.100.1")) {
+            Err(ApiError::RateLimited) => {}
+            Ok(_) => panic!("expected RateLimited when ip_max_connections=1"),
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+        drop(a);
+        app.try_acquire_ip_conn(Some("198.51.100.1")).unwrap();
     }
 
     #[test]

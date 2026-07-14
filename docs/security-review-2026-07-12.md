@@ -19,11 +19,11 @@
 |----------|---------------:|-----------------------------------|
 | Critical | 0 | — |
 | High | 4 | **4 mitigated** (ATT-001, ATT-002, AUTH-001, NET-001) |
-| Medium | 7 | **1 mitigated** (ATT-003 via hardware binding); **6 open** |
+| Medium | 7 | **2 mitigated** (ATT-003, DOS-001); **5 open** |
 | Low | 1 | open (TLS-001) |
 | Info / positive | 1 | unchanged (CRYPTO-001) |
 
-**Verdict (updated):** Attestation binding (ATT-001/002/003), L0 policy enforcement (AUTH-001), and revoke transport (NET-001 → D6-pull) are addressed in-tree. Residual risk is accept/DoS hardening (DOS-001), metering, and ops guards.
+**Verdict (updated):** Attestation, AUTH-001, NET-001 (D6-pull), and DOS-001 (bounded accept + shed + idle cut) are addressed. Residual: metering, ops/prod guards, proxy allowlist.
 
 ---
 
@@ -83,11 +83,9 @@
 
 ### DOS-001 — Medium — CVM edge unbounded `thread::spawn` per connection
 
-- **Status:** **Open** (unchanged by Option A).
-- **Location:** `bins/openapi/src/main.rs`
-- **Detail:** SGX path uses bounded accept pool in `openapi-edge`; CVM binary was not migrated.
-- **Impact:** Connection flood can exhaust guest memory/threads.
-- **Remediation:** Route CVM through `openapi_edge::run_edge_server`; cap `OPENAPI_ACCEPT_WORKERS`.
+- **Status:** **Mitigated** — CVM uses `openapi_edge::run_edge_server` (same as SGX): bounded workers sized for **concurrent streaming sessions** (`OPENAPI_ACCEPT_WORKERS`; default **512** CVM / **8** SGX), small accept queue with **try_send shed**, and short **request-arrival idle** (`OPENAPI_CONN_IDLE_SECS`, default **3s**). After the HTTP request is fully received, idle timeouts are cleared for multi-minute streams. **Capacity:** each worker ≈ one live session for TTFT+stream; set `OPENAPI_ACCEPT_WORKERS` to peak concurrency. SGX stays TCS-bound until enclave thread count is raised or I/O is demuxed.
+- **Location:** `bins/openapi/src/main.rs`, `crates/openapi-edge/src/lib.rs`, `crates/openapi-http/src/server.rs`
+- **Also shipped:** per-IP connection cap (`OPENAPI_IP_MAX_CONNS`, default **16**) and per-IP API RPM (`OPENAPI_IP_REQUESTS_PER_MINUTE`, default **180**) in addition to per-`key_id` RPM. Challenge remains on its own per-IP RPM. L4/network ACLs still recommended in front of public edges.
 
 ### METER-001 — Medium — Streaming inference signs usage as 0/0 tokens
 
@@ -144,8 +142,8 @@
 |----------|-----|------|
 | P0 | ATT-001 | DCAP ECDSA wired; keep PCCS/helper healthy in ops |
 | P0 | AUTH-001 | **Done** — enforce L0 models/rpm at edge |
-| P1 | DOS-001 | CVM bounded accept (NET-001 closed via D6-pull) |
-| P1 | ATT-002 remaining, METER-001, OPS-001, OPS-002 | SNP ioctl + streaming usage + prod seal guards |
+| P1 | METER-001, OPS-001, OPS-002 | Streaming usage + prod seal guards (DOS-001 done) |
+| P1 | ATT-002 remaining | Prefer SNP ioctl over snpguest CLI |
 | P2 | PROXY-001, CFG-001, TLS-001 | Hardening and measured config |
 | Done | ATT-003 | Satisfied by hardware `report_data` binding for verifying clients |
 

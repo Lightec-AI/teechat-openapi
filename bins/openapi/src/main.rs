@@ -1,10 +1,9 @@
-use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
 use openapi_core::App;
-use openapi_http::{dispatch_request_from, handle_connection, ParsedRequest};
+use openapi_edge::{run_edge_server, ReadWriteConn};
 use openapi_platform_cvm::{
     load_edge_env, CvmAttestationPlatform, CvmSealer, TlsAcceptor, TlsConfig, UreqUpstream,
 };
@@ -60,34 +59,18 @@ fn main() -> anyhow::Result<()> {
         env.usage_signer().context("usage signer")?,
     ));
 
-    let listener = std::net::TcpListener::bind(&env.listen_addr).context("bind listen addr")?;
-    info!(addr = ?listener.local_addr()?, "listening");
-
     let tls_acceptor = build_tls_acceptor(&env, &sealer, seal_root.as_ref())?;
+    let tls_hook = tls_acceptor.map(|acceptor| {
+        move |stream: std::net::TcpStream| -> Option<Box<dyn ReadWriteConn>> {
+            acceptor
+                .accept(stream)
+                .ok()
+                .map(|s| Box::new(s) as Box<dyn ReadWriteConn>)
+        }
+    });
 
-    for stream in listener.incoming() {
-        let stream = match stream {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(error = %e, "accept failed");
-                continue;
-            }
-        };
-        let app = Arc::clone(&app);
-        let tls = tls_acceptor.clone();
-        std::thread::spawn(move || {
-            let client_ip = stream.peer_addr().ok().map(|a| a.ip().to_string());
-            if let Some(acceptor) = tls {
-                if let Ok(mut tls_stream) = acceptor.accept(stream) {
-                    serve_tls(&app, &mut tls_stream, client_ip.as_deref());
-                }
-            } else {
-                let _ = handle_connection(stream, app);
-            }
-        });
-    }
-
-    Ok(())
+    // Bounded accept pool + idle cut + shed-on-full (DOS-001).
+    run_edge_server(&env.listen_addr, app, tls_hook)
 }
 
 fn tls_spki_hex(
@@ -152,52 +135,4 @@ fn build_tls_acceptor(
     };
 
     Ok(Some(Arc::new(TlsAcceptor::new(server_config))))
-}
-
-fn serve_tls<U, P>(
-    app: &Arc<App<U, P>>,
-    tls_stream: &mut (impl Read + Write),
-    client_ip: Option<&str>,
-) where
-    U: openapi_core::UpstreamForwarder + 'static,
-    P: openapi_platform::AttestationPlatform + 'static,
-{
-    let mut buffer = vec![0u8; 1024 * 256];
-    let mut total = 0usize;
-    loop {
-        let n = match tls_stream.read(&mut buffer[total..]) {
-            Ok(0) => return,
-            Ok(n) => n,
-            Err(e) => {
-                warn!(error = %e, "tls read");
-                return;
-            }
-        };
-        total += n;
-        match ParsedRequest::parse(&buffer[..total]) {
-            Ok(Some(req)) => {
-                let response = dispatch_request_from(
-                    app,
-                    &req.method,
-                    &req.path,
-                    req.headers.get("authorization").map(String::as_str),
-                    &req.body,
-                    client_ip,
-                    req.headers
-                        .get("x-teechat-challenge-bench")
-                        .map(String::as_str),
-                );
-                let _ = tls_stream.write_all(&response);
-                let _ = tls_stream.flush();
-                return;
-            }
-            Ok(None) => {
-                if total >= buffer.len() {
-                    return;
-                }
-                continue;
-            }
-            Err(_) => return,
-        }
-    }
 }
