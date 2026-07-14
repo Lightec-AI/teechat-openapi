@@ -45,12 +45,15 @@ pub enum AppResponse {
         upstream_body: Vec<u8>,
         usage: UsageReport,
     },
-    /// Incremental SSE passthrough: HTTP layer pipes upstream body to the client.
+    /// Incremental SSE passthrough: HTTP layer pipes upstream body to the client,
+    /// accumulates SSE `usage`, then signs the final report (METER-001).
     SsePassthrough {
         method: HttpMethod,
         path: String,
         body: Vec<u8>,
-        usage: UsageReport,
+        key_id: String,
+        model: String,
+        now_ms: u64,
     },
 }
 
@@ -244,18 +247,13 @@ where
                 }
                 if method == HttpMethod::Post && body_wants_stream(body) {
                     let model = model_from_body(body);
-                    let usage = self.usage_signer.sign_report(
-                        &auth.key_id,
-                        &model,
-                        0,
-                        0,
-                        now_ms,
-                    )?;
                     return Ok(AppResponse::SsePassthrough {
                         method,
                         path: path.to_string(),
                         body: body.to_vec(),
-                        usage,
+                        key_id: auth.key_id.clone(),
+                        model,
+                        now_ms,
                     });
                 }
                 let upstream = self.upstream.forward_v1(
@@ -328,18 +326,13 @@ where
         let model = model_from_body(body);
 
         if stream {
-            let usage = self.usage_signer.sign_report(
-                &auth.key_id,
-                &model,
-                0,
-                0,
-                now_ms,
-            )?;
             return Ok(AppResponse::SsePassthrough {
                 method: HttpMethod::Post,
                 path: path.to_string(),
                 body: body.to_vec(),
-                usage,
+                key_id: auth.key_id.clone(),
+                model,
+                now_ms,
             });
         }
 
@@ -370,6 +363,24 @@ where
     ) -> Result<StreamForwardResult, ApiError> {
         self.upstream
             .forward_v1_stream(method, path, Some(body), out)
+    }
+
+    /// Sign a usage report after SSE accumulation (METER-001).
+    pub fn sign_stream_usage(
+        &self,
+        key_id: &str,
+        model: &str,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        now_ms: u64,
+    ) -> Result<UsageReport, ApiError> {
+        self.usage_signer.sign_report(
+            key_id,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            now_ms,
+        )
     }
 
     fn handle_attestation(
@@ -817,10 +828,17 @@ mod tests {
             .handle(HttpMethod::Post, "/v1/chat/completions", Some(AUTH), body, 1)
             .unwrap();
         match resp {
-            AppResponse::SsePassthrough { path, body, usage, .. } => {
+            AppResponse::SsePassthrough {
+                path,
+                body,
+                key_id,
+                model,
+                ..
+            } => {
                 assert_eq!(path, "/v1/chat/completions");
                 assert!(body_wants_stream(&body));
-                assert_eq!(usage.prompt_tokens, 0);
+                assert_eq!(key_id, "k-test");
+                assert_eq!(model, "m");
             }
             _ => panic!("expected sse passthrough"),
         }

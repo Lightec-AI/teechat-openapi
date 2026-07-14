@@ -87,13 +87,12 @@
 - **Location:** `bins/openapi/src/main.rs`, `crates/openapi-edge/src/lib.rs`, `crates/openapi-http/src/server.rs`
 - **Also shipped:** per-IP connection cap (`OPENAPI_IP_MAX_CONNS`, default **16**) and per-IP API RPM (`OPENAPI_IP_REQUESTS_PER_MINUTE`, default **180**) in addition to per-`key_id` RPM. Challenge remains on its own per-IP RPM. L4/network ACLs still recommended in front of public edges.
 
-### METER-001 — Medium — Streaming inference signs usage as 0/0 tokens
+### METER-001 — Medium — Streaming inference signs usage as 0/0 tokens (**Mitigated 2026-07-14**)
 
-- **Status:** **Open** (unchanged by Option A).
-- **Location:** `crates/openapi-core/src/handler.rs`
-- **Detail:** For `stream:true`, `sign_report` uses token counts that always return `(0, 0)`.
-- **Impact:** Billing/quota under-count if L0 trusts edge-signed reports alone.
-- **Remediation:** Accumulate SSE usage before signing, or provisional + final trailer with real counts.
+- **Status:** **Mitigated** — `SseUsageAccumulator` tees the stream; trailer signed after accumulate (`sse_usage.rs` + HTTP passthrough).
+- **Location:** `crates/openapi-core/src/sse_usage.rs`, `crates/openapi-http/src/server.rs`
+- **Detail (historical):** For `stream:true`, `sign_report` used `(0, 0)` before upstream finished.
+- **Impact (historical):** Billing/quota under-count if L0 trusted edge-signed reports alone.
 
 ### OPS-001 — Medium — `OPENAPI_ATTESTED_LAUNCH_DIGEST` bypasses snpguest
 
@@ -142,7 +141,8 @@
 |----------|-----|------|
 | P0 | ATT-001 | DCAP ECDSA wired; keep PCCS/helper healthy in ops |
 | P0 | AUTH-001 | **Done** — enforce L0 models/rpm at edge |
-| P1 | METER-001, OPS-001, OPS-002 | Streaming usage + prod seal guards (DOS-001 done) |
+| Done | **METER-001** | Streaming usage accumulate-then-sign |
+| P1 | OPS-001, OPS-002 | Prod seal guards (DOS-001 done) |
 | P1 | ATT-002 remaining | Prefer SNP ioctl over snpguest CLI |
 | P2 | PROXY-001, CFG-001, TLS-001 | Hardening and measured config |
 | Done | ATT-003 | Satisfied by hardware `report_data` binding for verifying clients |

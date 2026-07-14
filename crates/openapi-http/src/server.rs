@@ -10,6 +10,8 @@ use thiserror::Error;
 
 use crate::request::ParsedRequest;
 use crate::response::{build_error_response, build_json_response, build_sse_response};
+use openapi_core::SseUsageAccumulator;
+
 use crate::streaming::{write_sse_stream_headers, write_sse_usage_trailer, ChunkedWriter};
 
 #[derive(Debug, Error)]
@@ -217,13 +219,22 @@ where
             method,
             path,
             body,
-            usage,
+            key_id,
+            model,
+            now_ms,
         }) => {
-            write_sse_stream_headers(out, &usage).map_err(|e| ServerError::Other(e.to_string()))?;
+            // METER-001: sign after accumulating upstream SSE usage (not 0/0).
+            write_sse_stream_headers(out).map_err(|e| ServerError::Other(e.to_string()))?;
             out.flush().map_err(ServerError::Io)?;
             let mut chunked = ChunkedWriter::new(out);
-            app.execute_sse_passthrough(method, &path, &body, &mut chunked)
+            let mut acc = SseUsageAccumulator::new(&mut chunked);
+            app.execute_sse_passthrough(method, &path, &body, &mut acc)
                 .map_err(|e| ServerError::Other(e.to_string()))?;
+            let (prompt_tokens, completion_tokens) = acc.token_counts();
+            let usage = app
+                .sign_stream_usage(&key_id, &model, prompt_tokens, completion_tokens, now_ms)
+                .map_err(|e| ServerError::Other(e.to_string()))?;
+            let chunked = acc.into_inner();
             chunked.flush().map_err(ServerError::Io)?;
             write_sse_usage_trailer(chunked.inner, &usage)
                 .map_err(|e| ServerError::Other(e.to_string()))?;
@@ -354,6 +365,13 @@ mod tests {
                 .map_err(|e| ApiError::Upstream(e.to_string()))?;
             out.write_all(b"\"}\n\n")
                 .map_err(|e| ApiError::Upstream(e.to_string()))?;
+            // Final chunk includes usage — METER-001 accumulates before signing.
+            out.write_all(
+                br#"data: {"usage":{"prompt_tokens":12,"completion_tokens":34}}
+
+"#,
+            )
+            .map_err(|e| ApiError::Upstream(e.to_string()))?;
             out.write_all(b"data: [DONE]\n\n")
                 .map_err(|e| ApiError::Upstream(e.to_string()))?;
             Ok(openapi_core::StreamForwardResult {
@@ -419,6 +437,10 @@ mod tests {
         assert!(!text.contains('\u{FFFD}'));
         assert!(text.contains("[DONE]"));
         assert!(text.contains("teechat_usage"));
+        assert!(
+            text.contains("\"prompt_tokens\":12") && text.contains("\"completion_tokens\":34"),
+            "METER-001: trailer must reflect accumulated SSE usage, got: {text}"
+        );
     }
 
     #[test]

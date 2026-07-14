@@ -37,7 +37,7 @@
 | NET-001 | High | **Mitigated by design** | D6-pull + convoy; push unwired. Stop-loss is L0 `exp_ms` (not a separate edge cache TTL) |
 | DOS-001 | Medium | **Mitigated** | Bounded pool + 429 shed + per-IP caps; TLS idle clear via socket `try_clone` (IDLE-001) |
 | PROXY-001 | Medium | **Open** | Transparent `/v1/*` default-allow remains |
-| METER-001 | Medium | **Open** | Stream path still signs usage `(0, 0)` |
+| METER-001 | Medium | **Mitigated** | Stream path accumulates SSE `usage` then signs |
 | OPS-001 | Medium | **Open** | `OPENAPI_ATTESTED_LAUNCH_DIGEST` still preferred in prod sealing path |
 | OPS-002 | Medium | **Open** | `seal-tls-key-sgx` still lacks prod profile refusal |
 | CFG-001 | Medium | **Open** | SGX `OPENAPI_*` via argv still host-visible / unmeasured |
@@ -77,7 +77,7 @@
 | Priority | IDs | Work |
 |----------|-----|------|
 | Done | **IDLE-001** | TLS arrival idle cleared via socket `try_clone` |
-| P1 | METER-001 | Accumulate SSE usage (or provisional + final) before signing |
+| Done | **METER-001** | Accumulate SSE usage before signing trailer |
 | P1 | OPS-001, OPS-002 | Prod seal guards (ignore attested-digest override; SGX tool prod bail) |
 | P1 | **BENCH-001** | Prod-forbid challenge bench token |
 | P2 | PROXY-001 + ROUTE-001 | Prod allowlist + path normalize |

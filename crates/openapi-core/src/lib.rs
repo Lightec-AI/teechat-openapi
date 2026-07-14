@@ -11,6 +11,7 @@ pub mod limits;
 pub mod models;
 pub mod remote_auth;
 pub mod routes;
+pub mod sse_usage;
 pub mod upstream;
 pub mod usage;
 
@@ -27,4 +28,5 @@ pub use remote_auth::{
     EdgeAuthenticator, L0AuthorizeClient, RemoteAuthenticator, RevocationDelta,
     RevocationPollClock, DEFAULT_REVOKE_POLL_SECS,
 };
+pub use sse_usage::{usage_from_value, SseUsageAccumulator};
 pub use usage::{UsageReport, UsageSigner};

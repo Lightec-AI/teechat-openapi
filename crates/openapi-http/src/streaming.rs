@@ -44,17 +44,17 @@ impl<W: Write + ?Sized> Write for ChunkedWriter<'_, W> {
 }
 
 /// Write HTTP/1.1 response headers for a chunked SSE stream.
-pub fn write_sse_stream_headers<W: Write + ?Sized>(out: &mut W, usage: &UsageReport) -> Result<(), ApiError> {
-    let usage_json = serde_json::to_string(usage).unwrap_or_default();
-    let headers = format!(
-        "HTTP/1.1 200 OK\r\n\
+///
+/// Signed usage is **not** in response headers for streaming (METER-001): counts are
+/// only known after upstream SSE completes. The final signed report is in the
+/// `teechat_usage` trailer (and `X-TeeChat-Usage-Report` is omitted on the open).
+pub fn write_sse_stream_headers<W: Write + ?Sized>(out: &mut W) -> Result<(), ApiError> {
+    let headers = "HTTP/1.1 200 OK\r\n\
          Content-Type: text/event-stream\r\n\
          Cache-Control: no-cache, no-transform\r\n\
          X-Accel-Buffering: no\r\n\
          Transfer-Encoding: chunked\r\n\
-         X-TeeChat-Usage-Report: {usage_json}\r\n\
-         Connection: close\r\n\r\n"
-    );
+         Connection: close\r\n\r\n";
     out.write_all(headers.as_bytes())
         .map_err(|e| ApiError::Internal(e.to_string()))
 }
@@ -88,17 +88,19 @@ mod tests {
     #[test]
     fn chunked_headers_and_trailer() {
         let signer = UsageSigner::from_seed([4u8; 32]);
-        let usage = signer.sign_report("k", "m", 0, 0, 1).unwrap();
+        let usage = signer.sign_report("k", "m", 3, 5, 1).unwrap();
         let mut out = Vec::new();
-        write_sse_stream_headers(&mut out, &usage).unwrap();
+        write_sse_stream_headers(&mut out).unwrap();
         write_chunk(&mut out, b"data: hi\n\n").unwrap();
         write_sse_usage_trailer(&mut out, &usage).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("Transfer-Encoding: chunked"));
         assert!(text.contains("no-transform"));
         assert!(text.contains("X-Accel-Buffering: no"));
+        assert!(!text.contains("X-TeeChat-Usage-Report"));
         assert!(text.contains("data: hi"));
         assert!(text.contains("teechat_usage"));
+        assert!(text.contains("\"prompt_tokens\":3"));
         assert!(text.ends_with("0\r\n\r\n"));
     }
 }
