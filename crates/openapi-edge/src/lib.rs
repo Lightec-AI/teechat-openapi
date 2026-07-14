@@ -67,6 +67,14 @@ fn apply_idle_timeouts(stream: &TcpStream, idle: Duration) {
     let _ = stream.set_write_timeout(Some(idle));
 }
 
+/// Clear request-arrival idle so multi-minute streams / slow clients are not cut.
+/// TLS wraps the socket; we keep a `try_clone` handle (same kernel fd) to clear
+/// SO_RCVTIMEO / SO_SNDTIMEO after the HTTP request is fully parsed (IDLE-001).
+fn clear_idle_timeouts(stream: &TcpStream) {
+    let _ = stream.set_read_timeout(None);
+    let _ = stream.set_write_timeout(None);
+}
+
 /// Cap short-lived 429 responder threads so shed storms cannot unbounded-spawn.
 fn shed_worker_slots() -> u32 {
     std::env::var("OPENAPI_SHED_WORKERS")
@@ -162,7 +170,6 @@ where
     F: Fn(TcpStream) -> Option<Box<dyn ReadWriteConn>> + Send + Sync,
 {
     let idle = conn_idle_timeout();
-    apply_idle_timeouts(&stream, idle);
     let client_ip = stream.peer_addr().ok().map(|a| a.ip().to_string());
     if let Some(accept_tls) = tls.as_ref() {
         // Cap before TLS handshake so floods do not pay crypto CPU — but if over
@@ -178,8 +185,28 @@ where
                 return;
             }
         };
+        // Clone before TLS takes ownership so we can clear socket idle after parse.
+        let idle_socket = match stream.try_clone() {
+            Ok(c) => {
+                apply_idle_timeouts(&stream, idle);
+                Some(c)
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "tcp try_clone for idle control failed; applying arrival idle without clear handle"
+                );
+                apply_idle_timeouts(&stream, idle);
+                None
+            }
+        };
         match accept_tls(stream) {
-            Some(mut conn) => serve_connection(app, conn.as_mut(), client_ip.as_deref()),
+            Some(mut conn) => serve_connection(
+                app,
+                conn.as_mut(),
+                client_ip.as_deref(),
+                idle_socket.as_ref(),
+            ),
             None => warn!(ip = client_ip.as_deref().unwrap_or("unknown"), "tls accept failed"),
         }
     } else {
@@ -314,6 +341,7 @@ pub fn serve_connection<U, P>(
     app: &Arc<App<U, P>>,
     conn: &mut (impl Read + Write + ?Sized),
     client_ip: Option<&str>,
+    idle_socket: Option<&TcpStream>,
 ) where
     U: UpstreamForwarder,
     P: AttestationPlatform,
@@ -332,9 +360,12 @@ pub fn serve_connection<U, P>(
         total += n;
         match ParsedRequest::parse(&buffer[..total]) {
             Ok(Some(req)) => {
-                // Request complete — allow long streaming responses without idle cut.
-                // (Timeouts on TcpStream already applied; TLS wrapper may not expose
-                // set_read_timeout — dispatch returns when stream ends.)
+                // Request complete — clear arrival idle (same as plain `handle_connection`).
+                // TLS `StreamOwned` does not expose set_*_timeout; use the pre-accept
+                // `try_clone` of the underlying TcpStream (IDLE-001).
+                if let Some(sock) = idle_socket {
+                    clear_idle_timeouts(sock);
+                }
                 if dispatch_to_writer(
                     app,
                     &req.method,
@@ -518,6 +549,47 @@ mod tests {
             .unwrap();
         let resp = http_get(addr, "/healthz");
         assert!(resp.contains("200"), "got: {resp}");
+    }
+
+    #[test]
+    fn serve_connection_clears_idle_timeouts_after_request() {
+        // Simulate TLS ownership of the socket: serve over the owned stream while
+        // clearing via a try_clone handle (IDLE-001).
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = test_app();
+        let cleared = Arc::new(AtomicUsize::new(0));
+        let cleared_c = Arc::clone(&cleared);
+        Builder::new()
+            .spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let idle_sock = stream.try_clone().unwrap();
+                apply_idle_timeouts(&stream, Duration::from_secs(1));
+                assert_eq!(
+                    stream.read_timeout().unwrap(),
+                    Some(Duration::from_secs(1))
+                );
+                let mut owned = stream;
+                serve_connection(&app, &mut owned, None, Some(&idle_sock));
+                assert_eq!(
+                    idle_sock.read_timeout().unwrap(),
+                    None,
+                    "idle must clear after ParsedRequest"
+                );
+                assert_eq!(idle_sock.write_timeout().unwrap(), None);
+                cleared_c.store(1, Ordering::SeqCst);
+            })
+            .unwrap();
+
+        let resp = http_get(addr, "/healthz");
+        assert!(resp.contains("200"), "got: {resp}");
+        for _ in 0..50 {
+            if cleared.load(Ordering::SeqCst) == 1 {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("server thread did not finish clear assertion");
     }
 
     #[test]
