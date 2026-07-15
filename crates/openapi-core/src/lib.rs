@@ -9,6 +9,7 @@ pub mod http1_body;
 pub mod key_format;
 pub mod limits;
 pub mod models;
+pub mod quota;
 pub mod remote_auth;
 pub mod routes;
 pub mod sse_usage;

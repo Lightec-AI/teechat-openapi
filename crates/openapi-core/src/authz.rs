@@ -9,6 +9,10 @@ pub struct OpenApiKeyPolicy {
     pub models: Vec<String>,
     #[serde(default = "default_rpm")]
     pub rpm: u32,
+    /// Remaining prepaid tokens for this API account (optional). When set, edge
+    /// applies the near-exhaust long-context gate (QUOTA-001).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_tokens: Option<u64>,
 }
 
 fn default_rpm() -> u32 {
@@ -21,6 +25,7 @@ impl OpenApiKeyPolicy {
         Self {
             models: vec!["*".into()],
             rpm: 0,
+            remaining_tokens: None,
         }
     }
 
@@ -132,6 +137,7 @@ pub fn sign_test_authz(
         OpenApiKeyPolicy {
             models: vec!["*".into()],
             rpm: 120,
+            remaining_tokens: None,
         },
         1,
         signing_key,
@@ -228,6 +234,7 @@ mod tests {
             policy: OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 120,
+            remaining_tokens: None,
             },
             exp_ms: 1_700_003_600_000,
             epoch: 42,
@@ -270,12 +277,14 @@ mod tests {
         let p = OpenApiKeyPolicy {
             models: vec!["teechat-a".into()],
             rpm: 10,
+            remaining_tokens: None,
         };
         assert!(p.allows_model("teechat-a"));
         assert!(!p.allows_model("teechat-b"));
         assert!(!OpenApiKeyPolicy {
             models: vec![],
-            rpm: 10
+            rpm: 10,
+            remaining_tokens: None
         }
         .allows_model("anything"));
         assert!(OpenApiKeyPolicy::unrestricted().allows_model("anything"));
@@ -286,6 +295,7 @@ mod tests {
         let p = OpenApiKeyPolicy {
             models: vec!["*".into()],
             rpm: 30,
+            remaining_tokens: None,
         };
         assert_eq!(p.effective_rpm(120), 30);
         assert_eq!(p.effective_rpm(10), 10);

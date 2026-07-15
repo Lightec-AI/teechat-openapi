@@ -12,6 +12,7 @@ use crate::limits::{InflightGate, IpConnPermit, IpConnTracker, Limits, RateLimit
 use crate::models::{
     AttestationChallengeRequest, ChatCompletionRequest, ModelsListResponse,
 };
+use crate::quota::enforce_token_quota;
 use crate::routes::{classify, normalize_path, RouteAction};
 use crate::upstream::{body_wants_stream, model_from_body};
 use crate::usage::{UsageReport, UsageSigner};
@@ -234,6 +235,7 @@ where
                 self.enforce_rate_limit(&auth)?;
                 self.limits.validate_body_size(body.len())?;
                 self.enforce_model_policy(&auth, body)?;
+                enforce_token_quota(&auth.policy, body)?;
                 if path == "/v1/chat/completions" {
                     self.handle_chat_completions(auth, body, now_ms)
                 } else {
@@ -249,6 +251,7 @@ where
                 }
                 if method == HttpMethod::Post && !body.is_empty() {
                     self.enforce_model_policy(&auth, body)?;
+                    enforce_token_quota(&auth.policy, body)?;
                 }
                 if method == HttpMethod::Post && body_wants_stream(body) {
                     let model = model_from_body(body);
@@ -1255,6 +1258,7 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["teechat-lite".into()],
                 rpm: 120,
+            remaining_tokens: None,
             },
             120,
         );
@@ -1281,6 +1285,7 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["teechat-lite".into()],
                 rpm: 120,
+            remaining_tokens: None,
             },
             120,
         );
@@ -1298,6 +1303,7 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["teechat-lite".into()],
                 rpm: 120,
+            remaining_tokens: None,
             },
             120,
         );
@@ -1322,6 +1328,7 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 2,
+            remaining_tokens: None,
             },
             120,
         );
@@ -1349,6 +1356,7 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 100,
+            remaining_tokens: None,
             },
             1,
         );

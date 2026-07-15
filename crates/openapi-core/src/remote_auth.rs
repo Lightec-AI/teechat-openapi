@@ -352,6 +352,7 @@ mod tests {
             OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 180,
+            remaining_tokens: None,
             },
             5,
             &signing,
@@ -393,6 +394,7 @@ mod tests {
             OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 60,
+            remaining_tokens: None,
             },
             1,
             &signing,
@@ -441,6 +443,7 @@ mod tests {
         let policy = OpenApiKeyPolicy {
             models: vec!["teechat-lite".into()],
             rpm: 5,
+            remaining_tokens: None,
         };
         let authz = sign_test_authz_with_policy(
             "tcak_ef90AB12",

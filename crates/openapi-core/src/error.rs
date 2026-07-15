@@ -15,6 +15,8 @@ pub enum ApiError {
     PayloadTooLarge,
     #[error("rate limited")]
     RateLimited,
+    #[error("insufficient quota: {0}")]
+    InsufficientQuota(String),
     #[error("bad request: {0}")]
     BadRequest(String),
     #[error("upstream error: {0}")]
@@ -34,6 +36,7 @@ impl ApiError {
             Self::MethodNotAllowed => 405,
             Self::PayloadTooLarge => 413,
             Self::RateLimited => 429,
+            Self::InsufficientQuota(_) => 429,
             Self::BadRequest(_) => 400,
             Self::NotImplemented(_) => 501,
             Self::Upstream(_) => 502,
@@ -48,6 +51,7 @@ impl ApiError {
             Self::MethodNotAllowed => "invalid_request_error",
             Self::PayloadTooLarge => "invalid_request_error",
             Self::RateLimited => "rate_limit_exceeded",
+            Self::InsufficientQuota(_) => "insufficient_quota",
             Self::BadRequest(_) => "invalid_request_error",
             Self::NotImplemented(_) => "invalid_request_error",
             Self::Upstream(_) => "server_error",
@@ -75,6 +79,7 @@ impl ApiError {
             Self::Unauthorized => Some("invalid_api_key".to_string()),
             Self::Forbidden(_) => Some("model_not_allowed".to_string()),
             Self::RateLimited => Some("rate_limit_exceeded".to_string()),
+            Self::InsufficientQuota(_) => Some("insufficient_quota".to_string()),
             Self::NotImplemented(_) => Some("not_supported".to_string()),
             _ => None,
         };
