@@ -34,7 +34,7 @@ The prior reviews remain valid against the code and mitigations they described. 
 | OPS-001 / OPS-002 / BENCH-001 | Mitigated |
 | PROXY-001 + ROUTE-001 | **Mitigated** — allowlist default + path normalize; prod forbids transparent |
 | METER-001 | Mitigated for prior model; **not** final metering authority |
-| METER-002 / TOPO-001 / QUOTA-001 | **Open** |
+| METER-002 / TOPO-001 | **Open** |
 | CFG-001 | Open; **deferred** |
 | TLS-001 | **Mitigated** — prod requires cert + TLS acceptor |
 | CRYPTO-001 | Still valid positives |
@@ -45,5 +45,6 @@ The prior reviews remain valid against the code and mitigations they described. 
 
 1. **Done** — PROXY-001 + ROUTE-001  
 2. **Done** — TLS-001  
-3. **P1** — METER-002, TOPO-001, QUOTA-001  
-4. **P2** — ATT residual; CFG-001 with later SKU  
+3. **Done** — QUOTA-001 (edge gate; L0 remaining feed follow-on)  
+4. **P1** — METER-002, TOPO-001  
+5. **P2** — ATT residual; CFG-001 with later SKU  
