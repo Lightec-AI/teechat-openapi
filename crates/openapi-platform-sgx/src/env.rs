@@ -7,6 +7,7 @@ use openapi_core::catalog::{KeyCatalog, SignedKeyCatalog};
 use openapi_core::config::Config;
 use openapi_core::limits::Limits;
 use openapi_core::remote_auth::EdgeAuthenticator;
+use openapi_core::routes::ProxyMode;
 use openapi_core::usage::UsageSigner;
 use thiserror::Error;
 
@@ -58,6 +59,7 @@ pub struct SgxEdgeEnv {
     pub challenge_bench_token: Option<String>,
     pub ip_max_connections: u32,
     pub ip_requests_per_minute: u32,
+    pub proxy_mode: ProxyMode,
 }
 
 #[derive(Debug, Error)]
@@ -82,6 +84,7 @@ impl SgxEdgeEnv {
             region: self.region.clone(),
             upstream_base_url: self.upstream_base_url.clone(),
             max_body_bytes: self.max_body_bytes,
+            proxy_mode: self.proxy_mode,
         }
     }
 
@@ -262,6 +265,8 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
         ip_requests_per_minute: opt("OPENAPI_IP_REQUESTS_PER_MINUTE")
             .and_then(|v| v.parse().ok())
             .unwrap_or(180),
+        proxy_mode: ProxyMode::parse(opt("OPENAPI_PROXY_MODE").as_deref())
+            .map_err(|e| EnvError::Invalid("OPENAPI_PROXY_MODE", e))?,
     })
 }
 

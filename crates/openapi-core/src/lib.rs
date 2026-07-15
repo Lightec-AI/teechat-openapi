@@ -28,5 +28,6 @@ pub use remote_auth::{
     EdgeAuthenticator, L0AuthorizeClient, RemoteAuthenticator, RevocationDelta,
     RevocationPollClock, DEFAULT_REVOKE_POLL_SECS,
 };
+pub use routes::{normalize_path, classify, ProxyMode, RouteAction};
 pub use sse_usage::{usage_from_value, SseUsageAccumulator};
 pub use usage::{UsageReport, UsageSigner};

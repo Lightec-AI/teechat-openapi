@@ -12,7 +12,7 @@ use crate::limits::{InflightGate, IpConnPermit, IpConnTracker, Limits, RateLimit
 use crate::models::{
     AttestationChallengeRequest, ChatCompletionRequest, ModelsListResponse,
 };
-use crate::routes::{classify, RouteAction};
+use crate::routes::{classify, normalize_path, RouteAction};
 use crate::upstream::{body_wants_stream, model_from_body};
 use crate::usage::{UsageReport, UsageSigner};
 
@@ -208,7 +208,12 @@ where
         client_ip: Option<&str>,
         challenge_bench_header: Option<&str>,
     ) -> Result<AppResponse, ApiError> {
-        match classify(method.clone(), path) {
+        let path = match normalize_path(path) {
+            Ok(p) => p,
+            Err(RouteAction::NotFound) => return Err(ApiError::NotFound),
+            Err(_) => return Err(ApiError::NotFound),
+        };
+        match classify(method.clone(), &path, self.config.proxy_mode) {
             RouteAction::Health => Ok(AppResponse::Json(serde_json::json!({
                 "status": "ok",
                 "region": self.config.region,
@@ -232,7 +237,7 @@ where
                 if path == "/v1/chat/completions" {
                     self.handle_chat_completions(auth, body, now_ms)
                 } else {
-                    self.handle_inference_post(auth, path, body, now_ms)
+                    self.handle_inference_post(auth, &path, body, now_ms)
                 }
             }
             RouteAction::ProxyGet | RouteAction::ProxyPost => {
@@ -249,7 +254,7 @@ where
                     let model = model_from_body(body);
                     return Ok(AppResponse::SsePassthrough {
                         method,
-                        path: path.to_string(),
+                        path: path.clone(),
                         body: body.to_vec(),
                         key_id: auth.key_id.clone(),
                         model,
@@ -258,7 +263,7 @@ where
                 }
                 let upstream = self.upstream.forward_v1(
                     method,
-                    path,
+                    &path,
                     if body.is_empty() { None } else { Some(body) },
                 )?;
                 Ok(upstream_to_json_response(upstream))
@@ -604,6 +609,13 @@ mod tests {
     }
 
     fn build_test_app<U: UpstreamForwarder>(upstream: U) -> App<U, TestPlatform> {
+        build_test_app_with_config(Config::default(), upstream)
+    }
+
+    fn build_test_app_with_config<U: UpstreamForwarder>(
+        config: Config,
+        upstream: U,
+    ) -> App<U, TestPlatform> {
         let api_key = "sk-teechat-test";
         let mut csprng = OsRng;
         let catalog_signing = SigningKey::generate(&mut csprng);
@@ -617,7 +629,7 @@ mod tests {
         let catalog = KeyCatalog::from_signed(signed, catalog_verify).unwrap();
 
         App::new(
-            Config::default(),
+            config,
             Limits::default(),
             EdgeAuthenticator::from_catalog(Authenticator::new(catalog)),
             upstream,
@@ -705,8 +717,20 @@ mod tests {
     }
 
     #[test]
-    fn proxy_get_unknown_route() {
-        let app = build_test_app(
+    fn allowlist_rejects_unknown_get_by_default() {
+        let app = build_test_app(MockUpstream::default());
+        assert!(matches!(
+            app.handle(HttpMethod::Get, "/v1/models/custom", Some(AUTH), b"", 1),
+            Err(ApiError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn transparent_proxy_get_unknown_route() {
+        let mut cfg = Config::default();
+        cfg.proxy_mode = crate::routes::ProxyMode::Transparent;
+        let app = build_test_app_with_config(
+            cfg,
             MockUpstream::default().with(
                 "/v1/models/custom",
                 UpstreamResponse::Json(serde_json::json!({"id": "custom"})),
@@ -719,6 +743,31 @@ mod tests {
             AppResponse::Json(v) => assert_eq!(v["id"], "custom"),
             _ => panic!("expected json"),
         }
+    }
+
+    #[test]
+    fn chat_completions_with_query_still_inference() {
+        let app = build_test_app(
+            MockUpstream::default().with(
+                "/v1/chat/completions",
+                UpstreamResponse::Json(serde_json::json!({
+                    "id": "cmpl-q",
+                    "choices": [{"message": {"role":"assistant","content":"hi"}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+                })),
+            ),
+        );
+        let body = br#"{"model":"teechat-default","messages":[{"role":"user","content":"hi"}]}"#;
+        let resp = app
+            .handle(
+                HttpMethod::Post,
+                "/v1/chat/completions?foo=1",
+                Some(AUTH),
+                body,
+                100,
+            )
+            .unwrap();
+        assert!(matches!(resp, AppResponse::JsonWithUsage { .. }));
     }
 
     #[test]
