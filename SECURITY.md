@@ -21,11 +21,13 @@ Production edge nodes seal the TLS private key to a TEE measurement. Operators s
 ### Production rules (`OPENAPI_PROFILE=prod`)
 
 - **`OPENAPI_TLS_SEALED_KEY_PATH`** required — no plaintext private key on disk.
+- **`OPENAPI_TLS_CERT_PATH`** required — successful TLS acceptor (TLS-001); plain TCP listen forbidden in prod.
 - **`OPENAPI_TLS_KEY_PATH`** forbidden.
 - **`OPENAPI_SEAL_ROOT_HEX`** forbidden — seal root is derived inside the TEE, not supplied by the host.
 - **`OPENAPI_ATTESTED_LAUNCH_DIGEST`** forbidden — CVM dev/CI hook only; prod must use `snpguest` / `/dev/sev-guest` (OPS-001).
 - Host-side **`seal-tls-key`** / **`seal-tls-key-sgx`** forbidden — use in-TEE ceremony (OPS-002).
 - **`OPENAPI_CHALLENGE_BENCH_TOKEN`** forbidden — lab-only bypass of challenge RPM / in-flight caps (BENCH-001).
+- **`OPENAPI_PROXY_MODE=transparent`** forbidden — prod is **allowlist-only** for `/v1/*` (PROXY-001 / ROUTE-001).
 - **SGX:** runtime **MRENCLAVE** from enclave report must match the sealed blob (fail closed).
 - **CVM:** **`OPENAPI_LAUNCH_DIGEST`** must match the guest-attested launch digest (`snpguest` / `/dev/sev-guest`).
 

@@ -107,6 +107,9 @@ fn build_tls_acceptor(
     seal_root: Option<&[u8; 32]>,
 ) -> anyhow::Result<Option<Arc<TlsAcceptor>>> {
     let Some(cert_path) = &env.tls_cert_path else {
+        if env.profile().is_prod() {
+            anyhow::bail!("prod requires OPENAPI_TLS_CERT_PATH and a working TLS acceptor (TLS-001)");
+        }
         return Ok(None);
     };
     let tls_config = TlsConfig::new(cert_path);
@@ -116,9 +119,14 @@ fn build_tls_acceptor(
             .load_server_config_from_sealed(sealer, Path::new(sealed_path), seal_root)
             .context("unseal tls key")?
     } else if let Some(key_path) = &env.tls_key_path {
+        if env.profile().is_prod() {
+            anyhow::bail!("prod forbids plaintext TLS key path (use sealed key)");
+        }
         warn!("using plaintext OPENAPI_TLS_KEY_PATH — seal for production");
         TlsConfig::load_server_config_from_plain_key_path(cert_path, key_path)
             .context("load plaintext tls key")?
+    } else if env.profile().is_prod() {
+        anyhow::bail!("prod requires sealed TLS key for acceptor (TLS-001)");
     } else {
         return Ok(None);
     };
