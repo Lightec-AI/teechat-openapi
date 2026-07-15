@@ -36,12 +36,12 @@
 | AUTH-001 | High | **Mitigated** | Edge enforces `policy.models` + `min(global, policy.rpm)` |
 | NET-001 | High | **Mitigated by design** | D6-pull + convoy; push unwired. Stop-loss is L0 `exp_ms` (not a separate edge cache TTL) |
 | DOS-001 | Medium | **Mitigated** | Bounded pool + 429 shed + per-IP caps; TLS idle clear via socket `try_clone` (IDLE-001) |
-| PROXY-001 | Medium | **Open** | Transparent `/v1/*` default-allow remains |
+| PROXY-001 | Medium | **Mitigated** | Default `ProxyMode::Allowlist`; prod forbids `OPENAPI_PROXY_MODE=transparent` |
 | METER-001 | Medium | **Mitigated** | Stream path accumulates SSE `usage` then signs |
 | OPS-001 | Medium | **Mitigated** | Prod forbids `OPENAPI_ATTESTED_LAUNCH_DIGEST`; hardware-only |
 | OPS-002 | Medium | **Mitigated** | Host seal tools refuse `OPENAPI_PROFILE=prod` |
 | CFG-001 | Medium | **Open** | SGX `OPENAPI_*` via argv still host-visible / unmeasured |
-| TLS-001 | Low | **Open** | Prod does not require successful TLS acceptor |
+| TLS-001 | Low | **Mitigated** | Prod requires `OPENAPI_TLS_CERT_PATH` + successful acceptor; plain listen fail-closed |
 | CRYPTO-001 | Info | **Valid** | TLS 1.3-only, prod sealed-key rules, honest quote labels |
 
 ---
@@ -62,11 +62,10 @@
 
 ### ROUTE-001 — Low — Exact-string route classify (query / trailing slash)
 
-- **Status:** **Open** (reinforces PROXY-001).
+- **Status:** **Mitigated** — `normalize_path` strips query/fragment and trailing `/` before classify (folded into PROXY-001).
 - **Location:** `crates/openapi-core/src/routes.rs`
-- **Detail:** `POST /v1/chat/completions?...` or trailing `/` becomes `ProxyPost` (authz/model/RPM still applied; skips chat-specific empty-messages validation).
-- **Impact:** Minor validation gap until path normalize + allowlist.
-- **Remediation:** Strip query / normalize path before `classify`; fold into PROXY-001 hardening.
+- **Detail (historical):** `POST /v1/chat/completions?...` or trailing `/` became `ProxyPost`.
+- **Remediation:** Path normalize + allowlist — **done**.
 
 ---
 
@@ -78,8 +77,9 @@
 | Done | **METER-001** | Accumulate SSE usage before signing trailer |
 | Done | **OPS-001, OPS-002** | Prod forbids attested-digest override; host seal tools refuse prod |
 | Done | **BENCH-001** | Prod forbids / ignores challenge bench token |
-| P2 | PROXY-001 + ROUTE-001 | Prod allowlist + path normalize |
-| P2 | CFG-001, TLS-001 | Measured config; require TLS acceptor in prod |
+| Done | **PROXY-001 + ROUTE-001** | Allowlist default + path normalize; prod forbids transparent |
+| Done | **TLS-001** | Prod requires TLS cert + acceptor |
+| P2 | CFG-001 | Measured config when EDP ships |
 | Hold | ATT-* remaining | Prefer SNP ioctl over `snpguest`; keep PCCS/helper healthy |
 
 ---

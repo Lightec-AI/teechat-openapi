@@ -75,11 +75,10 @@
 
 ### PROXY-001 — Medium — Authenticated transparent `/v1/*` proxy is broad
 
-- **Status:** **Open** (unchanged by Option A).
-- **Location:** `crates/openapi-core/src/routes.rs`
-- **Detail:** Unknown GET/POST under `/v1/` proxy to upstream after Bearer auth, except an explicit 501 denylist.
-- **Impact:** New upstream admin/debug routes become reachable to any valid API key without edge review.
-- **Remediation:** Prod default-deny (`OPENAPI_PROXY_MODE=allowlist|transparent`); path normalize; keep denylist as defense-in-depth.
+- **Status:** **Mitigated** — default `ProxyMode::Allowlist`; unknown `/v1/*` → 404. Lab may set `OPENAPI_PROXY_MODE=transparent`; **prod** refuses transparent via `validate_tls_key_policy` (PROXY-001). Path normalize covers ROUTE-001.
+- **Location:** `crates/openapi-core/src/routes.rs`, `config.rs`, platform `env.rs`, `openapi-platform/src/profile.rs`
+- **Detail (historical):** Unknown GET/POST under `/v1/` proxied after Bearer auth, except an explicit 501 denylist.
+- **Remediation:** Allowlist default + path normalize + prod forbid transparent — **done**.
 
 ### DOS-001 — Medium — CVM edge unbounded `thread::spawn` per connection
 
@@ -116,11 +115,10 @@
 
 ### TLS-001 — Low — Plain TCP listen allowed when TLS paths unset
 
-- **Status:** **Open** (unchanged by Option A).
-- **Location:** CVM/SGX run paths
-- **Detail:** Prod forbids plaintext key path but does not require TLS acceptor success.
-- **Impact:** Misconfigured prod unit could listen without TLS.
-- **Remediation:** `OPENAPI_PROFILE=prod` → require successful TLS acceptor (fail closed).
+- **Status:** **Mitigated** — prod `validate_tls_key_policy` requires `OPENAPI_TLS_CERT_PATH`; CVM/SGX `build_tls_acceptor` fail-closed if acceptor cannot be built under prod.
+- **Location:** `openapi-platform/src/profile.rs`, `bins/openapi/src/main.rs`, `openapi-platform-sgx/src/run.rs`
+- **Detail (historical):** Prod forbade plaintext key path but did not require TLS acceptor success.
+- **Remediation:** Prod require cert + sealed key + working acceptor — **done**.
 
 ### CRYPTO-001 — Info — Positive controls
 

@@ -14,7 +14,7 @@ The prior reviews remain valid against the code and mitigations they described. 
 
 | Effect | IDs |
 |--------|-----|
-| Elevated to **launch P0** | PROXY-001, ROUTE-001 |
+| Elevated to **launch P0** (now mitigated) | PROXY-001, ROUTE-001 |
 | Prior mitigation **interim** vs new metering end-state | METER-001 → track **METER-002** |
 | New open trackers (spec/code not landed) | TOPO-001, QUOTA-001 |
 | Deferred for first SKU | CFG-001 (and SGX-oriented ATT polish) |
@@ -32,18 +32,18 @@ The prior reviews remain valid against the code and mitigations they described. 
 | ATT-002 / ATT-003 | Mitigated |
 | AUTH-001 / NET-001 / DOS-001 / IDLE-001 | Mitigated (further admission controls still owed) |
 | OPS-001 / OPS-002 / BENCH-001 | Mitigated |
-| PROXY-001 + ROUTE-001 | **Open — P0** |
+| PROXY-001 + ROUTE-001 | **Mitigated** — allowlist default + path normalize; prod forbids transparent |
 | METER-001 | Mitigated for prior model; **not** final metering authority |
 | METER-002 / TOPO-001 / QUOTA-001 | **Open** |
 | CFG-001 | Open; **deferred** |
-| TLS-001 | **Open — P1** |
+| TLS-001 | **Mitigated** — prod requires cert + TLS acceptor |
 | CRYPTO-001 | Still valid positives |
 
 ---
 
 ## 3. Fix order (updated)
 
-1. **P0** — PROXY-001 + ROUTE-001  
-2. **P1** — TLS-001  
+1. **Done** — PROXY-001 + ROUTE-001  
+2. **Done** — TLS-001  
 3. **P1** — METER-002, TOPO-001, QUOTA-001  
 4. **P2** — ATT residual; CFG-001 with later SKU  
