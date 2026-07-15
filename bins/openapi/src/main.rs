@@ -5,7 +5,8 @@ use anyhow::Context;
 use openapi_core::App;
 use openapi_edge::{run_edge_server, ReadWriteConn};
 use openapi_platform_cvm::{
-    load_edge_env, CvmAttestationPlatform, CvmSealer, TlsAcceptor, TlsConfig, UreqUpstream,
+    load_edge_env, probe_gateway_ope_api_at_startup, CvmAttestationPlatform, CvmSealer,
+    TlsAcceptor, TlsConfig, UreqUpstream,
 };
 use tracing::{info, warn};
 
@@ -26,6 +27,9 @@ fn main() -> anyhow::Result<()> {
         profile = ?env.profile(),
         "starting openapi edge"
     );
+
+    // F′ privileged gateway OPE API plane — optional; log-only probe (fail-closed warn in prod).
+    probe_gateway_ope_api_at_startup(env.profile());
 
     let sealer = env.cvm_sealer();
     let seal_root = env.seal_root().context("seal root")?;

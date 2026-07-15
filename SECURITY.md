@@ -106,6 +106,15 @@ OPENAPI_TLS_VERIFY_HOST=openapi.teechat.ai OPENAPI_TLS_VERIFY_PORT=443 bash scri
 
 **Note:** Upstream calls to the inference engine (`OPENAPI_UPSTREAM_BASE_URL`, typically plain HTTP on a private LAN) are separate from client-facing edge TLS.
 
+### Gateway OPE API dialer (F′)
+
+The CVM edge may dial the TeaChat gateway **privileged OPE API plane** (private fabric listener; Bearer and/or pinned client mTLS). Env vars: `OPENAPI_GATEWAY_OPE_API_*` (see README). Rules:
+
+- URL unset → no dialer / startup probe skipped (non-fatal).
+- URL set + health fail under `OPENAPI_PROFILE=prod` → **fail-closed warn** (OPE dispatch treated as unavailable; process still starts for OpenAI surface).
+- `OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY=1` is **forbidden in prod**.
+- Client cert/key PEMs should be measurement-sealed in the edge TEE for harden (same ceremony posture as server TLS sealing); gateway stores **pins only**.
+
 ---
 
 ## Scope

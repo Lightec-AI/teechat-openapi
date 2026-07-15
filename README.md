@@ -56,6 +56,21 @@ Required env vars:
 
 Optional: `OPENAPI_LISTEN_ADDR` (default `0.0.0.0:8443`), `OPENAPI_REGION`, attestation identity fields (`OPENAPI_BUILD_VERSION`, `OPENAPI_CODE_HASH`, `OPENAPI_LAUNCH_DIGEST`, `OPENAPI_IMAGE_DIGEST`).
 
+### Gateway OPE API plane (F′ — privileged edge→gateway)
+
+Optional dialer for the gateway private OPE API listener (`GET /v1/ope/api/health`, `POST /v1/ope/dispatch`). CVM edge probes health at startup when the URL is set (log-only; prod logs a fail-closed warning if health fails).
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAPI_GATEWAY_OPE_API_URL` | Base URL, e.g. `https://10.x.x.x:8791` (unset = skip plane) |
+| `OPENAPI_GATEWAY_OPE_API_TOKEN` | Bearer `DISPATCH_TOKEN` for F′ launch auth |
+| `OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_CERT_PEM` | Client cert PEM path or inline (mTLS harden) |
+| `OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_KEY_PEM` | Client key PEM path or inline |
+| `OPENAPI_GATEWAY_OPE_API_TLS_CA_PEM` | Optional CA PEM to verify gateway server cert |
+| `OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY` | `0` default; `1` skips server verify (**dev only**, forbidden in `OPENAPI_PROFILE=prod`) |
+
+TLS to this plane is **TLS 1.3 only** (ureq + rustls). See [SECURITY.md](SECURITY.md) § Gateway OPE API dialer.
+
 ### TLS (production)
 
 | Variable | Description |

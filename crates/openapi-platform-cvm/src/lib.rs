@@ -1,5 +1,6 @@
 mod attest;
 mod env;
+mod gateway_ope_api;
 mod guest_digest;
 mod push;
 mod remote_client;
@@ -11,6 +12,10 @@ mod upstream;
 
 pub use attest::CvmAttestationPlatform;
 pub use env::{load_edge_env, write_dev_catalog, EdgeEnv, OpenApiAuthMode};
+pub use gateway_ope_api::{
+    probe_gateway_ope_api_at_startup, DispatchRequest, DispatchResponse, GatewayOpeApiClient,
+    GatewayOpeApiConfig, GatewayOpeApiError, HealthResponse,
+};
 pub use remote_client::{spawn_revocation_poller, UreqL0AuthorizeClient};
 // push.rs kept for reference but unused (D6-pull).
 pub use guest_digest::{read_attested_launch_digest, verify_launch_digest_attested};
