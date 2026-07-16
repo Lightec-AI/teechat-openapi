@@ -161,12 +161,20 @@ impl EdgeEnv {
     }
 
     pub fn usage_signer(&self) -> Result<UsageSigner, EnvError> {
-        let seed_bytes = hex::decode(&self.usage_sign_seed_hex)
-            .map_err(|e| EnvError::Invalid("OPENAPI_USAGE_SIGN_SEED_HEX", e.to_string()))?;
-        let seed: [u8; 32] = seed_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| EnvError::Invalid("OPENAPI_USAGE_SIGN_SEED_HEX", "must be 32 bytes".into()))?;
+        // Optional: engine-signed usage is billing authority (2026-07-15). Edge seed only
+        // signs interim trailers; unset → ephemeral process seed (not durable billing trust).
+        let seed: [u8; 32] = if self.usage_sign_seed_hex.is_empty() {
+            use rand::RngCore;
+            let mut s = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut s);
+            s
+        } else {
+            let seed_bytes = hex::decode(&self.usage_sign_seed_hex)
+                .map_err(|e| EnvError::Invalid("OPENAPI_USAGE_SIGN_SEED_HEX", e.to_string()))?;
+            seed_bytes.as_slice().try_into().map_err(|_| {
+                EnvError::Invalid("OPENAPI_USAGE_SIGN_SEED_HEX", "must be 32 bytes".into())
+            })?
+        };
         Ok(UsageSigner::from_seed(seed))
     }
 
@@ -227,7 +235,7 @@ pub fn load_edge_env() -> Result<EdgeEnv, EnvError> {
         revoke_poll_secs: opt("OPENAPI_REVOKE_POLL_SECS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(15),
-        usage_sign_seed_hex: req("OPENAPI_USAGE_SIGN_SEED_HEX")?,
+        usage_sign_seed_hex: opt("OPENAPI_USAGE_SIGN_SEED_HEX").unwrap_or_default(),
         build_version: opt("OPENAPI_BUILD_VERSION").unwrap_or_else(|| "dev".into()),
         code_hash: opt("OPENAPI_CODE_HASH").unwrap_or_else(|| "unknown".into()),
         launch_digest: opt("OPENAPI_LAUNCH_DIGEST").unwrap_or_else(|| "unknown".into()),
