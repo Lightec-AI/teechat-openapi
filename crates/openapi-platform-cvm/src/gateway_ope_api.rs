@@ -25,6 +25,8 @@ const DISPATCH_PATH: &str = "/v1/ope/dispatch";
 const HEADER_ENGINE_ID: &str = "x-ope-engine-id";
 const HEADER_CONVERSATION_ID: &str = "x-ope-conversation-id";
 const HEADER_EPHEMERAL_EPOCH: &str = "x-ope-ephemeral-epoch";
+/// Binds API-key ledger debit on the gateway (METER-002). Must match gateway `HEADER_OPENAPI_KEY_ID`.
+const HEADER_OPENAPI_KEY_ID: &str = "x-teechat-openapi-key-id";
 
 /// Env configuration for the edge → gateway OPE API dialer.
 #[derive(Debug, Clone)]
@@ -199,6 +201,14 @@ impl GatewayOpeApiClient {
         } else {
             ureq_req = ureq_req.set(HEADER_EPHEMERAL_EPOCH, "0");
         }
+        if let Some(key_id) = req
+            .openapi_key_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            ureq_req = ureq_req.set(HEADER_OPENAPI_KEY_ID, key_id);
+        }
 
         let resp = ureq_req
             .send_bytes(&req.body)
@@ -243,6 +253,8 @@ pub struct DispatchRequest {
     pub engine_id: String,
     pub conversation_id: Option<String>,
     pub ephemeral_epoch: Option<String>,
+    /// When set, gateway ope-api plane debits `openapi_usage_events` for this key (METER-002).
+    pub openapi_key_id: Option<String>,
     /// Raw OPE envelope JSON bytes.
     pub body: Vec<u8>,
 }
@@ -529,6 +541,11 @@ mod tests {
             let req = read_http_request(&mut stream);
             assert!(req.starts_with("POST /v1/ope/dispatch"));
             assert!(req.to_ascii_lowercase().contains("x-ope-engine-id: eng-1"));
+            assert!(
+                req.to_ascii_lowercase()
+                    .contains("x-teechat-openapi-key-id: tcak_bill01"),
+                "missing openapi key_id header: {req}"
+            );
             assert!(req.contains("Authorization: Bearer test-token"));
             let body = br#"{"ok":true}"#;
             let resp = format!(
@@ -727,6 +744,7 @@ mod tests {
                 engine_id: "eng-1".into(),
                 conversation_id: Some("c1".into()),
                 ephemeral_epoch: None,
+                openapi_key_id: Some("tcak_bill01".into()),
                 body: br#"{"version":1,"ciphertext":"x"}"#.to_vec(),
             })
             .unwrap();
