@@ -53,7 +53,7 @@ Schema: [`manifest/schema/attestation-challenge-request.v1.json`](../manifest/sc
   "schema_version": 1,
   "report_data_version": 1,
   "edge": {
-    "build_version": "0.1.0",
+    "build_version": "0.1.1",
     "code_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "measurement": {
       "kind": "mrenclave",

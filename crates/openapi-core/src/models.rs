@@ -28,6 +28,10 @@ pub struct ChatCompletionRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChatMessage {
     pub role: String,
+    /// OpenAI allows omitting `content` on assistant turns that only carry
+    /// `tool_calls` (and some clients send `content: null`). Default to null
+    /// so edge validation does not 400; original body is still forwarded.
+    #[serde(default)]
     pub content: Value,
 }
 
@@ -77,5 +81,26 @@ mod tests {
         let raw = r#"{"model":"m","messages":[],"stream":true}"#;
         let req: ChatCompletionRequest = serde_json::from_str(raw).unwrap();
         assert!(req.stream);
+    }
+
+    #[test]
+    fn chat_request_allows_missing_content_on_tool_call_turn() {
+        // WorkBuddy / OpenAI clients often omit `content` when only tool_calls.
+        let raw = r#"{"model":"m","messages":[
+            {"role":"user","content":"hi"},
+            {"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"t","arguments":"{}"}}]},
+            {"role":"tool","tool_call_id":"c1","content":"ok"}
+        ]}"#;
+        let req: ChatCompletionRequest = serde_json::from_str(raw).unwrap();
+        assert_eq!(req.messages.len(), 3);
+        assert!(req.messages[1].content.is_null());
+        assert_eq!(req.messages[2].content, Value::String("ok".into()));
+    }
+
+    #[test]
+    fn chat_request_allows_null_content() {
+        let raw = r#"{"model":"m","messages":[{"role":"assistant","content":null}]}"#;
+        let req: ChatCompletionRequest = serde_json::from_str(raw).unwrap();
+        assert!(req.messages[0].content.is_null());
     }
 }
