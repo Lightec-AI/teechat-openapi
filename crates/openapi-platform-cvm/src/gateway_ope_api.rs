@@ -6,7 +6,6 @@
 
 use std::fs;
 use std::io::Cursor;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -56,9 +55,9 @@ impl GatewayOpeApiConfig {
         let cfg = Self::from_parts(
             base_url,
             opt_env("OPENAPI_GATEWAY_OPE_API_TOKEN"),
-            read_pem_maybe_env("OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_CERT_PEM")?,
-            read_pem_maybe_env("OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_KEY_PEM")?,
-            read_pem_maybe_env("OPENAPI_GATEWAY_OPE_API_TLS_CA_PEM")?,
+            opt_env("OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_CERT_PEM"),
+            opt_env("OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_KEY_PEM"),
+            opt_env("OPENAPI_GATEWAY_OPE_API_TLS_CA_PEM"),
             truthy_env("OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY"),
         )?;
         cfg.validate_for_profile(openapi_platform::load_edge_profile())?;
@@ -73,33 +72,22 @@ impl GatewayOpeApiConfig {
         ca_pem: Option<String>,
         insecure_skip_verify: bool,
     ) -> Result<Self, GatewayOpeApiError> {
-        let base_url = base_url.into().trim().trim_end_matches('/').to_string();
-        if base_url.is_empty() {
-            return Err(GatewayOpeApiError::Config(
-                "OPENAPI_GATEWAY_OPE_API_URL is empty".into(),
-            ));
-        }
-        if !(base_url.starts_with("http://") || base_url.starts_with("https://")) {
-            return Err(GatewayOpeApiError::Config(format!(
-                "OPENAPI_GATEWAY_OPE_API_URL must be http(s): got {base_url}"
-            )));
-        }
-        match (&client_cert_pem, &client_key_pem) {
-            (Some(_), None) | (None, Some(_)) => {
-                return Err(GatewayOpeApiError::Config(
-                    "client cert and key must both be set (OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_{CERT,KEY}_PEM)"
-                        .into(),
-                ));
-            }
-            _ => {}
-        }
-        Ok(Self {
-            base_url,
-            token: token.filter(|s| !s.is_empty()),
-            client_cert_pem,
-            client_key_pem,
-            ca_pem,
+        // Shared audited PEM/path load + cert/key pairing (attested-mtls TCB).
+        let loaded = attested_mtls::load_openapi_client_tls_from_parts(
+            &base_url.into(),
+            client_cert_pem.as_deref(),
+            client_key_pem.as_deref(),
+            ca_pem.as_deref(),
             insecure_skip_verify,
+        )
+        .map_err(|e| GatewayOpeApiError::Config(e.to_string()))?;
+        Ok(Self {
+            base_url: loaded.base_url,
+            token: token.filter(|s| !s.is_empty()),
+            client_cert_pem: loaded.client_cert_pem,
+            client_key_pem: loaded.client_key_pem,
+            ca_pem: loaded.ca_pem,
+            insecure_skip_verify: loaded.insecure_skip_verify,
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(120),
         })
@@ -389,21 +377,6 @@ fn load_private_key_pem(pem: &[u8]) -> Result<PrivateKeyDer<'static>, GatewayOpe
     rustls_pemfile::private_key(&mut Cursor::new(pem))
         .map_err(|e| GatewayOpeApiError::Tls(format!("parse key PEM: {e}")))?
         .ok_or_else(|| GatewayOpeApiError::Tls("missing private key in PEM".into()))
-}
-
-/// Path or inline PEM (mirrors gateway `readPemMaybe`).
-fn read_pem_maybe_env(name: &'static str) -> Result<Option<String>, GatewayOpeApiError> {
-    let Some(raw) = opt_env(name) else {
-        return Ok(None);
-    };
-    if raw.contains("-----BEGIN") {
-        return Ok(Some(raw));
-    }
-    let path = Path::new(&raw);
-    let contents = fs::read_to_string(path).map_err(|e| {
-        GatewayOpeApiError::Config(format!("{name} path {}: {e}", path.display()))
-    })?;
-    Ok(Some(contents))
 }
 
 fn opt_env(name: &str) -> Option<String> {
