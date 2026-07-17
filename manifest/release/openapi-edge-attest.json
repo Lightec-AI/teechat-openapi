@@ -1,9 +1,9 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-16T23:00:00.000Z",
-  "epoch": 1,
-  "not_after": "2027-07-16T23:00:00.000Z",
+  "published_at": "2026-07-17T09:20:00.000Z",
+  "epoch": 2,
+  "not_after": "2027-07-17T09:20:00.000Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
   "policy": {
@@ -29,8 +29,10 @@
             "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
-          "notes": "0.2.0 GitHub release binary (Lightec-AI/teechat-openapi v0.2.0 openapi asset). Measurement reused from the same staging guest image (kernel-hashes=off); re-observe via live challenge after deploy and correct if it drifts."
-        },
+          "notes": "Production edge: GitHub release openapi asset (train 0.2.0). Verified live 2026-07-17."
+        }
+      ],
+      "retired": [
         {
           "build_version": "0.1.1",
           "code_hash": "b23a6a8439c0dde5515893e7c90c1e3233b8616e634470f20dc4928bcf3609bc",
@@ -42,10 +44,10 @@
             "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
-          "notes": "Live production SEV-SNP CVM edge (observed via challenge 2026-07-16). Overlap row — retire after 0.2.0 is deployed and verified live."
+          "retired_at": "2026-07-17T09:20:00.000Z",
+          "notes": "Retired after 0.2.0 cutover. Prior placeholder hash was sha256(\"unknown\") when OPENAPI_CODE_HASH was unset."
         }
-      ],
-      "retired": []
+      ]
     }
   ]
 }
