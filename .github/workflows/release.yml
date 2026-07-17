@@ -49,15 +49,21 @@ jobs:
           CODE_HASH="$(awk '/ openapi$/ {print $1}' dist/SHA256SUMS)"
           if [[ -f manifest/release/openapi-edge-attest.json ]]; then
             cp manifest/release/openapi-edge-attest.json dist/openapi-edge-attest.json
-            # Allowlist code_hash is the *deployed* CVM edge binary. GHA ubuntu
-            # builds are for the attest CLI + transparency; they may differ.
-            MANIFEST_HASH="$(python3 -c 'import json; print(json.load(open("dist/openapi-edge-attest.json"))["regions"][0]["active"][0]["code_hash"])')"
-            if [[ "${MANIFEST_HASH}" != "${CODE_HASH}" ]]; then
-              echo "::warning::CI openapi hash (${CODE_HASH}) != allowlist code_hash (${MANIFEST_HASH}). Expected when the edge is a CVM build — keep allowlist as the challenge trust root; update it from the guest binary before tagging."
-            fi
-            # Ensure the allowlist hash is discoverable on the release (clients/CLI scan SHA256SUMS).
-            if ! grep -qi "${MANIFEST_HASH}" dist/SHA256SUMS; then
-              echo "${MANIFEST_HASH}  openapi (allowlist code_hash / deployed edge)" >> dist/SHA256SUMS
+            # Allowlist code_hashes are the *deployed* CVM edge binaries — one per active
+            # row during an overlap window (old live edge + newly released edge). GHA
+            # ubuntu builds are for the attest CLI + transparency and may differ. Clients
+            # cross-check the *live* edge code_hash against SHA256SUMS (github_release.rs
+            # cross_check_code_hash_against_sha256sums), so EVERY active row hash must be
+            # discoverable here — not just the first row — or the old edge fails GitHub
+            # verification during cutover.
+            mapfile -t MANIFEST_HASHES < <(python3 -c 'import json;[print(r["code_hash"]) for reg in json.load(open("dist/openapi-edge-attest.json"))["regions"] for r in reg["active"]]')
+            for H in "${MANIFEST_HASHES[@]}"; do
+              if ! grep -qi "${H}" dist/SHA256SUMS; then
+                echo "${H}  openapi (allowlist code_hash / deployed edge)" >> dist/SHA256SUMS
+              fi
+            done
+            if ! printf '%s\n' "${MANIFEST_HASHES[@]}" | grep -qi "${CODE_HASH}"; then
+              echo "::warning::CI openapi hash (${CODE_HASH}) not in allowlist active rows. Expected when the deployed edge is a CVM build — allowlist + SHA256SUMS remain the challenge trust root; update the allowlist from the guest binary before cutover."
             fi
           else
             VERSION="${GITHUB_REF_NAME#v}"
