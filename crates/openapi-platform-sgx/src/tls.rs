@@ -104,7 +104,68 @@ pub fn spki_sha256_hex_from_cert_path(path: &Path) -> Result<String, TlsError> {
     let cert = certs
         .first()
         .ok_or_else(|| TlsError::Rustls("no certificate found".into()))?;
-    Ok(hex::encode(Sha256::digest(cert.as_ref())))
+    spki_sha256_hex_from_cert_der(cert.as_ref())
+}
+
+/// SHA-256 of the leaf certificate's DER-encoded SubjectPublicKeyInfo.
+pub fn spki_sha256_hex_from_cert_der(cert_der: &[u8]) -> Result<String, TlsError> {
+    let spki = extract_spki_der(cert_der)
+        .map_err(|e| TlsError::Rustls(format!("SPKI extract: {e}")))?;
+    Ok(hex::encode(Sha256::digest(spki)))
+}
+
+fn extract_spki_der(cert_der: &[u8]) -> Result<&[u8], String> {
+    let (_, cert_body, _) = read_tlv(cert_der)?;
+    let (_, tbs, _) = read_tlv(cert_body)?;
+    let mut rest = tbs;
+    if rest.first() == Some(&0xa0) {
+        let (_, _, r) = read_tlv(rest)?;
+        rest = r;
+    }
+    for _ in 0..5 {
+        let (_, _, r) = read_tlv(rest)?;
+        rest = r;
+    }
+    let hdr = der_header_len(rest)?;
+    let (_, body, _) = read_tlv(rest)?;
+    Ok(&rest[..hdr + body.len()])
+}
+
+fn der_header_len(input: &[u8]) -> Result<usize, String> {
+    if input.len() < 2 {
+        return Err("der short".into());
+    }
+    let len_byte = input[1];
+    if len_byte & 0x80 == 0 {
+        Ok(2)
+    } else {
+        Ok(2 + (len_byte & 0x7f) as usize)
+    }
+}
+
+fn read_tlv(input: &[u8]) -> Result<(u8, &[u8], &[u8]), String> {
+    if input.len() < 2 {
+        return Err("der truncated".into());
+    }
+    let tag = input[0];
+    let len_byte = input[1];
+    let (hdr, len) = if len_byte & 0x80 == 0 {
+        (2usize, len_byte as usize)
+    } else {
+        let n = (len_byte & 0x7f) as usize;
+        if n == 0 || n > 4 || input.len() < 2 + n {
+            return Err("der length".into());
+        }
+        let mut len = 0usize;
+        for i in 0..n {
+            len = (len << 8) | input[2 + i] as usize;
+        }
+        (2 + n, len)
+    };
+    if input.len() < hdr + len {
+        return Err("der out of range".into());
+    }
+    Ok((tag, &input[hdr..hdr + len], &input[hdr + len..]))
 }
 
 pub fn seal_tls_key_file(

@@ -1,0 +1,18 @@
+[package]
+name = "teechat-openapi-attest"
+description = "CLI: challenge and fully verify openapi.teechat.ai attestation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "teechat-openapi-attest"
+path = "src/main.rs"
+
+[dependencies]
+openapi-attest = { path = "../../crates/openapi-attest" }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+rustls = { workspace = true }

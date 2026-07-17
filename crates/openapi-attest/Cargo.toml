@@ -1,0 +1,33 @@
+[package]
+name = "openapi-attest"
+description = "Independent OpenAPI edge attestation verifier (challenge + quote + signed manifest)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+openapi-platform = { path = "../openapi-platform" }
+base64 = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+ureq = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+subtle = { workspace = true }
+url = "2.5"
+webpki-roots = "0.26"
+# SEV-SNP report parsing + VCEK chain helpers (AMD 57230 / 56860)
+sev = { version = "6.2", default-features = false, features = ["snp", "crypto_nossl"] }
+# SGX DCAP Quote3 verification (pure Rust, cross-platform)
+dcap-qvl = { version = "0.3.11", default-features = false, features = ["std", "report", "rustcrypto"] }
+tokio = { version = "1.44", features = ["rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+tempfile = "3"

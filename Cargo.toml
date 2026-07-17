@@ -7,12 +7,14 @@ members = [
     "crates/openapi-edge",
     "crates/openapi-platform-cvm",
     "crates/openapi-platform-sgx",
+    "crates/openapi-attest",
     "bins/openapi",
     "bins/openapi-enclave",
     "bins/openapi-dcap-helper",
     "bins/seal-tls-key",
     "bins/seal-tls-key-sgx",
     "bins/openapi-tls-ceremony",
+    "bins/teechat-openapi-attest",
 ]
 
 [workspace.package]

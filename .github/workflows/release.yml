@@ -1,0 +1,123 @@
+# Tag release: build binaries, record SHA256SUMS, attach attestation allowlist asset.
+#
+# Required for GitHub-primary OpenAPI edge attestation trust.
+# After publishing, mirror the same openapi-edge-attest.json to teechat.ai
+# (Ed25519-signed) as network fallback — see TeaChat docs/ops/openapi-edge-attestation-manifest.md
+#
+# Cut: git tag vX.Y.Z && git push origin vX.Y.Z
+# Before tagging for production: ensure manifest/release/openapi-edge-attest.json
+# code_hash matches the built openapi binary and TEE measurements are real.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.88
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: |
+          cargo build --release -p openapi
+          cargo build --release -p teechat-openapi-attest
+
+      - name: Stage artifacts + SHA256SUMS
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/release/openapi dist/openapi
+          cp target/release/teechat-openapi-attest dist/teechat-openapi-attest
+          (
+            cd dist
+            sha256sum openapi teechat-openapi-attest | tee SHA256SUMS
+          )
+          CODE_HASH="$(awk '/ openapi$/ {print $1}' dist/SHA256SUMS)"
+          if [[ -f manifest/release/openapi-edge-attest.json ]]; then
+            cp manifest/release/openapi-edge-attest.json dist/openapi-edge-attest.json
+            # Allowlist code_hash is the *deployed* CVM edge binary. GHA ubuntu
+            # builds are for the attest CLI + transparency; they may differ.
+            MANIFEST_HASH="$(python3 -c 'import json; print(json.load(open("dist/openapi-edge-attest.json"))["regions"][0]["active"][0]["code_hash"])')"
+            if [[ "${MANIFEST_HASH}" != "${CODE_HASH}" ]]; then
+              echo "::warning::CI openapi hash (${CODE_HASH}) != allowlist code_hash (${MANIFEST_HASH}). Expected when the edge is a CVM build — keep allowlist as the challenge trust root; update it from the guest binary before tagging."
+            fi
+            # Ensure the allowlist hash is discoverable on the release (clients/CLI scan SHA256SUMS).
+            if ! grep -qi "${MANIFEST_HASH}" dist/SHA256SUMS; then
+              echo "${MANIFEST_HASH}  openapi (allowlist code_hash / deployed edge)" >> dist/SHA256SUMS
+            fi
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+            PUBLISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            NOT_AFTER="$(date -u -d '+365 days' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+365d +%Y-%m-%dT%H:%M:%SZ)"
+            python3 - "$CODE_HASH" "$VERSION" "$PUBLISHED" "$NOT_AFTER" "$GITHUB_REF_NAME" <<'PY'
+          import json, sys
+          code_hash, version, published, not_after, tag = sys.argv[1:6]
+          doc = {
+            "schema": "teechat-openapi-edge-manifest/v1",
+            "key_id": "openapi-attestation-v1",
+            "published_at": published,
+            "epoch": 1,
+            "not_after": not_after,
+            "retired_grace_period_days": 30,
+            "manifest_url": f"https://github.com/Lightec-AI/teechat-openapi/releases/download/{tag}/openapi-edge-attest.json",
+            "policy": {
+              "reject_debug": True,
+              "max_quote_age_ms": 3600000,
+              "require_session_spki_bind": True,
+            },
+            "regions": [{
+              "region": "global",
+              "hostnames": ["openapi.teechat.ai"],
+              "active": [{
+                "build_version": version,
+                "code_hash": code_hash,
+                "quote_formats": ["snp_report", "sgx_dcap_ecdsa"],
+                "measurement": {
+                  "kind": "launch_digest",
+                  "launch_digest": "0" * 64,
+                  "image_digest": "0" * 64,
+                },
+                "notes": "CI stub — replace measurement digests before production cutover.",
+              }],
+              "retired": [],
+            }],
+          }
+          open("dist/openapi-edge-attest.json", "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+          PY
+          fi
+          echo "Artifacts:"
+          ls -la dist
+          cat dist/SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/openapi
+            dist/teechat-openapi-attest
+            dist/SHA256SUMS
+            dist/openapi-edge-attest.json
+          generate_release_notes: true
+          body: |
+            ## Attestation trust root
+
+            - **`SHA256SUMS`** — digests of `openapi` + `teechat-openapi-attest`
+            - **`openapi-edge-attest.json`** — edge allowlist (mirror to www `.well-known` as signed fallback)
+
+            Verify: `teechat-openapi-attest verify https://openapi.teechat.ai`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

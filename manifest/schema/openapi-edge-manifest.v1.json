@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teechat.ai/schemas/openapi/openapi-edge-manifest.v1.json",
+  "title": "TeeChatOpenApiEdgeManifest",
+  "type": "object",
+  "required": [
+    "schema",
+    "key_id",
+    "published_at",
+    "epoch",
+    "not_after",
+    "regions"
+  ],
+  "properties": {
+    "schema": { "const": "teechat-openapi-edge-manifest/v1" },
+    "key_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Id of the Ed25519 public key that signs this manifest."
+    },
+    "published_at": { "type": "string", "format": "date-time" },
+    "epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic allowlist epoch; verifiers re-challenge when this changes."
+    },
+    "not_after": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Reject the manifest after this instant even if signature verifies."
+    },
+    "retired_grace_period_days": { "type": "integer", "minimum": 0, "default": 30 },
+    "manifest_url": { "type": "string", "format": "uri" },
+    "policy": {
+      "type": "object",
+      "required": ["reject_debug", "max_quote_age_ms"],
+      "properties": {
+        "reject_debug": { "type": "boolean" },
+        "max_quote_age_ms": { "type": "integer", "minimum": 1000 },
+        "require_session_spki_bind": { "type": "boolean", "default": true }
+      },
+      "additionalProperties": false
+    },
+    "regions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["region", "hostnames", "active", "retired"],
+        "properties": {
+          "region": { "type": "string", "enum": ["global", "cn", "eu"] },
+          "hostnames": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "active": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/edgeRelease" }
+          },
+          "retired": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/edgeRelease" }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "next_key": {
+      "type": "object",
+      "description": "Optional next verification key authorized by the current key (rotation).",
+      "required": ["key_id", "public_key_hex"],
+      "properties": {
+        "key_id": { "type": "string", "minLength": 1 },
+        "public_key_hex": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "not_before": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "edgeRelease": {
+      "type": "object",
+      "required": ["build_version", "code_hash", "measurement", "quote_formats"],
+      "properties": {
+        "build_version": { "type": "string", "minLength": 1 },
+        "code_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "quote_formats": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["sgx_dcap_ecdsa", "snp_report"]
+          }
+        },
+        "measurement": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["kind", "value"],
+              "properties": {
+                "kind": { "const": "mrenclave" },
+                "value": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "launch_digest", "image_digest"],
+              "properties": {
+                "kind": { "const": "launch_digest" },
+                "launch_digest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
+                "image_digest": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "notes": { "type": "string" },
+        "retired_at": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

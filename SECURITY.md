@@ -64,7 +64,21 @@ Production SGX evidence must be a remotely verifiable **`sgx_dcap_ecdsa`** quote
 
 1. **Challenge** — Client generates a 32-byte nonce; `POST /v1/attestation/challenge` with `nonce_b64` (URL-safe, no pad). Prefer the same TLS session used for API calls when session-binding matters.
 2. **Attest** — Edge fills `report_data`, obtains a DCAP/SNP quote (QE/aesmd or SNP device). Quote generation is typically tens to hundreds of milliseconds warm; cold PCCS/aesmd failures should surface as `5xx`, not a fake quote.
-3. **Verify** — Client (a) verifies the Intel/AMD quote signature and TCB policy, (b) recomputes `report_data` and checks freshness/binding, (c) pins measurement / `code_hash` / `build_version` to the published regional manifest, and optionally requires `edge.tls_cert_spki_sha256` to match **this** connection’s peer SPKI.
+3. **Verify** — Client (a) verifies the Intel/AMD quote signature and TCB policy, (b) recomputes `report_data` and checks freshness/binding, (c) pins measurement / `code_hash` / `build_version` to the published allowlist, and optionally requires `edge.tls_cert_spki_sha256` to match **this** connection’s peer SPKI.
+
+**Full verifier (recommended):** `teechat-openapi-attest verify https://openapi.teechat.ai` (crate `bins/teechat-openapi-attest`, library `openapi-attest`).
+
+**Trust order:**
+
+1. **GitHub Releases (primary)** — download `openapi-edge-attest.json` + `SHA256SUMS` from [Lightec-AI/teechat-openapi releases](https://github.com/Lightec-AI/teechat-openapi/releases). The challenged `code_hash` must match the allowlist and (when present) appear in `SHA256SUMS`.
+2. **teechat.ai Ed25519-signed mirror (fallback)** — only if GitHub is unreachable. The verdict sets `trust_source=teechat_fallback` and includes `trust_fallback_tip` explaining how to re-check the GitHub release page when connectivity returns.
+3. Local `--manifest` / `--sig` for ops.
+
+Then: capture peer TLS identity over rustls, challenge the edge, verify SNP/VCEK or SGX DCAP+PCS, reject `sgx_report` for internet clients.
+
+**Evidence-only curl** (`openssl rand` + `POST /v1/attestation/challenge`) saves a JSON response for inspection — it does **not** validate quote collateral, TCB, GitHub hashes, or session SPKI. Prefer the CLI or TeeChat desktop **Settings → Account → Verify OpenAPI edge**.
+
+**OPE / InferenceEngine:** the same open-source pattern applies — GitHub CI publishes release binaries and `SHA256SUMS`; teechat.ai mirrors (if any) are network fallbacks only.
 
 Step 3(b) is what makes a separate Ed25519 signature over the challenge JSON unnecessary for verifying clients (security review ATT-003): identity fields that matter are covered by hardware `report_data`.
 

@@ -1,0 +1,38 @@
+{
+  "schema": "teechat-openapi-edge-manifest/v1",
+  "key_id": "openapi-attestation-v1",
+  "published_at": "2026-07-16T23:00:00.000Z",
+  "epoch": 1,
+  "not_after": "2027-07-16T23:00:00.000Z",
+  "retired_grace_period_days": 30,
+  "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
+  "policy": {
+    "reject_debug": true,
+    "max_quote_age_ms": 3600000,
+    "require_session_spki_bind": true
+  },
+  "regions": [
+    {
+      "region": "global",
+      "hostnames": [
+        "openapi.teechat.ai"
+      ],
+      "active": [
+        {
+          "build_version": "0.1.1",
+          "code_hash": "b23a6a8439c0dde5515893e7c90c1e3233b8616e634470f20dc4928bcf3609bc",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
+            "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
+          },
+          "notes": "Production SEV-SNP CVM edge observed via live challenge 2026-07-16."
+        }
+      ],
+      "retired": []
+    }
+  ]
+}
