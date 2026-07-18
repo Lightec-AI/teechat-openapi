@@ -122,7 +122,7 @@ OPENAPI_TLS_VERIFY_HOST=openapi.teechat.ai OPENAPI_TLS_VERIFY_PORT=443 bash scri
 
 ### Gateway OPE API dialer (F′)
 
-The CVM edge may dial the TeaChat gateway **privileged OPE API plane** (private fabric listener; Bearer and/or pinned client mTLS). Env vars: `OPENAPI_GATEWAY_OPE_API_*` (see README). Rules:
+The CVM edge may dial the TeeChat gateway **privileged OPE API plane** (private fabric listener; Bearer and/or pinned client mTLS). Env vars: `OPENAPI_GATEWAY_OPE_API_*` (see README). Rules:
 
 - URL unset → no dialer / startup probe skipped (non-fatal).
 - URL set + health fail under `OPENAPI_PROFILE=prod` → **fail-closed warn** (OPE dispatch treated as unavailable; process still starts for OpenAI surface).
@@ -133,7 +133,7 @@ The CVM edge may dial the TeaChat gateway **privileged OPE API plane** (private 
 
 ## Scope
 
-This repository implements the **Edge OpenAI proxy** (L1 Edge KMS). It does **not** hold user prompts at rest, Platform KMS keys, or billing/catalog signing keys — those live in separate TeaChat control-plane services.
+This repository implements the **Edge OpenAI proxy** (L1 Edge KMS). It does **not** hold user prompts at rest, Platform KMS keys, or billing/catalog signing keys — those live in separate TeeChat control-plane services.
 
 **Security reviews:**
 - [docs/security-review-2026-07-12.md](docs/security-review-2026-07-12.md) (static review · Cursor Grok 4.5 High Fast)

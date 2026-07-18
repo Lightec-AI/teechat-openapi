@@ -2,7 +2,7 @@
 #
 # Required for GitHub-primary OpenAPI edge attestation trust.
 # After publishing, mirror the same openapi-edge-attest.json to teechat.ai
-# (Ed25519-signed) as network fallback — see TeaChat docs/ops/openapi-edge-attestation-manifest.md
+# (Ed25519-signed) as network fallback — see TeeChat docs/ops/openapi-edge-attestation-manifest.md
 #
 # Cut: git tag vX.Y.Z && git push origin vX.Y.Z
 # Before tagging for production: ensure manifest/release/openapi-edge-attest.json

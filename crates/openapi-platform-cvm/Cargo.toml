@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-# Path works when checked out as TeaChat vendor/teechat-openapi beside vendor/attested-mtls.
+# Path works when checked out as TeeChat vendor/teechat-openapi beside vendor/attested-mtls.
 # Standalone CI should switch to crates.io / git after Lightec-AI/teechat-attested-mtls is published.
 attested-mtls = { path = "../../../attested-mtls/crates/attested-mtls" }
 base64 = { workspace = true }

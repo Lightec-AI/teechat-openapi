@@ -21,5 +21,5 @@ Requirements:
   (or the exact bytes you will deploy if they differ from CI — document why).
 - TEE `measurement` fields must match the live edge that will serve `openapi.teechat.ai`.
 - After the GitHub Release is published, mirror the **same JSON bytes** to teechat.ai
-  `.well-known` as an Ed25519-signed fallback (see TeaChat ops runbook
+  `.well-known` as an Ed25519-signed fallback (see TeeChat ops runbook
   `docs/ops/openapi-edge-attestation-manifest.md`).

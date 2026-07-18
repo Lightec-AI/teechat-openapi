@@ -11,7 +11,7 @@ Production TLS for `openapi.teechat.ai` terminates **inside the SEV-SNP guest**.
 | `/etc/teechat/openapi-tls-key.sealed.json` | Measurement-bound sealed private key |
 | `/etc/letsencrypt/` | ACME state during renewal only; **privkey shredded after seal** |
 
-HTTP-01 challenge delivery (port 80): see TeaChat [openapi-acme-http01-security.md](../../../docs/ops/openapi-acme-http01-security.md) — certbot writes token in guest webroot; host proxies challenge prefix only.
+HTTP-01 challenge delivery (port 80): see TeeChat [openapi-acme-http01-security.md](../../../docs/ops/openapi-acme-http01-security.md) — certbot writes token in guest webroot; host proxies challenge prefix only.
 
 Immutable golden root (target) + small writable data volume for `/etc/teechat` and ACME.
 
@@ -49,4 +49,4 @@ bash /usr/local/share/teechat-openapi/verify-tls13-only.sh   # or repo scripts/v
 
 **TLS 1.3 only:** the `openapi` binary negotiates TLS 1.3 exclusively (no TLS 1.2). After install, `verify-tls13-only.sh` must pass on `127.0.0.1:8443`.
 
-See TeaChat [openapi-snp-staging.md](../../../docs/ops/openapi-snp-staging.md) and [openapi-edge-sealing-threat-model.md](../../../docs/design/openapi-edge-sealing-threat-model.md).
+See TeeChat [openapi-snp-staging.md](../../../docs/ops/openapi-snp-staging.md) and [openapi-edge-sealing-threat-model.md](../../../docs/design/openapi-edge-sealing-threat-model.md).

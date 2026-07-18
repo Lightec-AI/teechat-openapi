@@ -1,4 +1,4 @@
-//! Dial client for TeaChat gateway **F′** privileged OPE API plane.
+//! Dial client for TeeChat gateway **F′** privileged OPE API plane.
 //!
 //! Private listener routes (`GET /v1/ope/api/health`, `POST /v1/ope/dispatch`)
 //! with `Authorization: Bearer` and optional pinned client mTLS (TLS 1.3).
