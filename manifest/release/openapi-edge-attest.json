@@ -1,9 +1,9 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-17T09:20:00.000Z",
-  "epoch": 2,
-  "not_after": "2027-07-17T09:20:00.000Z",
+  "published_at": "2026-07-20T06:20:00.000Z",
+  "epoch": 3,
+  "not_after": "2027-07-20T06:20:00.000Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
   "policy": {
@@ -19,6 +19,19 @@
       ],
       "active": [
         {
+          "build_version": "0.3.0",
+          "code_hash": "550e5c111eb55fd428aaa65680bdadfc5b23f6be7cf37fc62c2aef15ef4c2f66",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
+            "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
+          },
+          "notes": "Production edge: GitHub release openapi asset (train 0.3.0, OPE hard cutover). Overlap with 0.2.0 during install."
+        },
+        {
           "build_version": "0.2.0",
           "code_hash": "80017ba42db10427236156779cf1f596ee023fa3907c994b34be7c31f7bd392c",
           "quote_formats": [
@@ -29,7 +42,7 @@
             "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
-          "notes": "Production edge: GitHub release openapi asset (train 0.2.0). Verified live 2026-07-17."
+          "notes": "Production edge: GitHub release openapi asset (train 0.2.0). Overlap window for 0.3.0 cutover."
         }
       ],
       "retired": [
