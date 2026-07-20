@@ -95,12 +95,17 @@ impl GatewayOpeApiConfig {
         })
     }
 
-    /// Reject `INSECURE_SKIP_VERIFY` under prod (call from `from_env` / startup).
+    /// Reject `INSECURE_SKIP_VERIFY` and cleartext F′ URL under prod (OPE-006).
     pub fn validate_for_profile(&self, profile: EdgeProfile) -> Result<(), GatewayOpeApiError> {
         if self.insecure_skip_verify && profile.is_prod() {
             return Err(GatewayOpeApiError::Config(
                 "OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY forbidden when OPENAPI_PROFILE=prod"
                     .into(),
+            ));
+        }
+        if profile.is_prod() && !self.base_url.starts_with("https://") {
+            return Err(GatewayOpeApiError::Config(
+                "OPENAPI_GATEWAY_OPE_API_URL must use https:// when OPENAPI_PROFILE=prod".into(),
             ));
         }
         Ok(())
@@ -337,6 +342,9 @@ pub struct PreassignRequest {
     pub key_set: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Bound at P1 for ledger debit (OPE-007 / METER-002).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub openapi_key_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -828,6 +836,26 @@ mod tests {
     }
 
     #[test]
+    fn prod_rejects_http_f_prime_url() {
+        let cfg = GatewayOpeApiConfig::from_parts(
+            "http://10.0.0.2:8791",
+            Some("tok".into()),
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let err = cfg
+            .validate_for_profile(EdgeProfile::Prod)
+            .expect_err("must reject http in prod");
+        assert!(matches!(err, GatewayOpeApiError::Config(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("https://"), "{msg}");
+        assert!(cfg.validate_for_profile(EdgeProfile::Dev).is_ok());
+    }
+
+    #[test]
     fn cert_without_key_rejected() {
         let err = GatewayOpeApiConfig::from_parts(
             "https://10.0.0.2:8791",
@@ -970,6 +998,7 @@ mod tests {
                 engine_id: "eng-1".into(),
                 key_set: Some("api".into()),
                 model: Some("m1".into()),
+                openapi_key_id: Some("tcak_test".into()),
             })
             .unwrap();
         assert_eq!(pre.assign_id, "a1");

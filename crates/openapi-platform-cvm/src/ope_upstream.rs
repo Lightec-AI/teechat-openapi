@@ -112,6 +112,7 @@ impl OpeDispatchUpstream {
                 engine_id: engine.engine_id.clone(),
                 key_set: Some(ctx.key_set.clone()),
                 model: Some(model.clone()),
+                openapi_key_id: Some(ctx.key_id.clone()),
             })
             .map_err(Self::map_gw)?;
         let enc = encrypt_openai_body(&pre.trust, &ctx.key_id, &payload)

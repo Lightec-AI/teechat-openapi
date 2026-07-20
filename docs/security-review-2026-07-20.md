@@ -33,13 +33,13 @@ Main gaps: **gateway dispatch admission** (optional / racing `assign_id`, no mat
 
 | ID | Sev | Location | Finding |
 |----|-----|----------|---------|
-| **OPE-001** | Medium | `server/gateway/ope-api/server.ts` (~317) | `assign_id` optional on dispatch — P1 gate bypass |
-| **OPE-002** | Medium | `preassign-store.ts` (~71); `server.ts` (~317–377) | `assign_id` TOCTOU — concurrent reuse before `consume` |
-| **OPE-003** | Medium | `server/gateway/ope-api/server.ts` (~308–375) | No key_set×engine_set matrix re-check on dispatch |
-| **OPE-004** | Medium | `server/gateway/ope-api/config.ts` (~87–91) | `REQUIRE_MTLS=0` overrides pin harden |
-| **OPE-005** | Medium | `create-plane.ts` (~56); `config.ts` assert | Prod can start F′ without TLS/mTLS |
-| **OPE-006** | Medium | `gateway_ope_api.rs` `validate_for_profile` | Edge prod allows `http://` F′ URL |
-| **OPE-007** | Medium | `server.ts` (~334–381); usage-ingest | Billing `key_id` unbound after F′ admit |
+| **OPE-001** | Medium | `server/gateway/ope-api/server.ts` (~317) | `assign_id` optional on dispatch — P1 gate bypass → **Mitigated** (require `assign_required`) |
+| **OPE-002** | Medium | `preassign-store.ts` (~71); `server.ts` (~317–377) | `assign_id` TOCTOU — concurrent reuse before `consume` → **Mitigated** (`reserve` + restore on failure) |
+| **OPE-003** | Medium | `server/gateway/ope-api/server.ts` (~308–375) | No key_set×engine_set matrix re-check on dispatch → **Mitigated** |
+| **OPE-004** | Medium | `server/gateway/ope-api/config.ts` (~87–91) | `REQUIRE_MTLS=0` overrides pin harden → **Mitigated** (pins force mTLS) |
+| **OPE-005** | Medium | `create-plane.ts` (~56); `config.ts` assert | Prod can start F′ without TLS/mTLS → **Mitigated** (`ope_api_prod_requires_mtls` + startup collect) |
+| **OPE-006** | Medium | `gateway_ope_api.rs` `validate_for_profile` | Edge prod allows `http://` F′ URL → **Mitigated** (require `https://`) |
+| **OPE-007** | Medium | `server.ts` (~334–381); usage-ingest | Billing `key_id` unbound after F′ admit → **Mitigated** (bind at preassign; header must match) |
 
 ### OPE-001 — assign_id optional
 
@@ -110,20 +110,20 @@ Production build can enable F′ with plain HTTP + bearer-only. Edge forbids ski
 
 ## 5. Fix order
 
-1. **P1** — OPE-001 + OPE-002 (require + atomic `assign_id`)
-2. **P1** — OPE-003 (matrix on dispatch; follows from required assign)
-3. **P1** — OPE-005 + OPE-006 + OPE-004 (prod F′ TLS/mTLS / `https://` fail-closed)
-4. **P1** — OPE-007 / METER-002 (bind `key_id` through preassign)
+1. ~~**P1** — OPE-001 + OPE-002 (require + atomic `assign_id`)~~ **Done**
+2. ~~**P1** — OPE-003 (matrix on dispatch)~~ **Done**
+3. ~~**P1** — OPE-005 + OPE-006 + OPE-004 (prod F′ TLS/mTLS / `https://` fail-closed)~~ **Done**
+4. ~~**P1** — OPE-007 / METER-002 bind `key_id` through preassign~~ **Done** (Slice D / fail-closed ingest may remain)
 5. **P2** — CFG-001 (EDP); ATT residual; Bearer retire on F′
 
 ---
 
-## 6. Tracker status after this review
+## 6. Tracker status after remediations
 
 | ID | Status |
 |----|--------|
-| **OPE-EDGE-001** | **Reviewed** — 7 medium open (OPE-001…007); path no longer “pending when built” |
-| **TOPO-001** | **Mostly mitigated** in live prod (`mtls_bearer` + pins); residual = OPE-004/005 + private-bind ops |
-| **METER-002** | **Partial** — engine-signed ingest exists; OPE-007 + Slice D remain |
+| **OPE-EDGE-001** | **Mitigated** — OPE-001…007 landed with tests (2026-07-20) |
+| **TOPO-001** | **Mitigated** for F′ harden path (pins force mTLS; prod assert); private-bind ops residual |
+| **METER-002** | **Mostly mitigated** — key_id bound at P1 + engine-signed ingest; Slice D polish optional |
 | **QUOTA-001** | Edge gate done; L0 `remaining_tokens` feed follow-on |
 | **CFG-001** | Still deferred (EDP / SGX) |
