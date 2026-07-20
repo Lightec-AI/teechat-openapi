@@ -14,11 +14,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # Path dep crates/openapi-platform-cvm → ../../../attested-mtls (sibling of this repo)
+      # Path dep → ../../../attested-mtls. actions/checkout forbids path: ../…;
+      # checkout inside workspace then symlink to the sibling Cargo expects.
       - uses: actions/checkout@v5
         with:
           repository: Lightec-AI/teechat-attested-mtls
-          path: ../attested-mtls
+          path: _attested-mtls
+      - name: Symlink attested-mtls sibling for Cargo path dep
+        run: ln -sfn "$GITHUB_WORKSPACE/_attested-mtls" "$GITHUB_WORKSPACE/../attested-mtls"
       - uses: dtolnay/rust-toolchain@1.88
         with:
           components: rustfmt, clippy
@@ -38,7 +41,9 @@ jobs:
       - uses: actions/checkout@v5
         with:
           repository: Lightec-AI/teechat-attested-mtls
-          path: ../attested-mtls
+          path: _attested-mtls
+      - name: Symlink attested-mtls sibling for Cargo path dep
+        run: ln -sfn "$GITHUB_WORKSPACE/_attested-mtls" "$GITHUB_WORKSPACE/../attested-mtls"
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
       - name: build openapi binary
