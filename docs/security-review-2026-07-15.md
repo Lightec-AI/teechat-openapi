@@ -20,7 +20,7 @@ The prior reviews remain valid against the code and mitigations they described. 
 | Deferred for first SKU | CFG-001 (and SGX-oriented ATT polish) |
 | Mitigated | TLS-001; QUOTA-001 (edge gate) |
 
-**Verdict:** Prior High remediations still hold. After Slice C hard cutover, residual **P1** is **OPE-001…007** (assign lifecycle, prod F′ TLS fail-closed, billing `key_id` bind) plus remaining **METER-002** / TOPO ops residuals — see [2026-07-20](./security-review-2026-07-20.md).
+**Verdict:** Prior High remediations still hold. After Slice C hard cutover, **OPE-001…007** remediations landed — see [2026-07-20](./security-review-2026-07-20.md).
 
 ---
 
@@ -34,9 +34,9 @@ The prior reviews remain valid against the code and mitigations they described. 
 | OPS-001 / OPS-002 / BENCH-001 | Mitigated |
 | PROXY-001 + ROUTE-001 | **Mitigated** — allowlist default + path normalize; prod forbids transparent |
 | METER-001 | Mitigated for prior model; **not** final metering authority |
-| METER-002 | **Partial** — engine-signed ingest; OPE-007 / Slice D open |
-| TOPO-001 | **Mostly mitigated** live (`mtls_bearer`); residual OPE-004/005 |
-| OPE-EDGE-001 | **Reviewed** — 7 medium (OPE-001…007) |
+| METER-002 | **Mostly mitigated** — key_id bound at P1; Slice D optional |
+| TOPO-001 | **Mitigated** (F′ harden fail-closed) |
+| OPE-EDGE-001 | **Mitigated** — OPE-001…007 remediations landed |
 | CFG-001 | Open; **deferred** |
 | TLS-001 | **Mitigated** — prod requires cert + TLS acceptor |
 | CRYPTO-001 | Still valid positives |
@@ -49,5 +49,5 @@ The prior reviews remain valid against the code and mitigations they described. 
 2. **Done** — TLS-001  
 3. **Done** — QUOTA-001 (edge gate; L0 remaining feed follow-on)  
 4. **Done** — F′ harden land + Slice C hard cutover (code)  
-5. **P1** — OPE-001…007; METER-002 remainder  
-6. **P2** — ATT residual; CFG-001 with later SKU  
+5. **Done** — OPE-001…007  
+6. **P2** — ATT residual; CFG-001; Bearer retire; Slice D polish  
