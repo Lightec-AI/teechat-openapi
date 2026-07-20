@@ -14,6 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # Path dep crates/openapi-platform-cvm → ../../../attested-mtls (sibling of this repo)
+      - uses: actions/checkout@v5
+        with:
+          repository: Lightec-AI/teechat-attested-mtls
+          path: ../attested-mtls
       - uses: dtolnay/rust-toolchain@1.88
         with:
           components: rustfmt, clippy
@@ -30,6 +35,10 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: Lightec-AI/teechat-attested-mtls
+          path: ../attested-mtls
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
       - name: build openapi binary
