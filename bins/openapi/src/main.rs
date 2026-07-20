@@ -5,8 +5,7 @@ use anyhow::Context;
 use openapi_core::App;
 use openapi_edge::{run_edge_server, ReadWriteConn};
 use openapi_platform_cvm::{
-    load_edge_env, probe_gateway_ope_api_at_startup, CvmAttestationPlatform, CvmSealer,
-    TlsAcceptor, TlsConfig, UreqUpstream,
+    load_edge_env, CvmAttestationPlatform, CvmSealer, EdgeUpstream, TlsAcceptor, TlsConfig,
 };
 use tracing::{info, warn};
 
@@ -27,9 +26,6 @@ fn main() -> anyhow::Result<()> {
         profile = ?env.profile(),
         "starting openapi edge"
     );
-
-    // F′ privileged gateway OPE API plane — optional; log-only probe (fail-closed warn in prod).
-    probe_gateway_ope_api_at_startup(env.profile());
 
     let sealer = env.cvm_sealer();
     let seal_root = env.seal_root().context("seal root")?;
@@ -54,11 +50,15 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Hard OPE cutover: F′ dispatch by default; clear HTTP only as non-prod break-glass.
+    let upstream = EdgeUpstream::from_env(env.profile(), &env.upstream_base_url)
+        .context("upstream (OPE / clear HTTP)")?;
+
     let app = Arc::new(App::new(
         env.config(),
         env.limits(),
         authenticator,
-        UreqUpstream::new(env.upstream_base_url.clone()),
+        upstream,
         platform,
         env.usage_signer().context("usage signer")?,
     ));
