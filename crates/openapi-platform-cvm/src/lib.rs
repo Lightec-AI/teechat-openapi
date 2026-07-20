@@ -1,7 +1,10 @@
 mod attest;
+mod edge_upstream;
 mod env;
 mod gateway_ope_api;
 mod guest_digest;
+mod ope_upstream;
+mod ope_wrap;
 mod push;
 mod remote_client;
 mod seal;
@@ -11,11 +14,14 @@ mod tls_ceremony;
 mod upstream;
 
 pub use attest::CvmAttestationPlatform;
+pub use edge_upstream::EdgeUpstream;
 pub use env::{load_edge_env, write_dev_catalog, EdgeEnv, OpenApiAuthMode};
 pub use gateway_ope_api::{
-    probe_gateway_ope_api_at_startup, DispatchRequest, DispatchResponse, GatewayOpeApiClient,
-    GatewayOpeApiConfig, GatewayOpeApiError, HealthResponse,
+    probe_gateway_ope_api_at_startup, require_gateway_ope_api_healthy, DispatchRequest,
+    DispatchResponse, GatewayOpeApiClient, GatewayOpeApiConfig, GatewayOpeApiError, HealthResponse,
+    InventoryEngine, InventoryResponse, PreassignRequest, PreassignResponse, PreassignTrust,
 };
+pub use ope_upstream::{clear_http_break_glass_enabled, OpeDispatchUpstream};
 pub use remote_client::{spawn_revocation_poller, UreqL0AuthorizeClient};
 // push.rs kept for reference but unused (D6-pull).
 pub use guest_digest::{read_attested_launch_digest, verify_launch_digest_attested};

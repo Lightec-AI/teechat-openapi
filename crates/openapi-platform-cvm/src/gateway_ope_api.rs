@@ -4,8 +4,7 @@
 //! with `Authorization: Bearer` and optional pinned client mTLS (TLS 1.3).
 //! Successful admit stamps gateway-authored `traffic_class=api`.
 
-use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,16 +13,19 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::version::TLS13;
 use rustls::{ClientConfig, DigitallySignedStruct, Error as RustlsError, RootCertStore, SignatureScheme};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{info, warn};
 use ureq::OrAnyStatus;
 
 const HEALTH_PATH: &str = "/v1/ope/api/health";
+const INVENTORY_PATH: &str = "/v1/ope/api/inventory";
+const PREASSIGN_PATH: &str = "/v1/ope/api/preassign";
 const DISPATCH_PATH: &str = "/v1/ope/dispatch";
 const HEADER_ENGINE_ID: &str = "x-ope-engine-id";
 const HEADER_CONVERSATION_ID: &str = "x-ope-conversation-id";
 const HEADER_EPHEMERAL_EPOCH: &str = "x-ope-ephemeral-epoch";
+const HEADER_ASSIGN_ID: &str = "x-ope-assign-id";
 /// Binds API-key ledger debit on the gateway (METER-002). Must match gateway `HEADER_OPENAPI_KEY_ID`.
 const HEADER_OPENAPI_KEY_ID: &str = "x-teechat-openapi-key-id";
 
@@ -163,8 +165,78 @@ impl GatewayOpeApiClient {
         serde_json::from_str(&text).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))
     }
 
-    /// Minimal `POST /v1/ope/dispatch` — returns status + headers + body bytes.
+    /// `GET /v1/ope/api/inventory?key_set=`
+    pub fn inventory(&self, key_set: &str) -> Result<InventoryResponse, GatewayOpeApiError> {
+        let ks = key_set.trim();
+        let mut url = self.url(INVENTORY_PATH);
+        if !ks.is_empty() {
+            url.push_str(&format!("?key_set={}", urlencoding_minimal(ks)));
+        }
+        let resp = self
+            .apply_auth(self.agent.get(&url))
+            .call()
+            .or_any_status()
+            .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
+        let status = resp.status();
+        let text = resp
+            .into_string()
+            .map_err(|e| GatewayOpeApiError::Transport(format!("read body: {e}")))?;
+        if status != 200 {
+            return Err(GatewayOpeApiError::Http {
+                status,
+                body: truncate_body(&text),
+            });
+        }
+        serde_json::from_str(&text).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))
+    }
+
+    /// `POST /v1/ope/api/preassign` — P1 epoch wrap material + assign_id.
+    pub fn preassign(&self, req: &PreassignRequest) -> Result<PreassignResponse, GatewayOpeApiError> {
+        if req.engine_id.trim().is_empty() {
+            return Err(GatewayOpeApiError::Config(
+                "preassign requires non-empty engine_id".into(),
+            ));
+        }
+        let url = self.url(PREASSIGN_PATH);
+        let body = serde_json::to_vec(req).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))?;
+        let resp = self
+            .apply_auth(self.agent.post(&url))
+            .set("Content-Type", "application/json")
+            .send_bytes(&body)
+            .or_any_status()
+            .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
+        let status = resp.status();
+        let text = resp
+            .into_string()
+            .map_err(|e| GatewayOpeApiError::Transport(format!("read body: {e}")))?;
+        if status != 200 {
+            return Err(GatewayOpeApiError::Http {
+                status,
+                body: truncate_body(&text),
+            });
+        }
+        serde_json::from_str(&text).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))
+    }
+
+    /// `POST /v1/ope/dispatch` — returns status + headers + body bytes.
     pub fn dispatch(&self, req: &DispatchRequest) -> Result<DispatchResponse, GatewayOpeApiError> {
+        let (status, headers, mut reader) = self.dispatch_reader(req)?;
+        let mut body = Vec::new();
+        reader
+            .read_to_end(&mut body)
+            .map_err(|e| GatewayOpeApiError::Transport(format!("read body: {e}")))?;
+        Ok(DispatchResponse {
+            status,
+            headers,
+            body,
+        })
+    }
+
+    /// Streaming dispatch: caller consumes the response body reader.
+    pub fn dispatch_reader(
+        &self,
+        req: &DispatchRequest,
+    ) -> Result<(u16, Vec<(String, String)>, Box<dyn std::io::Read + Send>), GatewayOpeApiError> {
         if req.engine_id.trim().is_empty() {
             return Err(GatewayOpeApiError::Config(
                 "dispatch requires non-empty engine_id".into(),
@@ -197,6 +269,14 @@ impl GatewayOpeApiClient {
         {
             ureq_req = ureq_req.set(HEADER_OPENAPI_KEY_ID, key_id);
         }
+        if let Some(assign_id) = req
+            .assign_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            ureq_req = ureq_req.set(HEADER_ASSIGN_ID, assign_id);
+        }
 
         let resp = ureq_req
             .send_bytes(&req.body)
@@ -206,20 +286,10 @@ impl GatewayOpeApiClient {
         let headers: Vec<(String, String)> = resp
             .headers_names()
             .into_iter()
-            .filter_map(|name| {
-                resp.header(&name)
-                    .map(|v| (name, v.to_string()))
-            })
+            .filter_map(|name| resp.header(&name).map(|v| (name, v.to_string())))
             .collect();
-        let body = resp
-            .into_string()
-            .map_err(|e| GatewayOpeApiError::Transport(format!("read body: {e}")))?
-            .into_bytes();
-        Ok(DispatchResponse {
-            status,
-            headers,
-            body,
-        })
+        let reader = resp.into_reader();
+        Ok((status, headers, Box::new(reader)))
     }
 }
 
@@ -235,7 +305,83 @@ pub struct HealthResponse {
     pub peer_pin: Option<String>,
 }
 
-/// Minimal dispatch request for later full OPE wiring.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct InventoryEngine {
+    pub engine_id: String,
+    #[serde(default = "default_engine_set")]
+    pub engine_set: String,
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub healthy: bool,
+    #[serde(default)]
+    pub ready_sessions: u32,
+}
+
+fn default_engine_set() -> String {
+    "shared".into()
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct InventoryResponse {
+    #[serde(default)]
+    pub engines: Vec<InventoryEngine>,
+    #[serde(default)]
+    pub key_set: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PreassignRequest {
+    pub engine_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_set: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PreassignTrustHybrid {
+    #[serde(default)]
+    pub kex: String,
+    pub mlkem_encapsulation_key: String,
+    pub x25519_public: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PreassignTrustIdentity {
+    pub ed25519_public: String,
+    #[serde(default)]
+    pub identity_signature: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PreassignTrust {
+    pub engine_id: String,
+    pub epoch_id: String,
+    #[serde(default)]
+    pub not_before: Option<String>,
+    #[serde(default)]
+    pub not_after: Option<String>,
+    pub hybrid: PreassignTrustHybrid,
+    pub identity: PreassignTrustIdentity,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PreassignResponse {
+    pub assign_id: String,
+    pub engine_id: String,
+    #[serde(default)]
+    pub engine_set: Option<String>,
+    #[serde(default)]
+    pub key_set: Option<String>,
+    #[serde(default)]
+    pub expires_at_ms: Option<u64>,
+    #[serde(default)]
+    pub ttl_ms: Option<u64>,
+    pub trust: PreassignTrust,
+}
+
+/// Dispatch request for OPE envelope wiring.
 #[derive(Debug, Clone)]
 pub struct DispatchRequest {
     pub engine_id: String,
@@ -243,6 +389,8 @@ pub struct DispatchRequest {
     pub ephemeral_epoch: Option<String>,
     /// When set, gateway ope-api plane debits `openapi_usage_events` for this key (METER-002).
     pub openapi_key_id: Option<String>,
+    /// P1 assign id from preassign (required after hard cutover).
+    pub assign_id: Option<String>,
     /// Raw OPE envelope JSON bytes.
     pub body: Vec<u8>,
 }
@@ -324,6 +472,40 @@ pub fn probe_gateway_ope_api_at_startup(profile: EdgeProfile) {
             );
         }
     }
+}
+
+/// Fail closed in prod when F′ is unreachable (hard OPE cutover).
+pub fn require_gateway_ope_api_healthy(profile: EdgeProfile) -> Result<(), GatewayOpeApiError> {
+    let Some(cfg) = GatewayOpeApiConfig::from_env()? else {
+        if profile.is_prod() {
+            return Err(GatewayOpeApiError::Config(
+                "OPENAPI_GATEWAY_OPE_API_URL required in prod (hard OPE cutover)".into(),
+            ));
+        }
+        return Ok(());
+    };
+    let url = cfg.base_url.clone();
+    let client = GatewayOpeApiClient::try_new(cfg)?;
+    client.health().map(|_| ()).map_err(|e| {
+        if profile.is_prod() {
+            GatewayOpeApiError::Transport(format!("F′ health failed at {url}: {e}"))
+        } else {
+            e
+        }
+    })
+}
+
+fn urlencoding_minimal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn build_client_tls_config(config: &GatewayOpeApiConfig) -> Result<Arc<ClientConfig>, GatewayOpeApiError> {
@@ -455,6 +637,7 @@ impl ServerCertVerifier for SkipServerVerify {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Mutex;
@@ -518,6 +701,11 @@ mod tests {
                 req.to_ascii_lowercase()
                     .contains("x-teechat-openapi-key-id: tcak_bill01"),
                 "missing openapi key_id header: {req}"
+            );
+            assert!(
+                req.to_ascii_lowercase()
+                    .contains("x-ope-assign-id: assign-abc"),
+                "missing assign_id header: {req}"
             );
             assert!(req.contains("Authorization: Bearer test-token"));
             let body = br#"{"ok":true}"#;
@@ -718,6 +906,7 @@ mod tests {
                 conversation_id: Some("c1".into()),
                 ephemeral_epoch: None,
                 openapi_key_id: Some("tcak_bill01".into()),
+                assign_id: Some("assign-abc".into()),
                 body: br#"{"version":1,"ciphertext":"x"}"#.to_vec(),
             })
             .unwrap();
@@ -725,6 +914,66 @@ mod tests {
         assert_eq!(resp.header("X-OPE-Traffic-Class"), Some("api"));
         assert_eq!(resp.header("X-OPE-Request-Id"), Some("req-1"));
         assert_eq!(resp.body, br#"{"ok":true}"#);
+    }
+
+    #[test]
+    fn inventory_and_preassign_roundtrip() {
+        ensure_crypto();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let req = read_http_request(&mut stream);
+                let (status_line, body): (&str, &str) = if req.starts_with("GET /v1/ope/api/inventory")
+                {
+                    assert!(req.contains("key_set=api"));
+                    assert!(req.contains("Authorization: Bearer test-token"));
+                    (
+                        "200 OK",
+                        r#"{"matrix_default":"*-*","key_set":"api","engines":[{"engine_id":"eng-1","engine_set":"shared","models":["m1"],"healthy":true,"ready_sessions":2}]}"#,
+                    )
+                } else if req.starts_with("POST /v1/ope/api/preassign") {
+                    assert!(req.contains("Authorization: Bearer test-token"));
+                    assert!(req.contains("eng-1"));
+                    (
+                        "200 OK",
+                        r#"{"assign_id":"a1","engine_id":"eng-1","engine_set":"shared","key_set":"api","trust":{"engine_id":"eng-1","epoch_id":"ep1","hybrid":{"kex":"X25519MLKEM768","mlkem_encapsulation_key":"aa","x25519_public":"bb"},"identity":{"ed25519_public":"cc"}}}"#,
+                    )
+                } else {
+                    panic!("unexpected req: {req}");
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        let base = format!("http://{addr}");
+        let cfg = GatewayOpeApiConfig::from_parts(
+            base,
+            Some("test-token".into()),
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap();
+        let client = GatewayOpeApiClient::try_new(cfg).unwrap();
+        let inv = client.inventory("api").unwrap();
+        assert_eq!(inv.engines.len(), 1);
+        assert_eq!(inv.engines[0].engine_id, "eng-1");
+        assert_eq!(inv.engines[0].ready_sessions, 2);
+        let pre = client
+            .preassign(&PreassignRequest {
+                engine_id: "eng-1".into(),
+                key_set: Some("api".into()),
+                model: Some("m1".into()),
+            })
+            .unwrap();
+        assert_eq!(pre.assign_id, "a1");
+        assert_eq!(pre.trust.epoch_id, "ep1");
     }
 
     #[test]

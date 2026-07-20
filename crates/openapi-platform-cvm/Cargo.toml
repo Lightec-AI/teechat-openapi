@@ -26,6 +26,9 @@ sha2 = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 ureq = { workspace = true }
+ope-crypto = { workspace = true }
+ope-e2e = { workspace = true }
+ope-envelope = { workspace = true }
 webpki-roots = "0.26"
 
 [dev-dependencies]

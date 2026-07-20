@@ -44,6 +44,9 @@ thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
+ope-crypto = "=0.1.0"
+ope-e2e = "=0.1.0"
+ope-envelope = "=0.1.0"
 
 [profile.release]
 lto = true
