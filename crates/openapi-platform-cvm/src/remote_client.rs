@@ -17,6 +17,17 @@ pub struct UreqL0AuthorizeClient {
     agent: ureq::Agent,
 }
 
+fn l0_ureq_agent() -> ureq::Agent {
+    // No idle keep-alive: half-closed pooled sockets to L0 admin caused intermittent
+    // transport failures under gateway churn (same class as F′ CLOSE-WAIT/FIN-WAIT-2).
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(60))
+        .max_idle_connections(0)
+        .max_idle_connections_per_host(0)
+        .build()
+}
+
 impl UreqL0AuthorizeClient {
     pub fn new(authorize_url: String, internal_token: String) -> Self {
         let revocations_url = revocations_url_from_authorize(&authorize_url);
@@ -24,7 +35,7 @@ impl UreqL0AuthorizeClient {
             authorize_url,
             revocations_url,
             internal_token,
-            agent: ureq::Agent::new(),
+            agent: l0_ureq_agent(),
         }
     }
 
@@ -33,7 +44,7 @@ impl UreqL0AuthorizeClient {
             authorize_url,
             revocations_url,
             internal_token,
-            agent: ureq::Agent::new(),
+            agent: l0_ureq_agent(),
         }
     }
 }

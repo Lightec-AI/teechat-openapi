@@ -91,7 +91,11 @@ impl GatewayOpeApiConfig {
             ca_pem: loaded.ca_pem,
             insecure_skip_verify: loaded.insecure_skip_verify,
             connect_timeout: Duration::from_secs(10),
-            read_timeout: Duration::from_secs(120),
+            // Match gateway TEECHAT_OPE_UPSTREAM_TIMEOUT_MS default (5m). Override via
+            // OPENAPI_GATEWAY_OPE_API_READ_TIMEOUT_SECS. Short chats were fine at 120s;
+            // long/tool runs hung up as client 502 when the ureq read deadline fired or a
+            // half-closed keep-alive socket was reused (prod CLOSE-WAIT/FIN-WAIT-2).
+            read_timeout: duration_secs_from_env("OPENAPI_GATEWAY_OPE_API_READ_TIMEOUT_SECS", 300),
         })
     }
 
@@ -112,7 +116,11 @@ impl GatewayOpeApiConfig {
     }
 }
 
-/// Long-lived dialer with connection pooling (ureq Agent keep-alive).
+/// Dialer for gateway F′ OPE API.
+///
+/// Idle keep-alive is **disabled** (`max_idle_connections=0`): reusing half-closed
+/// sockets after gateway VIP/TLS teardown surfaced as client `502 socket hang up`
+/// with edge CLOSE-WAIT and gateway FIN-WAIT-2 on `:8791`/`:8792`.
 #[derive(Debug, Clone)]
 pub struct GatewayOpeApiClient {
     base_url: String,
@@ -124,7 +132,9 @@ impl GatewayOpeApiClient {
     pub fn try_new(config: GatewayOpeApiConfig) -> Result<Self, GatewayOpeApiError> {
         let mut builder = ureq::AgentBuilder::new()
             .timeout_connect(config.connect_timeout)
-            .timeout_read(config.read_timeout);
+            .timeout_read(config.read_timeout)
+            .max_idle_connections(0)
+            .max_idle_connections_per_host(0);
 
         if config.base_url.starts_with("https://") {
             let tls = build_client_tls_config(&config)?;
@@ -571,6 +581,14 @@ fn load_private_key_pem(pem: &[u8]) -> Result<PrivateKeyDer<'static>, GatewayOpe
 
 fn opt_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|s| !s.trim().is_empty())
+}
+
+fn duration_secs_from_env(name: &str, default_secs: u64) -> Duration {
+    let secs = opt_env(name)
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(default_secs);
+    Duration::from_secs(secs)
 }
 
 fn truthy_env(name: &str) -> bool {
