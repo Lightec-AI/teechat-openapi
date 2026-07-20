@@ -220,6 +220,7 @@ where
             path,
             body,
             key_id,
+            key_set,
             model,
             now_ms,
         }) => {
@@ -228,7 +229,8 @@ where
             out.flush().map_err(ServerError::Io)?;
             let mut chunked = ChunkedWriter::new(out);
             let mut acc = SseUsageAccumulator::new(&mut chunked);
-            app.execute_sse_passthrough(method, &path, &body, &mut acc)
+            let ctx = openapi_core::UpstreamRequestContext::from_auth(&key_id, &key_set);
+            app.execute_sse_passthrough_ctx(method, &path, &body, &ctx, &mut acc)
                 .map_err(|e| ServerError::Other(e.to_string()))?;
             let (prompt_tokens, completion_tokens) = acc.token_counts();
             let usage = app

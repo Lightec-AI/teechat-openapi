@@ -352,6 +352,7 @@ mod tests {
             OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 180,
+            key_set: "api".into(),
             remaining_tokens: None,
             },
             5,
@@ -394,6 +395,7 @@ mod tests {
             OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 60,
+            key_set: "api".into(),
             remaining_tokens: None,
             },
             1,
@@ -443,6 +445,7 @@ mod tests {
         let policy = OpenApiKeyPolicy {
             models: vec!["teechat-lite".into()],
             rpm: 5,
+            key_set: "api".into(),
             remaining_tokens: None,
         };
         let authz = sign_test_authz_with_policy(

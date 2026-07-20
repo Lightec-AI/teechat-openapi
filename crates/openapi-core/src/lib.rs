@@ -21,7 +21,10 @@ pub use authz::{OpenApiKeyPolicy, SignedAuthz, SignedRevocation};
 pub use catalog::{KeyCatalog, SignedKeyCatalog};
 pub use config::Config;
 pub use error::{ApiError, ApiErrorBody};
-pub use handler::{App, AppResponse, HttpMethod, StreamForwardResult, UpstreamForwarder, UpstreamResponse};
+pub use handler::{
+    App, AppResponse, HttpMethod, StreamForwardResult, UpstreamForwarder, UpstreamRequestContext,
+    UpstreamResponse,
+};
 pub use key_format::{hash_api_key, parse_api_key};
 pub use limits::{IpConnPermit, IpConnTracker, Limits};
 pub use models::*;

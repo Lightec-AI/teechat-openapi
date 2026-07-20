@@ -53,6 +53,7 @@ pub enum AppResponse {
         path: String,
         body: Vec<u8>,
         key_id: String,
+        key_set: String,
         model: String,
         now_ms: u64,
     },
@@ -65,6 +66,17 @@ pub trait UpstreamForwarder: Send + Sync {
         path: &str,
         body: Option<&[u8]>,
     ) -> Result<UpstreamResponse, ApiError>;
+
+    /// Context-aware forward (key_id / key_set for OPE dispatch + metering).
+    fn forward_v1_ctx(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        body: Option<&[u8]>,
+        _ctx: &UpstreamRequestContext,
+    ) -> Result<UpstreamResponse, ApiError> {
+        self.forward_v1(method, path, body)
+    }
 
     /// Stream upstream response body to `out` on HTTP 2xx. Non-2xx responses are
     /// read fully and returned as `ApiError::Upstream` without writing to `out`.
@@ -92,10 +104,60 @@ pub trait UpstreamForwarder: Send + Sync {
         })
     }
 
+    fn forward_v1_stream_ctx(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        body: Option<&[u8]>,
+        _ctx: &UpstreamRequestContext,
+        out: &mut dyn std::io::Write,
+    ) -> Result<StreamForwardResult, ApiError> {
+        self.forward_v1_stream(method, path, body, out)
+    }
+
     fn list_models(&self) -> Result<ModelsListResponse, ApiError> {
         match self.forward_v1(HttpMethod::Get, "/v1/models", None)? {
             UpstreamResponse::Json(v) => crate::models::parse_models_json(v),
             UpstreamResponse::Raw { bytes, .. } => crate::models::parse_models_bytes(&bytes),
+        }
+    }
+
+    fn list_models_for_key(
+        &self,
+        _ctx: &UpstreamRequestContext,
+        policy: &crate::authz::OpenApiKeyPolicy,
+    ) -> Result<ModelsListResponse, ApiError> {
+        let mut models = self.list_models()?;
+        models.data.retain(|m| policy.allows_model(&m.id));
+        Ok(models)
+    }
+}
+
+/// Per-request identity for OPE upstream (METER-002 + key_set matrix).
+#[derive(Debug, Clone)]
+pub struct UpstreamRequestContext {
+    pub key_id: String,
+    pub key_set: String,
+}
+
+impl Default for UpstreamRequestContext {
+    fn default() -> Self {
+        Self {
+            key_id: String::new(),
+            key_set: "api".into(),
+        }
+    }
+}
+
+impl UpstreamRequestContext {
+    pub fn from_auth(key_id: &str, key_set: &str) -> Self {
+        Self {
+            key_id: key_id.to_string(),
+            key_set: if key_set.trim().is_empty() {
+                "api".into()
+            } else {
+                key_set.trim().to_string()
+            },
         }
     }
 }
@@ -226,7 +288,8 @@ where
                 self.enforce_ip_api_limit(client_ip)?;
                 let auth = self.authenticator.authenticate_bearer(authorization)?;
                 self.enforce_rate_limit(&auth)?;
-                let models = self.upstream.list_models()?;
+                let ctx = UpstreamRequestContext::from_auth(&auth.key_id, &auth.policy.key_set);
+                let models = self.upstream.list_models_for_key(&ctx, &auth.policy)?;
                 Ok(AppResponse::Json(serde_json::to_value(models).unwrap()))
             }
             RouteAction::InferencePost => {
@@ -253,6 +316,7 @@ where
                     self.enforce_model_policy(&auth, body)?;
                     enforce_token_quota(&auth.policy, body)?;
                 }
+                let ctx = UpstreamRequestContext::from_auth(&auth.key_id, &auth.policy.key_set);
                 if method == HttpMethod::Post && body_wants_stream(body) {
                     let model = model_from_body(body);
                     return Ok(AppResponse::SsePassthrough {
@@ -260,14 +324,16 @@ where
                         path: path.clone(),
                         body: body.to_vec(),
                         key_id: auth.key_id.clone(),
+                        key_set: auth.policy.key_set.clone(),
                         model,
                         now_ms,
                     });
                 }
-                let upstream = self.upstream.forward_v1(
+                let upstream = self.upstream.forward_v1_ctx(
                     method,
                     &path,
                     if body.is_empty() { None } else { Some(body) },
+                    &ctx,
                 )?;
                 Ok(upstream_to_json_response(upstream))
             }
@@ -332,6 +398,7 @@ where
     ) -> Result<AppResponse, ApiError> {
         let stream = body_wants_stream(body);
         let model = model_from_body(body);
+        let ctx = UpstreamRequestContext::from_auth(&auth.key_id, &auth.policy.key_set);
 
         if stream {
             return Ok(AppResponse::SsePassthrough {
@@ -339,6 +406,7 @@ where
                 path: path.to_string(),
                 body: body.to_vec(),
                 key_id: auth.key_id.clone(),
+                key_set: auth.policy.key_set.clone(),
                 model,
                 now_ms,
             });
@@ -346,7 +414,7 @@ where
 
         let upstream = self
             .upstream
-            .forward_v1(HttpMethod::Post, path, Some(body))?;
+            .forward_v1_ctx(HttpMethod::Post, path, Some(body), &ctx)?;
 
         let (prompt_tokens, completion_tokens) = extract_token_counts(&upstream, false);
 
@@ -369,8 +437,26 @@ where
         body: &[u8],
         out: &mut dyn std::io::Write,
     ) -> Result<StreamForwardResult, ApiError> {
+        // key_set defaults to api when SSE path does not re-auth; METER-002 key_id is in AppResponse.
+        let ctx = UpstreamRequestContext {
+            key_id: String::new(),
+            key_set: "api".into(),
+        };
         self.upstream
-            .forward_v1_stream(method, path, Some(body), out)
+            .forward_v1_stream_ctx(method, path, Some(body), &ctx, out)
+    }
+
+    /// SSE passthrough with explicit auth context (preferred for OPE cutover).
+    pub fn execute_sse_passthrough_ctx(
+        &self,
+        method: HttpMethod,
+        path: &str,
+        body: &[u8],
+        ctx: &UpstreamRequestContext,
+        out: &mut dyn std::io::Write,
+    ) -> Result<StreamForwardResult, ApiError> {
+        self.upstream
+            .forward_v1_stream_ctx(method, path, Some(body), ctx, out)
     }
 
     /// Sign a usage report after SSE accumulation (METER-001).
@@ -1258,6 +1344,7 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["teechat-lite".into()],
                 rpm: 120,
+            key_set: "api".into(),
             remaining_tokens: None,
             },
             120,
@@ -1285,6 +1372,7 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["teechat-lite".into()],
                 rpm: 120,
+            key_set: "api".into(),
             remaining_tokens: None,
             },
             120,
@@ -1303,6 +1391,7 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["teechat-lite".into()],
                 rpm: 120,
+            key_set: "api".into(),
             remaining_tokens: None,
             },
             120,
@@ -1328,6 +1417,7 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 2,
+            key_set: "api".into(),
             remaining_tokens: None,
             },
             120,
@@ -1356,6 +1446,7 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 100,
+            key_set: "api".into(),
             remaining_tokens: None,
             },
             1,

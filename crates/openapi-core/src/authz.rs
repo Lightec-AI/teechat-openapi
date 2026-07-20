@@ -9,6 +9,10 @@ pub struct OpenApiKeyPolicy {
     pub models: Vec<String>,
     #[serde(default = "default_rpm")]
     pub rpm: u32,
+    /// API key set for gateway key_set×engine_set matrix. Default `"api"`.
+    /// Omitted from signed authz JSON when `"api"` so legacy fixtures / caches verify.
+    #[serde(default = "default_key_set", skip_serializing_if = "is_default_key_set")]
+    pub key_set: String,
     /// Remaining prepaid tokens for this API account (optional). When set, edge
     /// applies the near-exhaust long-context gate (QUOTA-001).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -19,12 +23,21 @@ fn default_rpm() -> u32 {
     120
 }
 
+fn default_key_set() -> String {
+    "api".into()
+}
+
+fn is_default_key_set(s: &str) -> bool {
+    s.is_empty() || s == "api"
+}
+
 impl OpenApiKeyPolicy {
     /// Catalog / legacy keys: any model, no per-key RPM cap (`rpm = 0` → unlimited).
     pub fn unrestricted() -> Self {
         Self {
             models: vec!["*".into()],
             rpm: 0,
+            key_set: default_key_set(),
             remaining_tokens: None,
         }
     }
@@ -137,6 +150,7 @@ pub fn sign_test_authz(
         OpenApiKeyPolicy {
             models: vec!["*".into()],
             rpm: 120,
+            key_set: "api".into(),
             remaining_tokens: None,
         },
         1,
@@ -234,7 +248,8 @@ mod tests {
             policy: OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 120,
-            remaining_tokens: None,
+                key_set: "api".into(),
+                remaining_tokens: None,
             },
             exp_ms: 1_700_003_600_000,
             epoch: 42,
@@ -277,6 +292,7 @@ mod tests {
         let p = OpenApiKeyPolicy {
             models: vec!["teechat-a".into()],
             rpm: 10,
+            key_set: "api".into(),
             remaining_tokens: None,
         };
         assert!(p.allows_model("teechat-a"));
@@ -284,6 +300,7 @@ mod tests {
         assert!(!OpenApiKeyPolicy {
             models: vec![],
             rpm: 10,
+            key_set: "api".into(),
             remaining_tokens: None
         }
         .allows_model("anything"));
@@ -295,6 +312,7 @@ mod tests {
         let p = OpenApiKeyPolicy {
             models: vec!["*".into()],
             rpm: 30,
+            key_set: "api".into(),
             remaining_tokens: None,
         };
         assert_eq!(p.effective_rpm(120), 30);
