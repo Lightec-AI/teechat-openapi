@@ -337,6 +337,13 @@ where
     Ok(())
 }
 
+/// Receive buffer = `max_body_bytes` + header slack. A hard 256 KiB cap (older
+/// TLS path) silently closed WorkBuddy long-chat POSTs → client `502 socket hang up`
+/// with no F′/L0 traffic.
+fn request_recv_capacity(max_body_bytes: usize) -> usize {
+    max_body_bytes.saturating_add(64 * 1024).max(256 * 1024)
+}
+
 pub fn serve_connection<U, P>(
     app: &Arc<App<U, P>>,
     conn: &mut (impl Read + Write + ?Sized),
@@ -346,7 +353,7 @@ pub fn serve_connection<U, P>(
     U: UpstreamForwarder,
     P: AttestationPlatform,
 {
-    let mut buffer = vec![0u8; 1024 * 256];
+    let mut buffer = vec![0u8; request_recv_capacity(app.config().max_body_bytes)];
     let mut total = 0usize;
     loop {
         let n = match conn.read(&mut buffer[total..]) {
@@ -387,11 +394,19 @@ pub fn serve_connection<U, P>(
             }
             Ok(None) => {
                 if total >= buffer.len() {
+                    let _ = conn.write_all(&build_error_response(ApiError::PayloadTooLarge));
+                    let _ = conn.flush();
                     return;
                 }
                 continue;
             }
-            Err(_) => return,
+            Err(_) => {
+                let _ = conn.write_all(&build_error_response(ApiError::BadRequest(
+                    "malformed request".into(),
+                )));
+                let _ = conn.flush();
+                return;
+            }
         }
     }
 }

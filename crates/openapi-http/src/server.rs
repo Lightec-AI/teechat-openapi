@@ -81,7 +81,14 @@ where
     stream.set_read_timeout(Some(idle))?;
     stream.set_write_timeout(Some(idle))?;
 
-    let mut buffer = vec![0u8; 1024 * 256];
+    // Match TLS `serve_connection`: size to configured max body + header slack
+    // (hard 256 KiB previously 413'd legitimate multi-turn Agent bodies).
+    let recv_cap = app
+        .config()
+        .max_body_bytes
+        .saturating_add(64 * 1024)
+        .max(256 * 1024);
+    let mut buffer = vec![0u8; recv_cap];
     let mut total = 0usize;
     loop {
         let n = stream.read(&mut buffer[total..])?;
