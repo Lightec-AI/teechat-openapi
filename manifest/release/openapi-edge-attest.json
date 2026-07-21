@@ -1,7 +1,7 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-21T01:15:00.000Z",
+  "published_at": "2026-07-21T10:34:00.000Z",
   "epoch": 6,
   "not_after": "2027-07-21T01:15:00.000Z",
   "retired_grace_period_days": 30,
@@ -18,6 +18,19 @@
         "openapi.teechat.ai"
       ],
       "active": [
+        {
+          "build_version": "0.4.5",
+          "code_hash": "24ba616539d92c9bc84ae8bd2a55601d06746c5014b0547472887c78fb36213e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
+            "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
+          },
+          "notes": "Same binary digest as 0.4.4 (GitHub v0.4.5); label/manifest sync after guest pin bump."
+        },
         {
           "build_version": "0.4.4",
           "code_hash": "24ba616539d92c9bc84ae8bd2a55601d06746c5014b0547472887c78fb36213e",
@@ -42,7 +55,7 @@
             "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
-          "notes": "Production edge: F′/L0 ureq keep-alive disabled + 300s F′ read timeout. Overlap with 0.4.4 during install."
+          "notes": "Production edge: F\u2032/L0 ureq keep-alive disabled + 300s F\u2032 read timeout. Overlap with 0.4.4 during install."
         }
       ],
       "retired": [
