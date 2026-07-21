@@ -59,6 +59,9 @@ impl OpeDispatchUpstream {
                     ApiError::Upstream(format!("ope assign stale: {body}"))
                 } else if status == 503 {
                     ApiError::Upstream(format!("ope unavailable: {body}"))
+                } else if (400..500).contains(&status) {
+                    // Surface vLLM context-length / bad-request instead of opaque 502.
+                    ApiError::BadRequest(format!("ope dispatch {status}: {body}"))
                 } else {
                     ApiError::Upstream(format!("ope http {status}: {body}"))
                 }
@@ -67,24 +70,37 @@ impl OpeDispatchUpstream {
         }
     }
 
+    fn dispatch_status_error(status: u16, msg: &str) -> ApiError {
+        if (400..500).contains(&status) {
+            ApiError::BadRequest(format!("ope dispatch {status}: {msg}"))
+        } else {
+            ApiError::Upstream(format!("ope dispatch {status}: {msg}"))
+        }
+    }
+
     fn pick_engine<'a>(
         inv: &'a InventoryResponse,
         model: &str,
     ) -> Result<&'a InventoryEngine, ApiError> {
-        let m = model.trim();
+        let m = strip_model_provider_suffix(model.trim());
         if m.is_empty() {
             return Err(ApiError::BadRequest("model required".into()));
         }
         if let Some(e) = inv.engines.iter().find(|e| {
-            e.healthy && e.ready_sessions > 0 && e.models.iter().any(|x| x == m)
+            e.healthy
+                && e.ready_sessions > 0
+                && e.models
+                    .iter()
+                    .any(|x| strip_model_provider_suffix(x) == m)
         }) {
             return Ok(e);
         }
-        if let Some(e) = inv
-            .engines
-            .iter()
-            .find(|e| e.healthy && e.models.iter().any(|x| x == m))
-        {
+        if let Some(e) = inv.engines.iter().find(|e| {
+            e.healthy
+                && e.models
+                    .iter()
+                    .any(|x| strip_model_provider_suffix(x) == m)
+        }) {
             return Ok(e);
         }
         Err(ApiError::Upstream(format!(
@@ -97,9 +113,13 @@ impl OpeDispatchUpstream {
         body: &[u8],
         ctx: &UpstreamRequestContext,
     ) -> Result<(PreassignResponse, EncryptedOpeRequest, String), ApiError> {
-        let model = model_from_body(body);
-        let payload: Value = serde_json::from_slice(body)
+        // Clients sometimes send `model@teechat`; inventory/preassign use bare ids.
+        let model = strip_model_provider_suffix(&model_from_body(body));
+        let mut payload: Value = serde_json::from_slice(body)
             .map_err(|e| ApiError::BadRequest(format!("invalid json: {e}")))?;
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("model".into(), Value::String(model.clone()));
+        }
         let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let inv = self
             .client
@@ -179,7 +199,7 @@ impl UpstreamForwarder for OpeDispatchUpstream {
         let (status, headers, raw) = self.dispatch_encrypted(&pre, &enc, ctx)?;
         if !(200..300).contains(&status) {
             let msg = String::from_utf8_lossy(&raw);
-            return Err(ApiError::Upstream(format!("ope dispatch {status}: {msg}")));
+            return Err(Self::dispatch_status_error(status, &msg));
         }
         let ct = headers
             .iter()
@@ -243,7 +263,7 @@ impl UpstreamForwarder for OpeDispatchUpstream {
             let mut err_body = Vec::new();
             let _ = reader.read_to_end(&mut err_body);
             let msg = String::from_utf8_lossy(&err_body);
-            return Err(ApiError::Upstream(format!("ope dispatch {status}: {msg}")));
+            return Err(Self::dispatch_status_error(status, &msg));
         }
         let ct = headers
             .iter()
@@ -550,6 +570,14 @@ fn openai_chat_completion_json(
             "total_tokens": prompt_tokens + completion_tokens
         }
     })
+}
+
+/// `google/gemma-4-31B-it@teechat` → `google/gemma-4-31B-it` (inventory / vLLM ids).
+fn strip_model_provider_suffix(model: &str) -> String {
+    match model.rfind('@') {
+        Some(at) => model[..at].to_string(),
+        None => model.to_string(),
+    }
 }
 
 fn usage_from_header_or_estimate(
