@@ -14,6 +14,7 @@ members = [
     "bins/seal-tls-key",
     "bins/seal-tls-key-sgx",
     "bins/openapi-tls-ceremony",
+    "bins/openapi-acme",
     "bins/teechat-openapi-attest",
 ]
 
@@ -27,6 +28,10 @@ rust-version = "1.75"
 [workspace.dependencies]
 aes-gcm = "0.10"
 anyhow = "1.0"
+# Public TCB — git only (never path into sibling vendor/).
+attested-mtls = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "040360e14b1b4ad4e9f8d0d0dfd409fc14ddf348" }
+attested-mtls-seal-sync = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "040360e14b1b4ad4e9f8d0d0dfd409fc14ddf348" }
+attested-mtls-snp-seal = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "040360e14b1b4ad4e9f8d0d0dfd409fc14ddf348" }
 base64 = "0.22"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 hex = "0.4"
@@ -44,6 +49,8 @@ thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
+instant-acme = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util"] }
 ope-crypto = "=0.1.0"
 ope-e2e = "=0.1.0"
 ope-envelope = "=0.1.0"

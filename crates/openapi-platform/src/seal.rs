@@ -2,7 +2,7 @@
 //!
 //! - **`seal_version` 1** — measurement-labeled HKDF + AES-GCM (dev / CVM legacy).
 //! - **`seal_version` 2** — Intel SGX `EGETKEY` (see `openapi-platform-sgx`).
-//! - **`seal_version` 3** — AMD-SP `SNP_GET_DERIVED_KEY` + AES-GCM (CVM prod).
+//! - **`seal_version` 3** — AMD-SP via public crate `attested-mtls-snp-seal`.
 //!
 //! See repo `SECURITY.md`.
 
@@ -16,54 +16,16 @@ use sha2::Sha256;
 
 use crate::{Measurement, PlatformError};
 
+/// Re-export AMD-SP seal types from the public TCB (`attested-mtls-snp-seal`).
+pub use attested_mtls_snp_seal::{
+    AmdSpSealMeta, AMD_SP_GFS_GUEST_POLICY_MEASUREMENT, SEAL_AAD_V3, SEAL_VERSION_SNP_AMD_SP,
+};
+
 pub const SEAL_AAD: &[u8] = b"teechat-openapi-tls-key-v1";
-pub const SEAL_AAD_V3: &[u8] = b"teechat-openapi-tls-key-v3";
 /// HKDF + AES-GCM bound to a measurement label (dev / CVM legacy).
 pub const SEAL_VERSION: u32 = 1;
 /// Fortanix EGETKEY + AES-GCM (SGX hardware sealing).
 pub const SEAL_VERSION_SGX_EGETKEY: u32 = 2;
-/// AMD-SP `SNP_GET_DERIVED_KEY` + AES-GCM (CVM production).
-pub const SEAL_VERSION_SNP_AMD_SP: u32 = 3;
-
-/// TeeChat default guest-field select: GUEST_POLICY (bit 0) | MEASUREMENT (bit 3).
-pub const AMD_SP_GFS_GUEST_POLICY_MEASUREMENT: u64 = 0x9;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AmdSpSealMeta {
-    /// `"vcek"` or `"vmrk"`.
-    pub root_key: String,
-    pub guest_field_select: u64,
-    pub vmpl: u32,
-    pub guest_svn: u32,
-    pub tcb_version: u64,
-    pub msg_version: u32,
-}
-
-impl AmdSpSealMeta {
-    /// Production TeeChat policy for OpenAPI CVM TLS sealing.
-    pub fn teechat_default() -> Self {
-        Self {
-            root_key: "vcek".into(),
-            guest_field_select: AMD_SP_GFS_GUEST_POLICY_MEASUREMENT,
-            vmpl: 0,
-            guest_svn: 0,
-            tcb_version: 0,
-            msg_version: 1,
-        }
-    }
-
-    pub fn policy_binding_label(&self) -> String {
-        format!(
-            "amd-sp|root:{}|gfs:{:#x}|vmpl:{}|svn:{}|tcb:{:#x}|msg:{}",
-            self.root_key,
-            self.guest_field_select,
-            self.vmpl,
-            self.guest_svn,
-            self.tcb_version,
-            self.msg_version
-        )
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealedTlsKeyBlob {
@@ -193,44 +155,70 @@ pub fn unseal_tls_private_key(
     )
 }
 
-/// Seal with an AMD-SP derived key (`seal_version` 3).
+fn to_snp_measurement(m: &Measurement) -> Result<attested_mtls_snp_seal::Measurement, PlatformError> {
+    match m {
+        Measurement::LaunchDigest {
+            launch_digest,
+            image_digest,
+        } => Ok(attested_mtls_snp_seal::Measurement::launch_digest(
+            launch_digest,
+            image_digest,
+        )),
+        Measurement::Mrenclave { .. } => Err(PlatformError::Seal(
+            "AMD-SP seal requires launch_digest measurement".into(),
+        )),
+    }
+}
+
+fn from_snp_blob(blob: attested_mtls_snp_seal::SealedTlsKeyBlob) -> SealedTlsKeyBlob {
+    let measurement = match blob.measurement {
+        attested_mtls_snp_seal::Measurement::LaunchDigest {
+            launch_digest,
+            image_digest,
+        } => Measurement::LaunchDigest {
+            launch_digest,
+            image_digest,
+        },
+    };
+    SealedTlsKeyBlob {
+        seal_version: blob.seal_version,
+        measurement,
+        nonce_b64: blob.nonce_b64,
+        ciphertext_b64: blob.ciphertext_b64,
+        seal_data_b64: None,
+        amd_sp: Some(blob.amd_sp),
+    }
+}
+
+fn to_snp_blob(blob: &SealedTlsKeyBlob) -> Result<attested_mtls_snp_seal::SealedTlsKeyBlob, PlatformError> {
+    let amd_sp = blob.amd_sp.clone().ok_or_else(|| {
+        PlatformError::Seal("amd_sp metadata required for seal_version 3".into())
+    })?;
+    Ok(attested_mtls_snp_seal::SealedTlsKeyBlob {
+        seal_version: blob.seal_version,
+        measurement: to_snp_measurement(&blob.measurement)?,
+        nonce_b64: blob.nonce_b64.clone(),
+        ciphertext_b64: blob.ciphertext_b64.clone(),
+        amd_sp,
+    })
+}
+
+/// Seal with an AMD-SP derived key (`seal_version` 3) via `attested-mtls-snp-seal`.
 pub fn seal_tls_private_key_amd_sp(
     measurement: &Measurement,
     key_pem: &[u8],
     amd_sp_derived_key: &[u8; 32],
     amd_sp: &AmdSpSealMeta,
 ) -> Result<SealedTlsKeyBlob, PlatformError> {
-    if key_pem.is_empty() {
-        return Err(PlatformError::Seal("empty tls key".into()));
-    }
-
-    let binding = amd_sp_binding_label(measurement, amd_sp);
-    let seal_key = derive_seal_key_v3(&binding, amd_sp_derived_key);
-    let cipher = Aes256Gcm::new_from_slice(&seal_key)
-        .map_err(|e| PlatformError::Seal(format!("cipher init: {e}")))?;
-
-    let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
-
-    let ciphertext = cipher
-        .encrypt(
-            nonce,
-            aes_gcm::aead::Payload {
-                msg: key_pem,
-                aad: &aad_for_v3(&binding),
-            },
-        )
-        .map_err(|e| PlatformError::Seal(format!("encrypt: {e}")))?;
-
-    Ok(SealedTlsKeyBlob {
-        seal_version: SEAL_VERSION_SNP_AMD_SP,
-        measurement: measurement.clone(),
-        nonce_b64: URL_SAFE_NO_PAD.encode(nonce_bytes),
-        ciphertext_b64: URL_SAFE_NO_PAD.encode(ciphertext),
-        seal_data_b64: None,
-        amd_sp: Some(amd_sp.clone()),
-    })
+    let snp_m = to_snp_measurement(measurement)?;
+    let blob = attested_mtls_snp_seal::seal_tls_private_key(
+        &snp_m,
+        key_pem,
+        amd_sp_derived_key,
+        amd_sp,
+    )
+    .map_err(|e| PlatformError::Seal(e.to_string()))?;
+    Ok(from_snp_blob(blob))
 }
 
 /// Unseal a `seal_version` 3 blob using a freshly derived AMD-SP key.
@@ -239,57 +227,15 @@ pub fn unseal_tls_private_key_amd_sp(
     expected_measurement: &Measurement,
     amd_sp_derived_key: &[u8; 32],
 ) -> Result<Vec<u8>, PlatformError> {
-    if blob.seal_version != SEAL_VERSION_SNP_AMD_SP {
-        return Err(PlatformError::Seal(format!(
-            "unsupported seal_version {} for AMD-SP unseal (expected {SEAL_VERSION_SNP_AMD_SP})",
-            blob.seal_version
-        )));
-    }
     if blob.seal_data_b64.is_some() {
         return Err(PlatformError::Seal(
             "seal_data_b64 present — not an AMD-SP blob".into(),
         ));
     }
-    let amd_sp = blob.amd_sp.as_ref().ok_or_else(|| {
-        PlatformError::Seal("amd_sp metadata required for seal_version 3".into())
-    })?;
-
-    if blob.measurement != *expected_measurement {
-        return Err(PlatformError::Seal(
-            "sealed blob measurement mismatch".into(),
-        ));
-    }
-
-    let binding = amd_sp_binding_label(expected_measurement, amd_sp);
-    let seal_key = derive_seal_key_v3(&binding, amd_sp_derived_key);
-    aes_gcm_decrypt(
-        &seal_key,
-        &blob.nonce_b64,
-        &blob.ciphertext_b64,
-        &aad_for_v3(&binding),
-    )
-}
-
-fn amd_sp_binding_label(measurement: &Measurement, amd_sp: &AmdSpSealMeta) -> String {
-    format!(
-        "{}|{}",
-        measurement_binding_label(measurement),
-        amd_sp.policy_binding_label()
-    )
-}
-
-fn derive_seal_key_v3(binding: &str, amd_sp_derived_key: &[u8; 32]) -> [u8; 32] {
-    let hk = Hkdf::<Sha256>::new(Some(amd_sp_derived_key), binding.as_bytes());
-    let mut okm = [0u8; 32];
-    hk.expand(b"teechat-openapi-edge-seal-v3", &mut okm)
-        .expect("hkdf expand");
-    okm
-}
-
-fn aad_for_v3(binding: &str) -> Vec<u8> {
-    let mut aad = SEAL_AAD_V3.to_vec();
-    aad.extend_from_slice(binding.as_bytes());
-    aad
+    let snp_blob = to_snp_blob(blob)?;
+    let snp_m = to_snp_measurement(expected_measurement)?;
+    attested_mtls_snp_seal::unseal_tls_private_key(&snp_blob, &snp_m, amd_sp_derived_key)
+        .map_err(|e| PlatformError::Seal(e.to_string()))
 }
 
 fn aes_gcm_decrypt(
@@ -513,5 +459,31 @@ mod tests {
         assert_eq!(meta.guest_field_select, AMD_SP_GFS_GUEST_POLICY_MEASUREMENT);
         assert_eq!(meta.root_key, "vcek");
         assert_eq!(meta.msg_version, 1);
+    }
+
+    /// Regression: OpenAPI wrapper must unseal blobs produced by the public crate.
+    #[test]
+    fn interoperable_with_attested_mtls_snp_seal() {
+        let m = launch_measurement();
+        let amd_key = [0x9cu8; 32];
+        let meta = AmdSpSealMeta::teechat_default();
+        let snp_m = attested_mtls_snp_seal::Measurement::launch_digest(
+            "launch-abc",
+            "image-def",
+        );
+        let snp_blob = attested_mtls_snp_seal::seal_tls_private_key(
+            &snp_m, KEY_PEM, &amd_key, &meta,
+        )
+        .unwrap();
+        let openapi_blob = from_snp_blob(snp_blob);
+        let plain = unseal_tls_private_key_amd_sp(&openapi_blob, &m, &amd_key).unwrap();
+        assert_eq!(plain, KEY_PEM);
+
+        let openapi_sealed =
+            seal_tls_private_key_amd_sp(&m, KEY_PEM, &amd_key, &meta).unwrap();
+        let snp_again = to_snp_blob(&openapi_sealed).unwrap();
+        let plain2 =
+            attested_mtls_snp_seal::unseal_tls_private_key(&snp_again, &snp_m, &amd_key).unwrap();
+        assert_eq!(plain2, KEY_PEM);
     }
 }

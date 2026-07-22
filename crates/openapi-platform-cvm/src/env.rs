@@ -327,9 +327,19 @@ mod tests {
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
     use std::env;
+    use std::sync::Mutex;
+
+    /// Serialize tests that mutate process-global env (avoid parallel races).
+    static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_env_lock(f: impl FnOnce()) {
+        let _g = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        f();
+    }
 
     #[test]
     fn load_catalog_from_file() {
+        with_env_lock(|| {
         let dir = std::env::temp_dir().join(format!("openapi-env-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let catalog_path = dir.join("catalog.json");
@@ -354,6 +364,7 @@ mod tests {
         env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
         env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
         let _ = fs::remove_dir_all(dir);
+        });
     }
 
     #[test]
@@ -370,6 +381,7 @@ mod tests {
 
     #[test]
     fn env_loads_sealed_tls_paths() {
+        with_env_lock(|| {
         env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
         env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
         env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
@@ -389,10 +401,12 @@ mod tests {
         env::remove_var("OPENAPI_TLS_CERT_PATH");
         env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
         env::remove_var("OPENAPI_SEAL_ROOT_HEX");
+        });
     }
 
     #[test]
     fn env_loads_per_ip_limits_and_defaults() {
+        with_env_lock(|| {
         env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
         env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
         env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
@@ -418,10 +432,12 @@ mod tests {
         env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
         env::remove_var("OPENAPI_IP_MAX_CONNS");
         env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
+        });
     }
 
     #[test]
     fn prod_strips_challenge_bench_token_from_limits() {
+        with_env_lock(|| {
         env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
         env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
         env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
@@ -454,5 +470,6 @@ mod tests {
         env::remove_var("OPENAPI_CHALLENGE_BENCH_TOKEN");
         env::remove_var("OPENAPI_PROFILE");
         env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
+        });
     }
 }
