@@ -302,6 +302,8 @@ mod tests {
         env::remove_var("OPENAPI_SEAL_ROOT_HEX");
         env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
         env::remove_var("OPENAPI_AMD_SP_DERIVED_KEY_HEX");
+        env::remove_var("OPENAPI_TLS_KEY_POLICY_PATH");
+        env::remove_var("OPENAPI_TLS_KEY_POLICY");
         set_test_attested_launch_digest(None);
         set_test_amd_sp_derived_key(None);
         f();
@@ -311,6 +313,8 @@ mod tests {
         env::remove_var("OPENAPI_SEAL_ROOT_HEX");
         env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
         env::remove_var("OPENAPI_AMD_SP_DERIVED_KEY_HEX");
+        env::remove_var("OPENAPI_TLS_KEY_POLICY_PATH");
+        env::remove_var("OPENAPI_TLS_KEY_POLICY");
         set_test_attested_launch_digest(None);
         set_test_amd_sp_derived_key(None);
     }
@@ -474,6 +478,10 @@ mod tests {
             let le = dir.join("letsencrypt");
             let etc = dir.join("etc");
             fs::create_dir_all(&etc).unwrap();
+            // Prod requires measured /etc/tls_key_policy=key_ceremony (CI redirects path).
+            let policy = dir.join("tls_key_policy");
+            fs::write(&policy, "key_ceremony\n").unwrap();
+            env::set_var("OPENAPI_TLS_KEY_POLICY_PATH", policy.to_str().unwrap());
             let live = setup_acme_tree(&le, "openapi.teechat.ai");
 
             let paths = TlsCeremonyPaths {
@@ -500,6 +508,7 @@ mod tests {
                 .unwrap();
             assert!(plain.windows(b"BEGIN".len()).any(|w| w == b"BEGIN"));
 
+            env::remove_var("OPENAPI_TLS_KEY_POLICY_PATH");
             let _ = fs::remove_dir_all(&dir);
         });
     }
