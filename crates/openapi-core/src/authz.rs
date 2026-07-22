@@ -20,6 +20,10 @@ pub struct OpenApiKeyPolicy {
     /// applies the near-exhaust long-context gate (QUOTA-001).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remaining_tokens: Option<u64>,
+    /// Max concurrent in-flight completions for this account (optional hint from L0).
+    /// Must stay in Family B unsigned JSON when set — Node `policyForAuthzSign` includes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_in_flight: Option<u32>,
 }
 
 fn default_rpm() -> u32 {
@@ -42,6 +46,7 @@ impl OpenApiKeyPolicy {
             rpm: 0,
             key_set: default_key_set(),
             remaining_tokens: None,
+            max_in_flight: None,
         }
     }
 
@@ -155,6 +160,7 @@ pub fn sign_test_authz(
             rpm: 120,
             key_set: "api".into(),
             remaining_tokens: None,
+            max_in_flight: None,
         },
         1,
         signing_key,
@@ -244,6 +250,44 @@ mod tests {
     use rand::rngs::OsRng;
 
     #[test]
+    fn max_in_flight_in_signed_authz_roundtrip() {
+        let signing = SigningKey::generate(&mut OsRng);
+        let verify_key = signing.verifying_key();
+        let unsigned = UnsignedAuthz {
+            authz_version: 1,
+            key_id: "tcak_test01".into(),
+            key_hash_hex: "ab".repeat(32),
+            account_id: "usr".into(),
+            policy: OpenApiKeyPolicy {
+                models: vec!["*".into()],
+                rpm: 30,
+                key_set: "api".into(),
+                remaining_tokens: Some(1000),
+                max_in_flight: Some(2),
+            },
+            exp_ms: 9_999,
+            epoch: 1,
+        };
+        let payload = serde_json::to_vec(&unsigned).unwrap();
+        // Node field order for default key_set: models,rpm,remaining_tokens,max_in_flight
+        let s = String::from_utf8(payload.clone()).unwrap();
+        assert!(s.contains("\"max_in_flight\":2"), "{s}");
+        assert!(!s.contains("key_set"), "{s}");
+        let sig = signing.sign(&payload);
+        let signed = SignedAuthz {
+            authz_version: unsigned.authz_version,
+            key_id: unsigned.key_id.clone(),
+            key_hash_hex: unsigned.key_hash_hex.clone(),
+            account_id: unsigned.account_id.clone(),
+            policy: unsigned.policy.clone(),
+            exp_ms: unsigned.exp_ms,
+            epoch: unsigned.epoch,
+            signature_hex: hex::encode(sig.to_bytes()),
+        };
+        signed.verify_signature(&verify_key).unwrap();
+    }
+
+    #[test]
     fn authz_signature_roundtrip() {
         let signing = SigningKey::generate(&mut OsRng);
         let verify_key = signing.verifying_key();
@@ -257,6 +301,7 @@ mod tests {
                 rpm: 120,
                 key_set: "api".into(),
                 remaining_tokens: None,
+                max_in_flight: None,
             },
             exp_ms: 1_700_003_600_000,
             epoch: 42,
@@ -303,6 +348,7 @@ mod tests {
             rpm: 10,
             key_set: "api".into(),
             remaining_tokens: None,
+            max_in_flight: None,
         };
         assert!(p.allows_model("teechat-a"));
         assert!(!p.allows_model("teechat-b"));
@@ -310,7 +356,8 @@ mod tests {
             models: vec![],
             rpm: 10,
             key_set: "api".into(),
-            remaining_tokens: None
+            remaining_tokens: None,
+            max_in_flight: None,
         }
         .allows_model("anything"));
         assert!(OpenApiKeyPolicy::unrestricted().allows_model("anything"));
@@ -323,6 +370,7 @@ mod tests {
             rpm: 30,
             key_set: "api".into(),
             remaining_tokens: None,
+            max_in_flight: None,
         };
         assert_eq!(p.effective_rpm(120), 30);
         assert_eq!(p.effective_rpm(10), 10);

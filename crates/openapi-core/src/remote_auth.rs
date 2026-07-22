@@ -378,6 +378,7 @@ mod tests {
                 rpm: 180,
                 key_set: "api".into(),
                 remaining_tokens: None,
+                max_in_flight: None,
             },
             5,
             &signing,
@@ -417,6 +418,7 @@ mod tests {
                 rpm: 60,
                 key_set: "api".into(),
                 remaining_tokens: None,
+                max_in_flight: None,
             },
             1,
             &signing,
@@ -464,6 +466,7 @@ mod tests {
             rpm: 5,
             key_set: "api".into(),
             remaining_tokens: None,
+            max_in_flight: None,
         };
         let authz = sign_test_authz_with_policy(
             "tcak_ef90AB12",

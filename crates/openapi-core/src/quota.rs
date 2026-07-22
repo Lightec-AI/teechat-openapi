@@ -93,6 +93,7 @@ mod tests {
             rpm: 30,
             key_set: "api".into(),
             remaining_tokens: remaining,
+            max_in_flight: None,
         }
     }
 

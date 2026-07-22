@@ -1367,6 +1367,7 @@ mod tests {
                 rpm: 120,
                 key_set: "api".into(),
                 remaining_tokens: None,
+                max_in_flight: None,
             },
             120,
         );
@@ -1401,6 +1402,7 @@ mod tests {
                 rpm: 120,
                 key_set: "api".into(),
                 remaining_tokens: None,
+                max_in_flight: None,
             },
             120,
         );
@@ -1426,6 +1428,7 @@ mod tests {
                 rpm: 120,
                 key_set: "api".into(),
                 remaining_tokens: None,
+                max_in_flight: None,
             },
             120,
         );
@@ -1458,6 +1461,7 @@ mod tests {
                 rpm: 2,
                 key_set: "api".into(),
                 remaining_tokens: None,
+                max_in_flight: None,
             },
             120,
         );
@@ -1487,6 +1491,7 @@ mod tests {
                 rpm: 100,
                 key_set: "api".into(),
                 remaining_tokens: None,
+                max_in_flight: None,
             },
             1,
         );
