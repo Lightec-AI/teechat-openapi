@@ -50,6 +50,7 @@ pub struct AttestationVerdict {
     pub verified_at_unix: u64,
 }
 
+#[derive(Debug, Clone)]
 pub struct VerifyOptions {
     pub endpoint: String,
     pub manifest_url: Option<String>,

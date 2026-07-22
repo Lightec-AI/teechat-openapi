@@ -16,6 +16,7 @@ base64 = { workspace = true }
 ed25519-dalek = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
+openapi-attest = { path = "../openapi-attest" }
 openapi-core = { path = "../openapi-core" }
 openapi-platform = { path = "../openapi-platform" }
 rustls = { workspace = true }

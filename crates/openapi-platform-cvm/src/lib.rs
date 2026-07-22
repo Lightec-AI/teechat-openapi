@@ -30,7 +30,7 @@ pub use guest_digest::{read_attested_launch_digest, verify_launch_digest_atteste
 pub use seal::CvmSealer;
 pub use seal_sync::{
     maybe_start_seal_sync, run_seal_sync_client, spawn_seal_sync_server, CvmLocalSealer,
-    EdgeSealSyncAttestor, SealSyncConfig, SnpChannelAttestor,
+    EdgeSealSyncAttestor, SealSyncConfig, SnpChannelAttestor, SplitTrustChallengeGate,
 };
 pub use tls::{seal_tls_key_file, spki_sha256_hex_from_cert_path, TlsAcceptor, TlsConfig};
 pub use tls_ceremony::{

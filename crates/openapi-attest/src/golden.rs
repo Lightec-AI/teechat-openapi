@@ -289,4 +289,37 @@ mod tests {
         .unwrap();
         assert_eq!(g.launch_digest.as_deref(), Some("aa"));
     }
+
+    #[test]
+    fn golden_pin_mismatch_rejects_measurement() {
+        let raw = r#"{
+          "schema":"teechat-golden-digests-manifest/v1",
+          "key_id":"golden-digests-v1",
+          "published_at":"2026-07-22T10:00:00.000Z",
+          "epoch":1,
+          "not_after":"2099-01-01T00:00:00.000Z",
+          "roles":{
+            "openapi":{"backends":{"sev-snp-cvm":{"active":[{
+              "golden_version":"openapi-sev-snp-legacy-2026-07",
+              "launch_digest":"aa",
+              "image_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }],"retired":[]}}}
+          }
+        }"#;
+        let m = parse_golden_manifest(raw.as_bytes()).unwrap();
+        let g = find_golden_release(
+            &m,
+            "openapi",
+            "sev-snp-cvm",
+            "openapi-sev-snp-legacy-2026-07",
+        )
+        .unwrap();
+        let wrong = Measurement::LaunchDigest {
+            launch_digest: "cc".into(),
+            image_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                .into(),
+        };
+        assert!(!measurement_matches_golden(g, &wrong));
+        assert!(find_golden_release(&m, "openapi", "sev-snp-cvm", "no-such-pin").is_err());
+    }
 }

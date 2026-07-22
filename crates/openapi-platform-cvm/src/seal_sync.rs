@@ -2,6 +2,10 @@
 //!
 //! Active: `OPENAPI_SEAL_SYNC_LISTEN=127.0.0.1:9443`  
 //! Staging: `OPENAPI_SEAL_SYNC_PEER=127.0.0.1:9443` (run once at startup)
+//!
+//! **Prod trust:** mutual split-trust challenge via `OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL`
+//! ([golden-digests-publish.md](../../../../docs/design/golden-digests-publish.md) §6).
+//! `OPENAPI_SEAL_SYNC_PSK` is CI/dev only.
 
 use std::fs;
 use std::net::TcpListener;
@@ -10,11 +14,14 @@ use std::sync::Arc;
 use std::thread;
 
 use attested_mtls_seal_sync::{
-    accept_one, server_tls_config, sync_from_active_tcp, AuditSink, LocalSealer, MockAttestor,
-    PeerAttestor, SealSyncServerConfig, ServingIdentity, StderrAudit, SyncOutcome,
+    accept_one_with_gate, server_tls_config, sync_from_active_tcp_with_gate, AuditSink,
+    LocalSealer, MockAttestor, PeerAttestor, PeerChallengeGate, SealSyncServerConfig,
+    ServingIdentity, StderrAudit, SyncOutcome,
 };
 use base64::Engine as _;
-use openapi_platform::{Sealer, REPORT_DATA_LEN};
+use openapi_attest::verify::{verify_openapi_edge, VerifyOptions};
+use openapi_attest::golden::GoldenLoadOptions;
+use openapi_platform::{load_edge_profile, Sealer, REPORT_DATA_LEN};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
@@ -29,10 +36,12 @@ pub struct SealSyncConfig {
     pub listen: Option<String>,
     /// Peer address for staging client (optional).
     pub peer: Option<String>,
-    /// Comma-separated allowlisted peer measurements.
+    /// Comma-separated allowlisted peer measurements (secondary; channel attestor).
     pub allowlist: Vec<String>,
-    /// Shared secret for MockAttestor (dev / CI). Empty ⇒ try SNP-bound attestor.
+    /// Shared secret for MockAttestor (dev / CI). Forbidden as sole trust in prod.
     pub mock_psk: Option<String>,
+    /// This guest's `/v1/attestation/challenge` base URL (split-trust).
+    pub challenge_base_url: Option<String>,
 }
 
 impl SealSyncConfig {
@@ -58,12 +67,41 @@ impl SealSyncConfig {
             mock_psk: std::env::var("OPENAPI_SEAL_SYNC_PSK")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            challenge_base_url: std::env::var("OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL")
+                .ok()
+                .filter(|s| !s.is_empty()),
         }
     }
 
     /// True when either server or client should run.
     pub fn enabled(&self) -> bool {
         self.listen.is_some() || self.peer.is_some()
+    }
+
+    /// Prod requires challenge URL; PSK alone is forbidden.
+    pub fn validate_for_profile(&self) -> anyhow::Result<()> {
+        if !self.enabled() {
+            return Ok(());
+        }
+        if load_edge_profile().is_prod() {
+            if self.mock_psk.is_some() {
+                anyhow::bail!(
+                    "OPENAPI_SEAL_SYNC_PSK is forbidden when OPENAPI_PROFILE=prod; \
+                     use split-trust challenge (OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL)"
+                );
+            }
+            if self.challenge_base_url.is_none() {
+                anyhow::bail!(
+                    "OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL required when seal-sync enabled in prod"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether to enforce mutual split-trust challenge gates.
+    pub fn use_split_trust_gate(&self) -> bool {
+        self.challenge_base_url.is_some() && self.mock_psk.is_none()
     }
 }
 
@@ -111,6 +149,83 @@ impl LocalSealer for CvmLocalSealer {
     }
 }
 
+/// Split-trust peer challenge: `verify_openapi_edge` (app GitHub + golden + live challenge).
+#[derive(Debug, Clone)]
+pub struct SplitTrustChallengeGate {
+    verify_opts_template: VerifyOptions,
+}
+
+impl SplitTrustChallengeGate {
+    /// Build gate from env / defaults (GitHub primary, golden required).
+    pub fn from_env() -> Self {
+        let mut opts = VerifyOptions::default();
+        if let Ok(tag) = std::env::var("OPENAPI_SEAL_SYNC_GITHUB_TAG") {
+            if !tag.is_empty() {
+                opts.github_tag = Some(tag);
+            }
+        }
+        if let (Ok(mp), Ok(sp)) = (
+            std::env::var("OPENAPI_SEAL_SYNC_APP_MANIFEST"),
+            std::env::var("OPENAPI_SEAL_SYNC_APP_MANIFEST_SIG"),
+        ) {
+            if !mp.is_empty() && !sp.is_empty() {
+                opts.manifest_path = Some(mp);
+                opts.manifest_sig_path = Some(sp);
+            }
+        }
+        let mut golden = GoldenLoadOptions::default();
+        if let (Ok(gp), Ok(gs)) = (
+            std::env::var("OPENAPI_SEAL_SYNC_GOLDEN_MANIFEST"),
+            std::env::var("OPENAPI_SEAL_SYNC_GOLDEN_MANIFEST_SIG"),
+        ) {
+            if !gp.is_empty() && !gs.is_empty() {
+                golden.manifest_path = Some(gp);
+                golden.manifest_sig_path = Some(gs);
+            }
+        }
+        opts.golden = golden;
+        opts.require_golden_digests = true;
+        Self {
+            verify_opts_template: opts,
+        }
+    }
+
+    /// Test/ops: fully specified options.
+    pub fn with_options(opts: VerifyOptions) -> Self {
+        Self {
+            verify_opts_template: opts,
+        }
+    }
+}
+
+impl PeerChallengeGate for SplitTrustChallengeGate {
+    fn verify_peer_challenge(&self, challenge_base_url: &str) -> attested_mtls_seal_sync::Result<()> {
+        let mut opts = self.verify_opts_template.clone();
+        opts.endpoint = challenge_base_url.trim_end_matches('/').to_string();
+        match verify_openapi_edge(opts) {
+            Ok(v) if v.ok => {
+                info!(
+                    endpoint = %v.endpoint,
+                    build = %v.build_version,
+                    code_hash = %v.code_hash,
+                    golden = ?v.golden_version,
+                    trust = %v.trust_source,
+                    golden_trust = ?v.golden_trust_source,
+                    "seal-sync split-trust challenge ok"
+                );
+                Ok(())
+            }
+            Ok(v) => Err(attested_mtls_seal_sync::Error::Attestation(format!(
+                "split-trust challenge returned ok=false for {}",
+                v.endpoint
+            ))),
+            Err(e) => Err(attested_mtls_seal_sync::Error::Attestation(format!(
+                "split-trust challenge failed: {e}"
+            ))),
+        }
+    }
+}
+
 /// Attestor: MockAttestor when PSK set; otherwise SNP report bound to channel SPKI.
 pub enum EdgeSealSyncAttestor {
     /// Dev/CI mock.
@@ -149,7 +264,7 @@ impl PeerAttestor for EdgeSealSyncAttestor {
     }
 }
 
-/// SNP-backed channel attestor (measurement = launch digest).
+/// SNP-backed channel attestor (measurement = launch digest) — secondary binding only.
 #[derive(Debug, Clone)]
 pub struct SnpChannelAttestor {
     measurement: String,
@@ -205,9 +320,6 @@ impl PeerAttestor for SnpChannelAttestor {
         let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&evidence.evidence_b64)
             .map_err(|e| attested_mtls_seal_sync::Error::Attestation(format!("evidence: {e}")))?;
-        // Bind check: report_data at SNP offset must match expected channel binding.
-        // Full VCEK chain verify is left to client attestation monitors; here we enforce
-        // size + report_data prefix match when the report is long enough.
         const SNP_REPORT_DATA_OFFSET: usize = 0x50;
         let expect = Self::report_data_for_channel(expected_channel_spki);
         if raw.len() >= SNP_REPORT_DATA_OFFSET + REPORT_DATA_LEN {
@@ -260,6 +372,8 @@ pub fn spawn_seal_sync_server(
     serving_cert_path: PathBuf,
     identity: ServingIdentity,
     attestor: EdgeSealSyncAttestor,
+    challenge_gate: Option<SplitTrustChallengeGate>,
+    challenge_base_url: Option<String>,
     export_key: Arc<dyn Fn() -> attested_mtls_seal_sync::Result<Vec<u8>> + Send + Sync>,
 ) -> attested_mtls_seal_sync::Result<()> {
     let (tls_cfg, channel_spki) = server_tls_config(serving_cert_pem.as_bytes(), &serving_key_pem)?;
@@ -271,11 +385,13 @@ pub fn spawn_seal_sync_server(
     let cert_path = serving_cert_path;
     thread::spawn(move || {
         let attestor = attestor;
+        let gate = challenge_gate;
         loop {
             let cfg = SealSyncServerConfig {
                 identity: identity.clone(),
                 tls_config: tls_cfg.clone(),
                 channel_spki_sha256: channel_spki.clone(),
+                challenge_base_url: challenge_base_url.clone(),
             };
             let export_cert = {
                 let cert_path = cert_path.clone();
@@ -285,10 +401,12 @@ pub fn spawn_seal_sync_server(
                     Ok(Some(pem))
                 }
             };
-            if let Err(e) = accept_one(
+            let gate_ref = gate.as_ref().map(|g| g as &dyn PeerChallengeGate);
+            if let Err(e) = accept_one_with_gate(
                 &listener,
                 &cfg,
                 &attestor,
+                gate_ref,
                 export_key.as_ref(),
                 &export_cert,
                 &audit as &dyn AuditSink,
@@ -306,10 +424,21 @@ pub fn run_seal_sync_client(
     local: &ServingIdentity,
     attestor: &EdgeSealSyncAttestor,
     sealer: &CvmLocalSealer,
+    challenge_gate: Option<&SplitTrustChallengeGate>,
+    local_challenge_base_url: Option<&str>,
 ) -> attested_mtls_seal_sync::Result<SyncOutcome> {
     let audit = StderrAudit;
     info!(%peer, local_spki = %local.spki_sha256, "seal-sync staging → active");
-    let outcome = sync_from_active_tcp(peer, local, attestor, sealer, &audit)?;
+    let gate = challenge_gate.map(|g| g as &dyn PeerChallengeGate);
+    let outcome = sync_from_active_tcp_with_gate(
+        peer,
+        local,
+        attestor,
+        sealer,
+        &audit,
+        gate,
+        local_challenge_base_url,
+    )?;
     match &outcome {
         SyncOutcome::AlreadyAligned { peer } => {
             info!(
@@ -339,6 +468,7 @@ pub fn maybe_start_seal_sync(
     if !cfg.enabled() {
         return Ok(());
     }
+    cfg.validate_for_profile()?;
 
     let cert_pem = fs::read_to_string(cert_path)?;
     let measurement =
@@ -346,13 +476,27 @@ pub fn maybe_start_seal_sync(
     let identity = ServingIdentity::from_cert_pem(&cert_pem, measurement.clone())?;
     let attestor = build_attestor(cfg, &measurement);
 
+    let gate = if cfg.use_split_trust_gate() {
+        Some(SplitTrustChallengeGate::from_env())
+    } else {
+        None
+    };
+    let challenge_url = cfg.challenge_base_url.clone();
+
     if let Some(peer) = &cfg.peer {
         let local_sealer = CvmLocalSealer::new(
             sealer.clone(),
             sealed_path.to_path_buf(),
             cert_path.to_path_buf(),
         );
-        run_seal_sync_client(peer, &identity, &attestor, &local_sealer)?;
+        run_seal_sync_client(
+            peer,
+            &identity,
+            &attestor,
+            &local_sealer,
+            gate.as_ref(),
+            challenge_url.as_deref(),
+        )?;
     }
 
     if let Some(listen) = &cfg.listen {
@@ -366,9 +510,113 @@ pub fn maybe_start_seal_sync(
             cert_path.to_path_buf(),
             identity,
             attestor,
+            gate,
+            challenge_url,
             export_key,
         )?;
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn prod_forbids_psk_alone() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("OPENAPI_PROFILE", "prod");
+        let cfg = SealSyncConfig {
+            listen: Some("127.0.0.1:9443".into()),
+            peer: None,
+            allowlist: vec![],
+            mock_psk: Some("secret".into()),
+            challenge_base_url: Some("https://127.0.0.1:8443".into()),
+        };
+        let err = cfg.validate_for_profile().unwrap_err().to_string();
+        assert!(err.contains("PSK") || err.contains("prod"), "got {err}");
+        std::env::remove_var("OPENAPI_PROFILE");
+    }
+
+    #[test]
+    fn prod_requires_challenge_url() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("OPENAPI_PROFILE", "prod");
+        let cfg = SealSyncConfig {
+            listen: Some("127.0.0.1:9443".into()),
+            peer: None,
+            allowlist: vec![],
+            mock_psk: None,
+            challenge_base_url: None,
+        };
+        let err = cfg.validate_for_profile().unwrap_err().to_string();
+        assert!(err.contains("CHALLENGE_BASE_URL"), "got {err}");
+        std::env::remove_var("OPENAPI_PROFILE");
+    }
+
+    #[test]
+    fn prod_ok_with_challenge_url() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("OPENAPI_PROFILE", "prod");
+        let cfg = SealSyncConfig {
+            listen: Some("127.0.0.1:9443".into()),
+            peer: None,
+            allowlist: vec![],
+            mock_psk: None,
+            challenge_base_url: Some("https://127.0.0.1:8443".into()),
+        };
+        cfg.validate_for_profile().unwrap();
+        assert!(cfg.use_split_trust_gate());
+        std::env::remove_var("OPENAPI_PROFILE");
+    }
+
+    #[test]
+    fn gate_maps_verify_errors() {
+        let mut opts = VerifyOptions::default();
+        opts.endpoint = "https://127.0.0.1:1".into();
+        opts.require_golden_digests = false;
+        let gate = SplitTrustChallengeGate::with_options(opts);
+        let err = gate
+            .verify_peer_challenge("https://127.0.0.1:1")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("split-trust") || err.contains("challenge") || err.contains("Http"),
+            "got {err}"
+        );
+    }
+
+    #[test]
+    fn psk_disables_split_trust_gate_for_ci() {
+        let cfg = SealSyncConfig {
+            listen: Some("127.0.0.1:9443".into()),
+            peer: None,
+            allowlist: vec![],
+            mock_psk: Some("ci-psk".into()),
+            challenge_base_url: Some("https://127.0.0.1:8443".into()),
+        };
+        assert!(!cfg.use_split_trust_gate());
+    }
+
+    #[test]
+    fn from_env_reads_challenge_base_url() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var(
+            "OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL",
+            "https://127.0.0.1:8443",
+        );
+        std::env::remove_var("OPENAPI_SEAL_SYNC_LISTEN");
+        std::env::remove_var("OPENAPI_SEAL_SYNC_PEER");
+        std::env::remove_var("OPENAPI_SEAL_SYNC_PSK");
+        let cfg = SealSyncConfig::from_env();
+        assert_eq!(
+            cfg.challenge_base_url.as_deref(),
+            Some("https://127.0.0.1:8443")
+        );
+        std::env::remove_var("OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL");
+    }
 }
