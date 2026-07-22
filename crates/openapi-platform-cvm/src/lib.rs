@@ -9,6 +9,7 @@ mod ope_wrap;
 mod push;
 mod remote_client;
 mod seal;
+mod seal_sync;
 mod snp_report;
 mod tls;
 mod tls_ceremony;
@@ -27,6 +28,10 @@ pub use remote_client::{spawn_revocation_poller, UreqL0AuthorizeClient};
 // push.rs kept for reference but unused (D6-pull).
 pub use guest_digest::{read_attested_launch_digest, verify_launch_digest_attested};
 pub use seal::CvmSealer;
+pub use seal_sync::{
+    maybe_start_seal_sync, run_seal_sync_client, spawn_seal_sync_server, CvmLocalSealer,
+    EdgeSealSyncAttestor, SealSyncConfig, SnpChannelAttestor,
+};
 pub use tls::{seal_tls_key_file, spki_sha256_hex_from_cert_path, TlsAcceptor, TlsConfig};
 pub use tls_ceremony::{
     acme_live_dir, assert_no_plaintext_privkey_on_disk, assert_prod_ceremony_policy,

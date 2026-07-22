@@ -1,11 +1,13 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
 use openapi_core::App;
 use openapi_edge::{run_edge_server, ReadWriteConn};
+use openapi_platform::Sealer;
 use openapi_platform_cvm::{
-    load_edge_env, CvmAttestationPlatform, CvmSealer, EdgeUpstream, TlsAcceptor, TlsConfig,
+    load_edge_env, maybe_start_seal_sync, CvmAttestationPlatform, CvmSealer, EdgeUpstream,
+    SealSyncConfig, TlsAcceptor, TlsConfig,
 };
 use tracing::{info, warn};
 
@@ -31,6 +33,23 @@ fn main() -> anyhow::Result<()> {
     let seal_root = env.seal_root().context("seal root")?;
 
     let tls_spki = tls_spki_hex(&env, &sealer, seal_root.as_ref())?;
+
+    // Blue/green sealed-key sync (private admin :9443 / peer) — see attested-mtls-seal-sync.
+    let seal_sync_cfg = SealSyncConfig::from_env();
+    if seal_sync_cfg.enabled() {
+        let (cert_path, sealed_path, key_pem) =
+            load_tls_material_for_seal_sync(&env, &sealer, seal_root.as_ref())
+                .context("seal-sync tls material")?;
+        maybe_start_seal_sync(
+            &seal_sync_cfg,
+            &env.launch_digest,
+            &cert_path,
+            &sealed_path,
+            sealer.clone(),
+            key_pem,
+        )
+        .context("seal-sync")?;
+    }
 
     let platform = CvmAttestationPlatform::from_env(
         &env.build_version,
@@ -112,6 +131,27 @@ fn tls_spki_hex(
 
     warn!("no TLS key configured — plain TCP (dev only)");
     Ok("unknown".into())
+}
+
+fn load_tls_material_for_seal_sync(
+    env: &openapi_platform_cvm::EdgeEnv,
+    sealer: &CvmSealer,
+    seal_root: Option<&[u8; 32]>,
+) -> anyhow::Result<(PathBuf, PathBuf, Vec<u8>)> {
+    let cert_path = env
+        .tls_cert_path
+        .as_ref()
+        .map(PathBuf::from)
+        .context("OPENAPI_TLS_CERT_PATH required for seal-sync")?;
+    let sealed_path = env
+        .tls_sealed_key_path
+        .as_ref()
+        .map(PathBuf::from)
+        .context("OPENAPI_TLS_SEALED_KEY_PATH required for seal-sync")?;
+    let key_pem = sealer
+        .unseal_tls_key_from_file(&sealed_path, seal_root)
+        .context("unseal key for seal-sync")?;
+    Ok((cert_path, sealed_path, key_pem))
 }
 
 fn build_tls_acceptor(
