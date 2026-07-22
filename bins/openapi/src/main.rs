@@ -6,8 +6,8 @@ use openapi_core::App;
 use openapi_edge::{run_edge_server, ReadWriteConn};
 use openapi_platform::Sealer;
 use openapi_platform_cvm::{
-    load_edge_env, maybe_start_seal_sync, CvmAttestationPlatform, CvmSealer, EdgeUpstream,
-    SealSyncConfig, TlsAcceptor, TlsConfig,
+    load_edge_env, log_compile_time_features, maybe_start_seal_sync, CvmAttestationPlatform,
+    CvmSealer, EdgeUpstream, SealSyncConfig, TlsAcceptor, TlsConfig,
 };
 use tracing::{info, warn};
 
@@ -19,6 +19,9 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+
+    // Required: disclose every runtime-affecting Cargo feature on every start.
+    log_compile_time_features();
 
     let env = load_edge_env().context("load edge env")?;
     env.validate_profile().context("tls/profile policy")?;

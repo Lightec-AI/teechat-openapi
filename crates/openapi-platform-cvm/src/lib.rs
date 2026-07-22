@@ -1,5 +1,6 @@
 mod amd_sp_key;
 mod attest;
+mod compile_features;
 mod edge_upstream;
 mod env;
 mod gateway_ope_api;
@@ -18,6 +19,7 @@ mod upstream;
 
 pub use attest::CvmAttestationPlatform;
 pub use edge_upstream::EdgeUpstream;
+pub use compile_features::log_compile_time_features;
 pub use env::{load_edge_env, EdgeEnv};
 #[cfg(feature = "catalog-auth")]
 pub use env::{write_dev_catalog, OpenApiAuthMode};

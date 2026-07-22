@@ -11,6 +11,11 @@ rust-version.workspace = true
 name = "openapi"
 path = "src/main.rs"
 
+[features]
+default = []
+# Lab file-catalog auth — forwards to openapi-platform-cvm (logged at start).
+catalog-auth = ["openapi-platform-cvm/catalog-auth"]
+
 [dependencies]
 anyhow = { workspace = true }
 openapi-platform = { path = "../../crates/openapi-platform" }

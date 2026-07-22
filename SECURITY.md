@@ -9,6 +9,12 @@ Please include reproduction steps, affected commit or release, and impact assess
 
 ---
 
+## Compile-time features (mandatory start log)
+
+Cargo features that change **runtime** trust or auth (e.g. `catalog-auth`) must be disclosed on **every** edge process start via `log_compile_time_features()` (log target `openapi_compile_features`) before accepting traffic. Production release builds keep lab-only features **off**. Details: [README.md § Compile-time features](README.md#compile-time-features-mandatory-disclosure).
+
+---
+
 ## Edge TLS key sealing
 
 Production edge nodes seal the TLS private key inside the TEE. Operators set **`OPENAPI_PROFILE=prod`**.

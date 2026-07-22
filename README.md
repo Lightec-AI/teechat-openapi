@@ -38,6 +38,28 @@ cargo test --workspace
 cargo build --release -p openapi
 ```
 
+### Compile-time features (mandatory disclosure)
+
+Any Cargo `feature = "…"` that changes **runtime** behavior (auth path, seal policy, etc.) must:
+
+1. Be listed in the crate’s `log_compile_time_features()` helper (or equivalent).
+2. Be **logged on every process start** immediately after the tracing subscriber is installed — before accepting traffic.
+3. Stay **off** in production release builds unless the feature is an intentional prod train.
+
+Current edge (`openapi` / `openapi-platform-cvm`) gates:
+
+| Feature | Default | Effect |
+|---------|---------|--------|
+| `catalog-auth` | off | Enables file-catalog `OPENAPI_AUTH_MODE=catalog` (lab only). Prod is remote-only. |
+
+Startup log target: `openapi_compile_features` (fields include each gate as a bool). Example:
+
+```text
+INFO openapi_compile_features: compile-time feature gates (logged every start) crate_name="openapi-platform-cvm" catalog_auth=false
+```
+
+Lab: `cargo build -p openapi --features catalog-auth`.
+
 ## Run (dev)
 
 ```bash
