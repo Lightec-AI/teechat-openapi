@@ -4,6 +4,9 @@ use openapi_platform::{verify_challenge_report_data, QuoteFormat};
 use serde::Serialize;
 use url::Url;
 
+use crate::ceremony::{
+    ceremony_pin_required, load_ceremony_allowlist, spki_on_ceremony_allowlist, CeremonyLoadOptions,
+};
 use crate::challenge_client::{challenge_edge, generate_nonce, ChallengeOutcome};
 use crate::error::{AttestError, Result};
 use crate::github_release::{
@@ -66,6 +69,10 @@ pub struct VerifyOptions {
     /// When true, rows with `golden_version` must resolve on the golden channel.
     /// Default true. Set false only for break-glass legacy tests.
     pub require_golden_digests: bool,
+    pub ceremony: CeremonyLoadOptions,
+    /// When true and ceremony allowlist has active rows, require serving SPKI pin.
+    /// Default true. Empty active[] = bootstrap (not enforced yet).
+    pub require_ceremony_spki: bool,
 }
 
 impl Default for VerifyOptions {
@@ -82,6 +89,8 @@ impl Default for VerifyOptions {
             github_tag: None,
             golden: GoldenLoadOptions::default(),
             require_golden_digests: true,
+            ceremony: CeremonyLoadOptions::default(),
+            require_ceremony_spki: true,
         }
     }
 }
@@ -112,6 +121,8 @@ pub fn verify_openapi_edge(opts: VerifyOptions) -> Result<AttestationVerdict> {
         opts.skip_session_spki,
         &opts.golden,
         opts.require_golden_digests,
+        &opts.ceremony,
+        opts.require_ceremony_spki,
     )
 }
 
@@ -185,6 +196,8 @@ fn finish_verify(
     skip_session_spki: bool,
     golden_opts: &GoldenLoadOptions,
     require_golden_digests: bool,
+    ceremony_opts: &CeremonyLoadOptions,
+    require_ceremony_spki: bool,
 ) -> Result<AttestationVerdict> {
     let response = &outcome.response;
     let verified_manifest = &trust.manifest;
@@ -233,6 +246,29 @@ fn finish_verify(
     } else if require_golden_digests {
         // Transitional: allow legacy rows without golden_version (embedded measurement only).
         golden_version = None;
+    }
+
+    if require_ceremony_spki {
+        let ceremony = load_ceremony_allowlist(ceremony_opts)?;
+        if ceremony_pin_required(&ceremony.manifest) {
+            let host_ok = ceremony
+                .manifest
+                .hostnames
+                .iter()
+                .any(|h| h.eq_ignore_ascii_case(hostname));
+            if !host_ok {
+                return Err(AttestError::Policy(format!(
+                    "hostname {hostname} not on TLS ceremony allowlist"
+                )));
+            }
+            if !spki_on_ceremony_allowlist(&ceremony.manifest, &response.edge.tls_cert_spki_sha256)
+            {
+                return Err(AttestError::Policy(format!(
+                    "serving SPKI {} not on TLS ceremony allowlist (publish after key ceremony)",
+                    response.edge.tls_cert_spki_sha256
+                )));
+            }
+        }
     }
 
     cross_check_code_hash_against_sha256sums(

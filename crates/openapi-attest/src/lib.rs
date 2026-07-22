@@ -8,6 +8,7 @@
 //!
 //! Live challenge is evidence only. See TeeChat `docs/design/golden-digests-publish.md`.
 
+pub mod ceremony;
 pub mod challenge_client;
 pub mod error;
 pub mod github_release;

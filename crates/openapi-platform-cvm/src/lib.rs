@@ -13,6 +13,7 @@ mod seal_sync;
 mod snp_report;
 mod tls;
 mod tls_ceremony;
+mod tls_key_policy;
 mod upstream;
 
 pub use attest::CvmAttestationPlatform;
@@ -37,5 +38,9 @@ pub use tls_ceremony::{
     acme_live_dir, assert_no_plaintext_privkey_on_disk, assert_prod_ceremony_policy,
     discover_acme_privkey_paths, install_cert_chain, seal_from_acme_live, shred_path,
     CeremonyError, TlsCeremonyPaths,
+};
+pub use tls_key_policy::{
+    read_tls_key_policy, read_tls_key_policy_from, resolve_tls_key_policy_for_profile,
+    TlsKeyPolicy, TLS_KEY_POLICY_PATH,
 };
 pub use upstream::UreqUpstream;

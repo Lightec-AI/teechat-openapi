@@ -65,6 +65,9 @@ pub struct GoldenBackend {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GoldenRelease {
     pub golden_version: String,
+    /// OpenAPI: `key_ceremony` | `seal_sync` — must match baked `/etc/tls_key_policy`.
+    #[serde(default)]
+    pub tls_key_policy: Option<String>,
     #[serde(default)]
     pub vehicle: Option<String>,
     #[serde(default)]
@@ -316,8 +319,7 @@ mod tests {
         .unwrap();
         let wrong = Measurement::LaunchDigest {
             launch_digest: "cc".into(),
-            image_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                .into(),
+            image_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
         };
         assert!(!measurement_matches_golden(g, &wrong));
         assert!(find_golden_release(&m, "openapi", "sev-snp-cvm", "no-such-pin").is_err());

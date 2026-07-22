@@ -7,6 +7,7 @@
 //! Primary trust: GitHub Releases. teechat.ai is a network fallback only.
 
 use anyhow::{bail, Context, Result};
+use openapi_attest::ceremony::CeremonyLoadOptions;
 use openapi_attest::golden::GoldenLoadOptions;
 use openapi_attest::{
     verify_openapi_edge, VerifyOptions, DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO,
@@ -35,6 +36,8 @@ fn main() -> Result<()> {
             let mut github_tag = None;
             let mut golden = GoldenLoadOptions::default();
             let mut require_golden = true;
+            let mut ceremony = CeremonyLoadOptions::default();
+            let mut require_ceremony = true;
             let mut i = 0;
             while i < args.len() {
                 match args[i].as_str() {
@@ -96,6 +99,25 @@ fn main() -> Result<()> {
                     }
                     "--prefer-golden-www" => golden.prefer_www = true,
                     "--skip-golden-digests" => require_golden = false,
+                    "--ceremony-manifest-url" => {
+                        i += 1;
+                        ceremony.www_url = Some(
+                            args.get(i)
+                                .context("--ceremony-manifest-url value")?
+                                .clone(),
+                        );
+                    }
+                    "--ceremony-manifest" => {
+                        i += 1;
+                        ceremony.manifest_path =
+                            Some(args.get(i).context("--ceremony-manifest value")?.clone());
+                    }
+                    "--ceremony-sig" => {
+                        i += 1;
+                        ceremony.manifest_sig_path =
+                            Some(args.get(i).context("--ceremony-sig value")?.clone());
+                    }
+                    "--skip-ceremony-spki" => require_ceremony = false,
                     other if !other.starts_with('-') => endpoint = other.to_string(),
                     other => bail!("unknown flag {other}"),
                 }
@@ -113,6 +135,8 @@ fn main() -> Result<()> {
                 github_tag,
                 golden,
                 require_golden_digests: require_golden,
+                ceremony,
+                require_ceremony_spki: require_ceremony,
             })
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             if verdict.trust_source == "teechat_fallback" && !verdict.trust_fallback_tip.is_empty()
@@ -166,6 +190,9 @@ Flags:
   --golden-manifest / --golden-sig   local signed golden digests
   --prefer-golden-www    skip golden GitHub; use www (or --golden-manifest-url)
   --skip-golden-digests  break-glass: do not require golden channel
+  --ceremony-manifest-url / --ceremony-manifest / --ceremony-sig
+                         TLS ceremony SPKI allowlist (www by default)
+  --skip-ceremony-spki   break-glass: skip SPKI pin (empty active[] already skips)
   --skip-session-spki    Monitors may omit peer SPKI bind (not recommended)
 
 Challenge from the edge is evidence only — not the allowlist trust root.

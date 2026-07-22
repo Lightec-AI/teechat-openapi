@@ -19,8 +19,8 @@ use attested_mtls_seal_sync::{
     ServingIdentity, StderrAudit, SyncOutcome,
 };
 use base64::Engine as _;
-use openapi_attest::verify::{verify_openapi_edge, VerifyOptions};
 use openapi_attest::golden::GoldenLoadOptions;
+use openapi_attest::verify::{verify_openapi_edge, VerifyOptions};
 use openapi_platform::{load_edge_profile, Sealer, REPORT_DATA_LEN};
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
@@ -199,7 +199,10 @@ impl SplitTrustChallengeGate {
 }
 
 impl PeerChallengeGate for SplitTrustChallengeGate {
-    fn verify_peer_challenge(&self, challenge_base_url: &str) -> attested_mtls_seal_sync::Result<()> {
+    fn verify_peer_challenge(
+        &self,
+        challenge_base_url: &str,
+    ) -> attested_mtls_seal_sync::Result<()> {
         let mut opts = self.verify_opts_template.clone();
         opts.endpoint = challenge_base_url.trim_end_matches('/').to_string();
         match verify_openapi_edge(opts) {
@@ -469,6 +472,23 @@ pub fn maybe_start_seal_sync(
         return Ok(());
     }
     cfg.validate_for_profile()?;
+
+    let prod = openapi_platform::load_edge_profile().is_prod();
+    let key_policy = crate::tls_key_policy::resolve_tls_key_policy_for_profile(prod)
+        .map_err(anyhow::Error::msg)?;
+    match key_policy {
+        crate::tls_key_policy::TlsKeyPolicy::KeyCeremony => {
+            if cfg.peer.is_some() {
+                anyhow::bail!(
+                    "tls_key_policy=key_ceremony forbids OPENAPI_SEAL_SYNC_PEER (import); \
+                     export listen only"
+                );
+            }
+        }
+        crate::tls_key_policy::TlsKeyPolicy::SealSync => {
+            // Import peer is the fleet path; listen-only (export) is OK after aligned.
+        }
+    }
 
     let cert_pem = fs::read_to_string(cert_path)?;
     let measurement =

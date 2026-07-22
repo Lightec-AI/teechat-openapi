@@ -119,7 +119,7 @@ pub fn verify_manifest_signature(bytes: &[u8], sig_hex: &str, key: &VerifyingKey
         .map_err(|_| AttestError::Manifest("Ed25519 signature invalid".into()))
 }
 
-fn parse_rfc3339_secs(s: &str) -> Result<u64> {
+pub(crate) fn parse_rfc3339_secs(s: &str) -> Result<u64> {
     // Minimal parser: use chrono-less approach via `httpdate` alternative —
     // accept `YYYY-MM-DDTHH:MM:SS(.mmm)Z` only.
     let s = s.trim();

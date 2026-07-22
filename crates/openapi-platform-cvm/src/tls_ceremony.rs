@@ -80,6 +80,14 @@ pub fn assert_prod_ceremony_policy() -> Result<(), CeremonyError> {
             "TLS ceremony requires OPENAPI_PROFILE=prod".into(),
         ));
     }
+    let key_policy = crate::tls_key_policy::resolve_tls_key_policy_for_profile(true)
+        .map_err(CeremonyError::Policy)?;
+    if key_policy != crate::tls_key_policy::TlsKeyPolicy::KeyCeremony {
+        return Err(CeremonyError::Policy(format!(
+            "TLS generate/ACME ceremony requires /etc/tls_key_policy=key_ceremony (got {})",
+            key_policy.as_str()
+        )));
+    }
     if std::env::var("OPENAPI_TLS_KEY_PATH")
         .ok()
         .filter(|s| !s.is_empty())
@@ -369,9 +377,20 @@ mod tests {
         });
     }
 
+    fn write_test_key_ceremony_policy() -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "teechat-tls-key-policy-test-{}",
+            std::process::id()
+        ));
+        fs::write(&p, "key_ceremony\n").unwrap();
+        env::set_var("OPENAPI_TLS_KEY_POLICY_PATH", &p);
+        p
+    }
+
     #[test]
     fn assert_prod_ceremony_rejects_plaintext_key_env() {
         with_env(|| {
+            let _pol = write_test_key_ceremony_policy();
             env::set_var("OPENAPI_PROFILE", "prod");
             env::set_var("OPENAPI_TLS_KEY_PATH", "/etc/key.pem");
             assert!(assert_prod_ceremony_policy().is_err());
@@ -381,6 +400,7 @@ mod tests {
     #[test]
     fn assert_prod_ceremony_rejects_host_seal_root() {
         with_env(|| {
+            let _pol = write_test_key_ceremony_policy();
             env::set_var("OPENAPI_PROFILE", "prod");
             env::set_var("OPENAPI_SEAL_ROOT_HEX", "aa".repeat(32));
             assert!(assert_prod_ceremony_policy().is_err());
@@ -390,6 +410,7 @@ mod tests {
     #[test]
     fn assert_prod_ceremony_rejects_attested_launch_override() {
         with_env(|| {
+            let _pol = write_test_key_ceremony_policy();
             env::set_var("OPENAPI_PROFILE", "prod");
             env::set_var("OPENAPI_ATTESTED_LAUNCH_DIGEST", "a".repeat(64));
             let err = assert_prod_ceremony_policy().unwrap_err();
@@ -397,6 +418,21 @@ mod tests {
                 err.to_string().contains("OPENAPI_ATTESTED_LAUNCH_DIGEST"),
                 "got: {err}"
             );
+        });
+    }
+
+    #[test]
+    fn assert_prod_ceremony_rejects_seal_sync_policy() {
+        with_env(|| {
+            let p = std::env::temp_dir().join(format!(
+                "teechat-tls-key-policy-sync-{}",
+                std::process::id()
+            ));
+            fs::write(&p, "seal_sync\n").unwrap();
+            env::set_var("OPENAPI_TLS_KEY_POLICY_PATH", &p);
+            env::set_var("OPENAPI_PROFILE", "prod");
+            let err = assert_prod_ceremony_policy().unwrap_err();
+            assert!(err.to_string().contains("key_ceremony"), "got: {err}");
         });
     }
 
