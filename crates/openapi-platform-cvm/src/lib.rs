@@ -18,7 +18,9 @@ mod upstream;
 
 pub use attest::CvmAttestationPlatform;
 pub use edge_upstream::EdgeUpstream;
-pub use env::{load_edge_env, write_dev_catalog, EdgeEnv, OpenApiAuthMode};
+pub use env::{load_edge_env, EdgeEnv};
+#[cfg(feature = "catalog-auth")]
+pub use env::{write_dev_catalog, OpenApiAuthMode};
 pub use gateway_ope_api::{
     probe_gateway_ope_api_at_startup, require_gateway_ope_api_healthy, DispatchRequest,
     DispatchResponse, GatewayOpeApiClient, GatewayOpeApiConfig, GatewayOpeApiError, HealthResponse,

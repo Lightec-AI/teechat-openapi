@@ -305,6 +305,7 @@ mod tests {
                 code_hash: hex32(0x11),
                 measurement: Measurement::Mrenclave { value: hex32(0xaa) },
                 tls_cert_spki_sha256: hex32(0xbb),
+                policy_hash: None,
             };
             let rd = openapi_platform::build_report_data_v1(nonce, &edge)?;
             let mut report = vec![0u8; 320 + REPORT_DATA_LEN];

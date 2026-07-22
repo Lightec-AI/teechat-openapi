@@ -59,7 +59,8 @@ Schema: [`manifest/schema/attestation-challenge-request.v1.json`](../manifest/sc
       "kind": "mrenclave",
       "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     },
-    "tls_cert_spki_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    "tls_cert_spki_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "policy_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   },
   "challenge_nonce_b64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   "quote_format": "sgx_dcap_ecdsa",
@@ -75,6 +76,7 @@ Schema: [`manifest/schema/attestation-challenge-request.v1.json`](../manifest/sc
 | `edge.code_hash` | string | **64** lowercase hex chars = SHA-256 of the measured software artifact (as published). |
 | `edge.measurement` | object | Discriminated by `kind` (see below). |
 | `edge.tls_cert_spki_sha256` | string | **64** lowercase hex = SHA-256(DER **SubjectPublicKeyInfo** of the **serving** TLS leaf). |
+| `edge.policy_hash` | string (optional) | **64** lowercase hex = SHA-256 of canonical `EdgeRuntimePolicy` JSON (auth/upstream/L0/OPE URLs + Family B verify key; **no** secrets/certs). When the app allowlist row pins `policy_hash`, verifiers require equality. **Not** included in `report_data` v1 preimage. |
 | `challenge_nonce_b64` | string | Echo of the request nonce (same encoding). Must equal the client’s nonce. |
 | `quote_format` | string | See §2.3. |
 | `quote_b64` | string | **Standard** Base64 (with padding allowed) of the raw quote/report bytes. |

@@ -69,6 +69,7 @@ fn rejects_unknown_measurement() {
             image_digest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
         },
         QuoteFormat::SnpReport,
+        None,
     )
     .unwrap_err();
     assert!(err.to_string().contains("allowlist"), "{err}");
@@ -89,6 +90,7 @@ fn accepts_allowlisted_release() {
             image_digest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
         },
         QuoteFormat::SnpReport,
+        None,
     )
     .unwrap();
 }

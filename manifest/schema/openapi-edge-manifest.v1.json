@@ -97,6 +97,11 @@
           "minLength": 1,
           "description": "Pin into teechat-golden-digests allowlist. TEE digests are authoritative there; measurement on this row is transitional."
         },
+        "policy_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of EdgeRuntimePolicy JSON (auth URLs + Family B verify key + upstream/OPE). Challenge edge.policy_hash must match when set."
+        },
         "quote_formats": {
           "type": "array",
           "minItems": 1,

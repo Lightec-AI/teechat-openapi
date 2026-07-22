@@ -4,6 +4,7 @@
 //! Attestation challenge binding: `docs/attestation-challenge.md`.
 
 mod challenge;
+mod edge_policy;
 mod profile;
 mod seal;
 pub mod tls;
@@ -17,6 +18,9 @@ pub use challenge::{
     ChallengeBindError, QuoteFormat, CHALLENGE_MAGIC, CHALLENGE_NONCE_LEN, REPORT_DATA_LEN,
     REPORT_DATA_VERSION, SCHEMA_VERSION, SGX_DCAP_QUOTE3_HEADER_LEN, SGX_DCAP_REPORT_DATA_OFFSET,
     SGX_REPORT_DATA_OFFSET, SNP_REPORT_DATA_OFFSET,
+};
+pub use edge_policy::{
+    edge_runtime_policy_from_parts, EdgeRuntimePolicy,
 };
 pub use profile::{
     assert_dev_host_seal_tool, load_edge_profile, validate_tls_key_policy, EdgeProfile,
@@ -50,6 +54,9 @@ pub struct EdgeIdentity {
     pub code_hash: String,
     pub measurement: Measurement,
     pub tls_cert_spki_sha256: String,
+    /// SHA-256 of [`EdgeRuntimePolicy`] JSON (allowlist pin). Not in `report_data` v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_hash: Option<String>,
 }
 
 #[derive(Debug, Error)]

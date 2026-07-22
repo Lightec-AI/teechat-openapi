@@ -211,8 +211,15 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
         std::env::var(name).ok().filter(|s| !s.is_empty())
     }
 
+    // Prefer remote; catalog remains for SGX lab until CVM-style `catalog-auth` feature lands.
     let auth_mode =
-        OpenApiAuthMode::parse(&opt("OPENAPI_AUTH_MODE").unwrap_or_else(|| "catalog".into()));
+        OpenApiAuthMode::parse(&opt("OPENAPI_AUTH_MODE").unwrap_or_else(|| "remote".into()));
+    if load_edge_profile().is_prod() && auth_mode == OpenApiAuthMode::Catalog {
+        return Err(EnvError::Invalid(
+            "OPENAPI_AUTH_MODE",
+            "catalog forbidden when OPENAPI_PROFILE=prod".into(),
+        ));
+    }
     let catalog_json = opt("OPENAPI_CATALOG_JSON");
     let catalog_path = opt("OPENAPI_CATALOG_PATH").unwrap_or_default();
     if auth_mode == OpenApiAuthMode::Catalog && catalog_json.is_none() && catalog_path.is_empty() {
@@ -324,13 +331,19 @@ pub fn write_dev_catalog(
 mod tests {
     use super::*;
     use std::env;
+    use std::sync::Mutex;
+
+    static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn sgx_env_requires_mrenclave() {
+        let _g = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        env::remove_var("OPENAPI_MRENCLAVE");
         env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:8000");
         env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
         env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
         env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
+        env::set_var("OPENAPI_AUTH_MODE", "remote");
         assert!(load_sgx_edge_env().is_err());
         env::set_var("OPENAPI_MRENCLAVE", "abc123");
         let edge = load_sgx_edge_env().unwrap();
@@ -340,15 +353,18 @@ mod tests {
         env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
         env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
         env::remove_var("OPENAPI_MRENCLAVE");
+        env::remove_var("OPENAPI_AUTH_MODE");
     }
 
     #[test]
     fn sgx_env_loads_per_ip_limits() {
+        let _g = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:8000");
         env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
         env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
         env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
         env::set_var("OPENAPI_MRENCLAVE", "abc123");
+        env::set_var("OPENAPI_AUTH_MODE", "remote");
         env::remove_var("OPENAPI_IP_MAX_CONNS");
         env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
 
@@ -369,6 +385,7 @@ mod tests {
         env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
         env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
         env::remove_var("OPENAPI_MRENCLAVE");
+        env::remove_var("OPENAPI_AUTH_MODE");
         env::remove_var("OPENAPI_IP_MAX_CONNS");
         env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
     }

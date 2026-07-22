@@ -32,6 +32,11 @@ ope-e2e = { workspace = true }
 ope-envelope = { workspace = true }
 webpki-roots = "0.26"
 
+[features]
+default = []
+# Lab/dev file-catalog auth (`OPENAPI_AUTH_MODE=catalog`). Prod builds omit this.
+catalog-auth = []
+
 [dev-dependencies]
 rand = { workspace = true }
 rcgen = "0.13"

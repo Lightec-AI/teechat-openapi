@@ -33,6 +33,7 @@ impl SgxAttestationPlatform {
                 value: mrenclave.to_string(),
             },
             tls_cert_spki_sha256: tls_spki_sha256.to_string(),
+            policy_hash: None,
         })
     }
 

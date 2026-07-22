@@ -21,6 +21,7 @@ impl CvmAttestationPlatform {
         launch_digest: &str,
         image_digest: &str,
         tls_spki_sha256: &str,
+        policy_hash: Option<String>,
     ) -> Self {
         Self::new(EdgeIdentity {
             build_version: build_version.to_string(),
@@ -30,6 +31,7 @@ impl CvmAttestationPlatform {
                 image_digest: image_digest.to_string(),
             },
             tls_cert_spki_sha256: tls_spki_sha256.to_string(),
+            policy_hash,
         })
     }
 
@@ -91,6 +93,7 @@ mod tests {
             &hex32(0xcc),
             &hex32(0xdd),
             &hex32(0xbb),
+            None,
         )
     }
 

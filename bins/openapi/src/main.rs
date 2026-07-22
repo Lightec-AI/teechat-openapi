@@ -51,12 +51,15 @@ fn main() -> anyhow::Result<()> {
         .context("seal-sync")?;
     }
 
+    let policy_hash = env.policy_hash_hex();
+    info!(%policy_hash, "edge runtime policy_hash");
     let platform = CvmAttestationPlatform::from_env(
         &env.build_version,
         &env.code_hash,
         &env.launch_digest,
         &env.image_digest,
         &tls_spki,
+        Some(policy_hash),
     );
 
     let authenticator = env.edge_authenticator().context("auth")?;

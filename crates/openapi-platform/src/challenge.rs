@@ -134,11 +134,14 @@ pub fn canonicalize_edge_identity(edge: &EdgeIdentity) -> Result<EdgeIdentity, C
             image_digest: canonicalize_digest_field(image_digest),
         },
     };
+    let policy_hash = edge.policy_hash.as_ref().map(|h| canonicalize_digest_field(h));
     Ok(EdgeIdentity {
         build_version: edge.build_version.clone(),
         code_hash,
         measurement,
         tls_cert_spki_sha256,
+        // Not bound into report_data v1 preimage — challenge evidence + allowlist only.
+        policy_hash,
     })
 }
 
@@ -353,6 +356,7 @@ mod tests {
             code_hash: hex32(0x11),
             measurement: Measurement::Mrenclave { value: hex32(0xaa) },
             tls_cert_spki_sha256: hex32(0xbb),
+            policy_hash: None,
         }
     }
 
@@ -365,6 +369,7 @@ mod tests {
                 image_digest: hex32(0xdd),
             },
             tls_cert_spki_sha256: hex32(0xbb),
+            policy_hash: None,
         }
     }
 

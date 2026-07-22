@@ -70,6 +70,10 @@ pub struct EdgeRelease {
     /// transitional `measurement` alone). See golden-digests-publish.md.
     #[serde(default)]
     pub golden_version: Option<String>,
+    /// SHA-256 of edge runtime policy JSON (`EdgeRuntimePolicy`). When set,
+    /// challenge `edge.policy_hash` must match. Transitional rows omit this.
+    #[serde(default)]
+    pub policy_hash: Option<String>,
     pub measurement: Measurement,
     #[serde(default)]
     pub notes: Option<String>,
@@ -272,6 +276,7 @@ pub fn find_matching_release<'a>(
     code_hash: &str,
     measurement: &Measurement,
     quote_format: QuoteFormat,
+    policy_hash: Option<&str>,
 ) -> Result<&'a EdgeRelease> {
     let host = hostname.to_ascii_lowercase();
     let region = manifest
@@ -297,6 +302,14 @@ pub fn find_matching_release<'a>(
         if !rel.quote_formats.iter().any(|f| f == fmt) {
             continue;
         }
+        if let Some(want) = rel.policy_hash.as_deref() {
+            let Some(got) = policy_hash else {
+                continue;
+            };
+            if !want.eq_ignore_ascii_case(got) {
+                continue;
+            }
+        }
         if let Some(retired_at) = &rel.retired_at {
             let retired = parse_rfc3339_secs(retired_at)?;
             let grace = manifest.retired_grace_period_days.saturating_mul(86400);
@@ -307,7 +320,7 @@ pub fn find_matching_release<'a>(
         return Ok(rel);
     }
     Err(AttestError::Policy(
-        "edge measurement/build/code_hash not on allowlist for this hostname".into(),
+        "edge measurement/build/code_hash/policy_hash not on allowlist for this hostname".into(),
     ))
 }
 

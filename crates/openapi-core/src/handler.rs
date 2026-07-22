@@ -691,6 +691,7 @@ mod tests {
                     image_digest: hex32(0xdd),
                 },
                 tls_cert_spki_sha256: hex32(0xbb),
+                policy_hash: None,
             };
             let rd = openapi_platform::build_report_data_v1(nonce, &edge)?;
             let mut report = vec![0u8; SNP_REPORT_DATA_OFFSET + REPORT_DATA_LEN];

@@ -35,6 +35,8 @@ pub struct AttestationVerdict {
     pub measurement: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub golden_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_hash: Option<String>,
     pub tls_cert_spki_sha256: String,
     pub peer_spki_sha256: String,
     /// `spki` (contract) or `cert_der` (legacy edge that hashed the whole leaf).
@@ -228,6 +230,7 @@ fn finish_verify(
         &response.edge.code_hash,
         &response.edge.measurement,
         response.quote_format,
+        response.edge.policy_hash.as_deref(),
     )?;
 
     let mut golden_version = matched.golden_version.clone();
@@ -321,6 +324,7 @@ fn finish_verify(
         code_hash: response.edge.code_hash.clone(),
         measurement,
         golden_version,
+        policy_hash: response.edge.policy_hash.clone(),
         tls_cert_spki_sha256: response.edge.tls_cert_spki_sha256.clone(),
         peer_spki_sha256: peer_spki,
         session_bind_mode,
