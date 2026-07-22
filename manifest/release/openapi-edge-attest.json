@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-22T08:33:25.000Z",
-  "epoch": 9,
+  "published_at": "2026-07-22T09:21:14.000Z",
+  "epoch": 10,
   "not_after": "2027-07-21T01:15:00.000Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -18,6 +18,19 @@
         "openapi.teechat.ai"
       ],
       "active": [
+        {
+          "build_version": "0.5.4",
+          "code_hash": "ad55a2bebee70b38b2b171c02081aeb1d87a4115709a1d5bb4e5b211489f4584",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
+            "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
+          },
+          "notes": "0.5.4: Family B verify includes policy.max_in_flight (matches L0 authorize). Overlap with 0.5.2 during install."
+        },
         {
           "build_version": "0.5.2",
           "code_hash": "39c687b89a420586fc5d5c95175f697293db05ca9abb8a1445b8066fd37f7c08",
