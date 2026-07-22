@@ -305,6 +305,7 @@ mod hw {
             nonce_b64: URL_SAFE_NO_PAD.encode(nonce_bytes),
             ciphertext_b64: URL_SAFE_NO_PAD.encode(ciphertext),
             seal_data_b64: Some(URL_SAFE_NO_PAD.encode(seal_data_json)),
+            amd_sp: None,
         })
     }
 

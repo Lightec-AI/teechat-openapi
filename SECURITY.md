@@ -11,25 +11,28 @@ Please include reproduction steps, affected commit or release, and impact assess
 
 ## Edge TLS key sealing
 
-Production edge nodes seal the TLS private key to a TEE measurement. Operators set **`OPENAPI_PROFILE=prod`**.
+Production edge nodes seal the TLS private key inside the TEE. Operators set **`OPENAPI_PROFILE=prod`**.
 
 | `seal_version` | When | Mechanism |
 |----------------|------|-----------|
-| **1** | Dev, CVM staging | HKDF + AES-256-GCM bound to a measurement label in the sealed JSON blob |
+| **1** | Dev / CVM legacy | Software HKDF + AES-256-GCM bound to a measurement label (not hardware-bound) |
 | **2** | SGX (Fortanix EDP) | Intel **EGETKEY** / MRENCLAVE sealing ([Fortanix docs](https://edp.fortanix.com/docs/examples/sealing/)) |
+| **3** | CVM prod (SEV-SNP) | **AMD Secure Processor** `SNP_GET_DERIVED_KEY` (`MSG_KEY_REQ`) + AES-256-GCM — key mixes guest **measurement** and **guest policy**; a non-identical CVM cannot unseal |
 
 ### Production rules (`OPENAPI_PROFILE=prod`)
 
 - **`OPENAPI_TLS_SEALED_KEY_PATH`** required — no plaintext private key on disk.
 - **`OPENAPI_TLS_CERT_PATH`** required — successful TLS acceptor (TLS-001); plain TCP listen forbidden in prod.
 - **`OPENAPI_TLS_KEY_PATH`** forbidden.
-- **`OPENAPI_SEAL_ROOT_HEX`** forbidden — seal root is derived inside the TEE, not supplied by the host.
+- **`OPENAPI_SEAL_ROOT_HEX`** forbidden — seal root is derived inside the TEE (AMD-SP or EGETKEY), not supplied by the host.
 - **`OPENAPI_ATTESTED_LAUNCH_DIGEST`** forbidden — CVM dev/CI hook only; prod must use `snpguest` / `/dev/sev-guest` (OPS-001).
+- **`OPENAPI_AMD_SP_DERIVED_KEY_HEX`** forbidden — CVM CI hook only; prod must call AMD-SP via `/dev/sev-guest` (OPS-003).
 - Host-side **`seal-tls-key`** / **`seal-tls-key-sgx`** forbidden — use in-TEE ceremony (OPS-002).
+- **CVM ACME:** use in-guest **`openapi-acme`** (instant-acme) + `issue-and-seal-tls.sh` — not host/guest **certbot** for openapi TLS keys.
 - **`OPENAPI_CHALLENGE_BENCH_TOKEN`** forbidden — lab-only bypass of challenge RPM / in-flight caps (BENCH-001).
 - **`OPENAPI_PROXY_MODE=transparent`** forbidden — prod is **allowlist-only** for `/v1/*` (PROXY-001 / ROUTE-001).
 - **SGX:** runtime **MRENCLAVE** from enclave report must match the sealed blob (fail closed).
-- **CVM:** **`OPENAPI_LAUNCH_DIGEST`** must match the guest-attested launch digest (`snpguest` / `/dev/sev-guest`).
+- **CVM:** **`OPENAPI_LAUNCH_DIGEST`** must match the guest-attested launch digest; prod seals/unseals with **`seal_version` 3** (AMD-SP).
 
 ### Sealed blob format
 

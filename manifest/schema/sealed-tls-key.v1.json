@@ -7,8 +7,8 @@
   "properties": {
     "seal_version": {
       "type": "integer",
-      "enum": [1, 2],
-      "description": "1 = HKDF measurement-labeled (CVM MVP); 2 = SGX EGETKEY (Fortanix SealData)"
+      "enum": [1, 2, 3],
+      "description": "1 = HKDF measurement-labeled (dev/CVM legacy); 2 = SGX EGETKEY (Fortanix SealData); 3 = AMD-SP SNP_GET_DERIVED_KEY (CVM prod)"
     },
     "measurement": {
       "oneOf": [
@@ -38,6 +38,31 @@
     "seal_data_b64": {
       "type": "string",
       "description": "URL-safe base64 Fortanix SealData JSON; required when seal_version is 2"
+    },
+    "amd_sp": {
+      "type": "object",
+      "description": "AMD-SP MSG_KEY_REQ parameters; required when seal_version is 3",
+      "required": [
+        "root_key",
+        "guest_field_select",
+        "vmpl",
+        "guest_svn",
+        "tcb_version",
+        "msg_version"
+      ],
+      "properties": {
+        "root_key": { "type": "string", "enum": ["vcek", "vmrk"] },
+        "guest_field_select": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "GuestFieldSelect bits (TeeChat default 0x9 = GUEST_POLICY|MEASUREMENT)"
+        },
+        "vmpl": { "type": "integer", "minimum": 0 },
+        "guest_svn": { "type": "integer", "minimum": 0 },
+        "tcb_version": { "type": "integer", "minimum": 0 },
+        "msg_version": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,
@@ -45,6 +70,10 @@
     {
       "if": { "properties": { "seal_version": { "const": 2 } } },
       "then": { "required": ["seal_data_b64"] }
+    },
+    {
+      "if": { "properties": { "seal_version": { "const": 3 } } },
+      "then": { "required": ["amd_sp"] }
     }
   ]
 }

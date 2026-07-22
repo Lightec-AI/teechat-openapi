@@ -1,3 +1,4 @@
+mod amd_sp_key;
 mod attest;
 mod edge_upstream;
 mod env;

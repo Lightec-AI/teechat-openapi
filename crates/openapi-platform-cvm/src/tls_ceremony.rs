@@ -108,6 +108,16 @@ pub fn assert_prod_ceremony_policy() -> Result<(), CeremonyError> {
             "OPENAPI_ATTESTED_LAUNCH_DIGEST is forbidden during prod ceremony (OPS-001)".into(),
         ));
     }
+    // OPS-003: AMD-SP derived-key inject must not be present on prod ceremony units.
+    if std::env::var("OPENAPI_AMD_SP_DERIVED_KEY_HEX")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .is_some()
+    {
+        return Err(CeremonyError::Policy(
+            "OPENAPI_AMD_SP_DERIVED_KEY_HEX is forbidden during prod ceremony (OPS-003)".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -276,10 +286,11 @@ pub fn assert_no_plaintext_privkey_on_disk(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::amd_sp_key::{set_test_amd_sp_derived_key, AMD_SP_KEY_TEST_LOCK};
     use crate::guest_digest::{
         set_test_attested_launch_digest, ATTESTED_ENV_TEST_LOCK,
     };
-    use openapi_platform::Sealer;
+    use openapi_platform::{Sealer, SEAL_VERSION_SNP_AMD_SP};
     use std::env;
     use std::sync::Mutex;
 
@@ -288,19 +299,24 @@ mod tests {
     fn with_env(f: impl FnOnce()) {
         let _g = ENV_LOCK.lock().unwrap();
         let _a = ATTESTED_ENV_TEST_LOCK.lock().unwrap();
+        let _k = AMD_SP_KEY_TEST_LOCK.lock().unwrap();
         env::remove_var("OPENAPI_PROFILE");
         env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
         env::remove_var("OPENAPI_TLS_KEY_PATH");
         env::remove_var("OPENAPI_SEAL_ROOT_HEX");
         env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
+        env::remove_var("OPENAPI_AMD_SP_DERIVED_KEY_HEX");
         set_test_attested_launch_digest(None);
+        set_test_amd_sp_derived_key(None);
         f();
         env::remove_var("OPENAPI_PROFILE");
         env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
         env::remove_var("OPENAPI_TLS_KEY_PATH");
         env::remove_var("OPENAPI_SEAL_ROOT_HEX");
         env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
+        env::remove_var("OPENAPI_AMD_SP_DERIVED_KEY_HEX");
         set_test_attested_launch_digest(None);
+        set_test_amd_sp_derived_key(None);
     }
 
     fn write_pem(dir: &Path, name: &str, body: &str) {
@@ -433,8 +449,9 @@ mod tests {
         with_env(|| {
             let launch = "a".repeat(64);
             env::set_var("OPENAPI_PROFILE", "prod");
-            // OPS-001: prod forbids env override — use test inject for hardware.
+            // OPS-001 / OPS-003: prod forbids env overrides — use test injects.
             set_test_attested_launch_digest(Some(launch.clone()));
+            set_test_amd_sp_derived_key(Some([0x5Eu8; 32]));
 
             let dir = std::env::temp_dir().join(format!("ceremony-seal-{}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
@@ -455,6 +472,11 @@ mod tests {
             assert!(paths.sealed_key_path.is_file());
             assert!(paths.cert_path.is_file());
             assert_no_plaintext_privkey_on_disk(&le, "openapi.teechat.ai", &[]).unwrap();
+
+            let raw = fs::read_to_string(&paths.sealed_key_path).unwrap();
+            let blob: openapi_platform::SealedTlsKeyBlob = serde_json::from_str(&raw).unwrap();
+            assert_eq!(blob.seal_version, SEAL_VERSION_SNP_AMD_SP);
+            assert!(blob.amd_sp.is_some());
 
             let sealer = CvmSealer::with_profile(&launch, "image-id", true);
             let plain = sealer

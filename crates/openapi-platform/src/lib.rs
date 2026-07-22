@@ -24,7 +24,9 @@ pub use profile::{
 };
 pub use seal::{
     derive_cvm_seal_root, derive_seal_key, measurement_binding_label, seal_tls_private_key,
-    unseal_tls_private_key, SealedTlsKeyBlob, SEAL_AAD, SEAL_VERSION, SEAL_VERSION_SGX_EGETKEY,
+    seal_tls_private_key_amd_sp, unseal_tls_private_key, unseal_tls_private_key_amd_sp,
+    AmdSpSealMeta, SealedTlsKeyBlob, AMD_SP_GFS_GUEST_POLICY_MEASUREMENT, SEAL_AAD, SEAL_AAD_V3,
+    SEAL_VERSION, SEAL_VERSION_SGX_EGETKEY, SEAL_VERSION_SNP_AMD_SP,
 };
 
 use serde::{Deserialize, Serialize};

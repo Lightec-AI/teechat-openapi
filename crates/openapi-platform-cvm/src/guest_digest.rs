@@ -1,7 +1,9 @@
 //! Guest attested launch digest for CVM sealing policy.
 //!
-//! **Target path:** vTPM guest-seal (see repo `SECURITY.md`).
-//! **Minimum today:** cross-check `OPENAPI_LAUNCH_DIGEST` against SNP attestation.
+//! **Production seal:** AMD-SP `SNP_GET_DERIVED_KEY` (`seal_version` 3) — see
+//! `amd_sp_key` and repo `SECURITY.md`.
+//! **Soft gate:** cross-check `OPENAPI_LAUNCH_DIGEST` against SNP attestation
+//! before seal/unseal (defense in depth alongside hardware key mix-in).
 //!
 //! **OPS-001:** `OPENAPI_ATTESTED_LAUNCH_DIGEST` is a **dev/CI-only** bypass. When
 //! `OPENAPI_PROFILE=prod`, the override is forbidden (fail closed); prod must use
