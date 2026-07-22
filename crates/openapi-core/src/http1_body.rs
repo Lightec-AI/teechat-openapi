@@ -120,7 +120,9 @@ fn read_line<R: Read>(reader: &mut R) -> Result<String, ApiError> {
             .map_err(|e| ApiError::Upstream(e.to_string()))?;
         if n == 0 {
             if line.is_empty() {
-                return Err(ApiError::Upstream("unexpected EOF reading header line".into()));
+                return Err(ApiError::Upstream(
+                    "unexpected EOF reading header line".into(),
+                ));
             }
             break;
         }
@@ -137,7 +139,9 @@ fn read_line<R: Read>(reader: &mut R) -> Result<String, ApiError> {
 }
 
 /// Read status line + headers; returns status, raw headers text, content-type, body framing.
-pub fn read_response_headers<R: Read>(reader: &mut R) -> Result<(u16, String, BodyFraming), ApiError> {
+pub fn read_response_headers<R: Read>(
+    reader: &mut R,
+) -> Result<(u16, String, BodyFraming), ApiError> {
     let mut raw = Vec::new();
     let mut byte = [0u8; 1];
     loop {
@@ -219,13 +223,7 @@ mod tests {
         let mut reader = Cursor::new(b"hello");
         let mut out = Vec::new();
         let mut buf = [0u8; 8];
-        let n = copy_fixed(
-            &mut reader,
-            5,
-            &mut out,
-            &mut buf,
-        )
-        .unwrap();
+        let n = copy_fixed(&mut reader, 5, &mut out, &mut buf).unwrap();
         assert_eq!(n, 5);
         assert_eq!(out, b"hello");
     }
@@ -250,9 +248,6 @@ mod tests {
     #[test]
     fn parse_framing_content_length() {
         let headers = "Content-Length: 42\r\n";
-        assert_eq!(
-            parse_body_framing(headers),
-            BodyFraming::ContentLength(42)
-        );
+        assert_eq!(parse_body_framing(headers), BodyFraming::ContentLength(42));
     }
 }

@@ -65,9 +65,7 @@ pub fn enforce_token_quota(policy: &OpenApiKeyPolicy, body: &[u8]) -> Result<(),
         return Ok(());
     };
     if remaining == 0 {
-        return Err(ApiError::InsufficientQuota(
-            "token quota exhausted".into(),
-        ));
+        return Err(ApiError::InsufficientQuota("token quota exhausted".into()));
     }
     let est = estimate_prompt_tokens(body);
     if est > remaining {

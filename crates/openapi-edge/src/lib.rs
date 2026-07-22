@@ -207,7 +207,10 @@ where
                 client_ip.as_deref(),
                 idle_socket.as_ref(),
             ),
-            None => warn!(ip = client_ip.as_deref().unwrap_or("unknown"), "tls accept failed"),
+            None => warn!(
+                ip = client_ip.as_deref().unwrap_or("unknown"),
+                "tls accept failed"
+            ),
         }
     } else {
         // handle_connection acquires the IP conn slot itself (429 on limit).
@@ -461,9 +464,7 @@ mod tests {
             let edge = openapi_platform::EdgeIdentity {
                 build_version: "t".into(),
                 code_hash: hex32(0x11),
-                measurement: Measurement::Mrenclave {
-                    value: hex32(0xaa),
-                },
+                measurement: Measurement::Mrenclave { value: hex32(0xaa) },
                 tls_cert_spki_sha256: hex32(0xbb),
             };
             let rd = openapi_platform::build_report_data_v1(nonce, &edge)?;
@@ -538,9 +539,7 @@ mod tests {
         Builder::new()
             .spawn(move || {
                 let (stream, _) = listener.accept().unwrap();
-                let none_tls: Option<
-                    Arc<fn(TcpStream) -> Option<Box<dyn ReadWriteConn>>>,
-                > = None;
+                let none_tls: Option<Arc<fn(TcpStream) -> Option<Box<dyn ReadWriteConn>>>> = None;
                 respond_429_and_close(stream, &none_tls);
             })
             .unwrap();
@@ -580,10 +579,7 @@ mod tests {
                 let (stream, _) = listener.accept().unwrap();
                 let idle_sock = stream.try_clone().unwrap();
                 apply_idle_timeouts(&stream, Duration::from_secs(1));
-                assert_eq!(
-                    stream.read_timeout().unwrap(),
-                    Some(Duration::from_secs(1))
-                );
+                assert_eq!(stream.read_timeout().unwrap(), Some(Duration::from_secs(1)));
                 let mut owned = stream;
                 serve_connection(&app, &mut owned, None, Some(&idle_sock));
                 assert_eq!(

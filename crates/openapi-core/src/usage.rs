@@ -65,7 +65,8 @@ impl UsageSigner {
             timestamp_ms,
             nonce_b64: nonce_b64.clone(),
         };
-        let payload = serde_json::to_vec(&unsigned).map_err(|e| ApiError::Internal(e.to_string()))?;
+        let payload =
+            serde_json::to_vec(&unsigned).map_err(|e| ApiError::Internal(e.to_string()))?;
         let sig = self.signing_key.sign(&payload);
         Ok(UsageReport {
             report_version: unsigned.report_version,
@@ -79,7 +80,10 @@ impl UsageSigner {
         })
     }
 
-    pub fn verify_report(report: &UsageReport, verify_key: &ed25519_dalek::VerifyingKey) -> Result<(), ApiError> {
+    pub fn verify_report(
+        report: &UsageReport,
+        verify_key: &ed25519_dalek::VerifyingKey,
+    ) -> Result<(), ApiError> {
         let unsigned = UnsignedUsageReport {
             report_version: report.report_version,
             key_id: report.key_id.clone(),
@@ -89,7 +93,8 @@ impl UsageSigner {
             timestamp_ms: report.timestamp_ms,
             nonce_b64: report.nonce_b64.clone(),
         };
-        let payload = serde_json::to_vec(&unsigned).map_err(|e| ApiError::Internal(e.to_string()))?;
+        let payload =
+            serde_json::to_vec(&unsigned).map_err(|e| ApiError::Internal(e.to_string()))?;
         let sig_bytes = hex::decode(&report.signature_hex)
             .map_err(|e| ApiError::Internal(format!("usage sig hex: {e}")))?;
         let signature = ed25519_dalek::Signature::from_slice(&sig_bytes)

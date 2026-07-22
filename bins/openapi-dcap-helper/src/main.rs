@@ -89,8 +89,8 @@ fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let listen = std::env::var("OPENAPI_DCAP_HELPER_LISTEN")
-        .unwrap_or_else(|_| DEFAULT_LISTEN.to_string());
+    let listen =
+        std::env::var("OPENAPI_DCAP_HELPER_LISTEN").unwrap_or_else(|_| DEFAULT_LISTEN.to_string());
 
     let state = QuoteState::new().context("initialize AESM ECDSA quoting")?;
     // Warm QE target info once so cold PCCS failures surface at startup.

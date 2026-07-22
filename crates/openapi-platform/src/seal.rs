@@ -53,9 +53,7 @@ pub fn measurement_binding_label(measurement: &Measurement) -> String {
 
 /// Prod CVM seal root derived inside guest from attested launch + image digests.
 pub fn derive_cvm_seal_root(attested_launch_digest: &str, image_digest: &str) -> [u8; 32] {
-    let binding = format!(
-        "cvm-seal-root|launch:{attested_launch_digest}|image:{image_digest}"
-    );
+    let binding = format!("cvm-seal-root|launch:{attested_launch_digest}|image:{image_digest}");
     derive_seal_key(&binding, None)
 }
 
@@ -101,10 +99,13 @@ pub fn seal_tls_private_key(
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
-        .encrypt(nonce, aes_gcm::aead::Payload {
-            msg: key_pem,
-            aad: &aad_for(&binding),
-        })
+        .encrypt(
+            nonce,
+            aes_gcm::aead::Payload {
+                msg: key_pem,
+                aad: &aad_for(&binding),
+            },
+        )
         .map_err(|e| PlatformError::Seal(format!("encrypt: {e}")))?;
 
     Ok(SealedTlsKeyBlob {
@@ -155,7 +156,9 @@ pub fn unseal_tls_private_key(
     )
 }
 
-fn to_snp_measurement(m: &Measurement) -> Result<attested_mtls_snp_seal::Measurement, PlatformError> {
+fn to_snp_measurement(
+    m: &Measurement,
+) -> Result<attested_mtls_snp_seal::Measurement, PlatformError> {
     match m {
         Measurement::LaunchDigest {
             launch_digest,
@@ -190,10 +193,13 @@ fn from_snp_blob(blob: attested_mtls_snp_seal::SealedTlsKeyBlob) -> SealedTlsKey
     }
 }
 
-fn to_snp_blob(blob: &SealedTlsKeyBlob) -> Result<attested_mtls_snp_seal::SealedTlsKeyBlob, PlatformError> {
-    let amd_sp = blob.amd_sp.clone().ok_or_else(|| {
-        PlatformError::Seal("amd_sp metadata required for seal_version 3".into())
-    })?;
+fn to_snp_blob(
+    blob: &SealedTlsKeyBlob,
+) -> Result<attested_mtls_snp_seal::SealedTlsKeyBlob, PlatformError> {
+    let amd_sp = blob
+        .amd_sp
+        .clone()
+        .ok_or_else(|| PlatformError::Seal("amd_sp metadata required for seal_version 3".into()))?;
     Ok(attested_mtls_snp_seal::SealedTlsKeyBlob {
         seal_version: blob.seal_version,
         measurement: to_snp_measurement(&blob.measurement)?,
@@ -211,13 +217,9 @@ pub fn seal_tls_private_key_amd_sp(
     amd_sp: &AmdSpSealMeta,
 ) -> Result<SealedTlsKeyBlob, PlatformError> {
     let snp_m = to_snp_measurement(measurement)?;
-    let blob = attested_mtls_snp_seal::seal_tls_private_key(
-        &snp_m,
-        key_pem,
-        amd_sp_derived_key,
-        amd_sp,
-    )
-    .map_err(|e| PlatformError::Seal(e.to_string()))?;
+    let blob =
+        attested_mtls_snp_seal::seal_tls_private_key(&snp_m, key_pem, amd_sp_derived_key, amd_sp)
+            .map_err(|e| PlatformError::Seal(e.to_string()))?;
     Ok(from_snp_blob(blob))
 }
 
@@ -268,7 +270,9 @@ fn aes_gcm_decrypt(
             },
         )
         .map_err(|_| {
-            PlatformError::Seal("decrypt failed (wrong measurement, AMD-SP key, or tampered blob)".into())
+            PlatformError::Seal(
+                "decrypt failed (wrong measurement, AMD-SP key, or tampered blob)".into(),
+            )
         })?;
 
     if plaintext.is_empty() {
@@ -295,7 +299,8 @@ mod tests {
         }
     }
 
-    const KEY_PEM: &[u8] = b"-----BEGIN PRIVATE KEY-----\ntest-key-material\n-----END PRIVATE KEY-----\n";
+    const KEY_PEM: &[u8] =
+        b"-----BEGIN PRIVATE KEY-----\ntest-key-material\n-----END PRIVATE KEY-----\n";
     const SEAL_ROOT: [u8; 32] = [0x42u8; 32];
 
     #[test]
@@ -467,20 +472,14 @@ mod tests {
         let m = launch_measurement();
         let amd_key = [0x9cu8; 32];
         let meta = AmdSpSealMeta::teechat_default();
-        let snp_m = attested_mtls_snp_seal::Measurement::launch_digest(
-            "launch-abc",
-            "image-def",
-        );
-        let snp_blob = attested_mtls_snp_seal::seal_tls_private_key(
-            &snp_m, KEY_PEM, &amd_key, &meta,
-        )
-        .unwrap();
+        let snp_m = attested_mtls_snp_seal::Measurement::launch_digest("launch-abc", "image-def");
+        let snp_blob =
+            attested_mtls_snp_seal::seal_tls_private_key(&snp_m, KEY_PEM, &amd_key, &meta).unwrap();
         let openapi_blob = from_snp_blob(snp_blob);
         let plain = unseal_tls_private_key_amd_sp(&openapi_blob, &m, &amd_key).unwrap();
         assert_eq!(plain, KEY_PEM);
 
-        let openapi_sealed =
-            seal_tls_private_key_amd_sp(&m, KEY_PEM, &amd_key, &meta).unwrap();
+        let openapi_sealed = seal_tls_private_key_amd_sp(&m, KEY_PEM, &amd_key, &meta).unwrap();
         let snp_again = to_snp_blob(&openapi_sealed).unwrap();
         let plain2 =
             attested_mtls_snp_seal::unseal_tls_private_key(&snp_again, &snp_m, &amd_key).unwrap();

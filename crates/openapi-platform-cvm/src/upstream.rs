@@ -42,10 +42,7 @@ impl UpstreamForwarder for UreqUpstream {
                     .call()
                     .map_err(|e| ApiError::Upstream(e.to_string()))?;
                 let status = response.status();
-                let content_type = response
-                    .header("Content-Type")
-                    .unwrap_or("")
-                    .to_string();
+                let content_type = response.header("Content-Type").unwrap_or("").to_string();
                 let bytes = response
                     .into_string()
                     .map_err(|e| ApiError::Upstream(e.to_string()))?
@@ -61,10 +58,7 @@ impl UpstreamForwarder for UreqUpstream {
                     .send_bytes(body)
                     .map_err(|e| ApiError::Upstream(e.to_string()))?;
                 let status = response.status();
-                let content_type = response
-                    .header("Content-Type")
-                    .unwrap_or("")
-                    .to_string();
+                let content_type = response.header("Content-Type").unwrap_or("").to_string();
                 let bytes = response
                     .into_string()
                     .map_err(|e| ApiError::Upstream(e.to_string()))?
@@ -103,12 +97,14 @@ impl UpstreamForwarder for UreqUpstream {
             let err = response
                 .into_string()
                 .map_err(|e| ApiError::Upstream(e.to_string()))?;
-            return Err(ApiError::Upstream(format!("upstream status {status}: {err}")));
+            return Err(ApiError::Upstream(format!(
+                "upstream status {status}: {err}"
+            )));
         }
 
         let mut reader = response.into_reader();
-        let bytes_written = std::io::copy(&mut reader, out)
-            .map_err(|e| ApiError::Upstream(e.to_string()))?;
+        let bytes_written =
+            std::io::copy(&mut reader, out).map_err(|e| ApiError::Upstream(e.to_string()))?;
         Ok(StreamForwardResult {
             status,
             content_type,
@@ -167,7 +163,8 @@ mod tests {
 
         ready_rx.recv().unwrap();
         let upstream = UreqUpstream::new(format!("http://{}:{}", addr.ip(), addr.port()));
-        let req_body = br#"{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":true}"#;
+        let req_body =
+            br#"{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":true}"#;
         let mut out = Vec::new();
         upstream
             .forward_v1_stream(

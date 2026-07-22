@@ -118,21 +118,19 @@ impl EdgeEnv {
             .map_err(|e| EnvError::Catalog(format!("parse catalog: {e}")))?;
         let verify_bytes = hex::decode(&self.catalog_verify_key_hex)
             .map_err(|e| EnvError::Invalid("OPENAPI_CATALOG_VERIFY_KEY_HEX", e.to_string()))?;
-        let verify_key = VerifyingKey::from_bytes(
-            verify_bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| EnvError::Invalid("OPENAPI_CATALOG_VERIFY_KEY_HEX", "must be 32 bytes".into()))?,
-        )
-        .map_err(|e| EnvError::Invalid("OPENAPI_CATALOG_VERIFY_KEY_HEX", e.to_string()))?;
+        let verify_key =
+            VerifyingKey::from_bytes(verify_bytes.as_slice().try_into().map_err(|_| {
+                EnvError::Invalid("OPENAPI_CATALOG_VERIFY_KEY_HEX", "must be 32 bytes".into())
+            })?)
+            .map_err(|e| EnvError::Invalid("OPENAPI_CATALOG_VERIFY_KEY_HEX", e.to_string()))?;
         KeyCatalog::from_signed(signed, verify_key).map_err(|e| EnvError::Catalog(e.to_string()))
     }
 
     pub fn edge_authenticator(&self) -> Result<EdgeAuthenticator, EnvError> {
         match self.auth_mode {
-            OpenApiAuthMode::Catalog => Ok(EdgeAuthenticator::from_catalog(
-                Authenticator::new(self.load_catalog()?),
-            )),
+            OpenApiAuthMode::Catalog => Ok(EdgeAuthenticator::from_catalog(Authenticator::new(
+                self.load_catalog()?,
+            ))),
             OpenApiAuthMode::Remote => {
                 let authorize_url = self
                     .l0_authorize_url
@@ -189,9 +187,7 @@ impl EdgeEnv {
 
     pub fn seal_root(&self) -> Result<Option<[u8; 32]>, EnvError> {
         self.cvm_sealer()
-            .resolve_seal_root(
-                parse_seal_root_hex(self.seal_root_hex.as_deref())?.as_ref(),
-            )
+            .resolve_seal_root(parse_seal_root_hex(self.seal_root_hex.as_deref())?.as_ref())
             .map_err(|e| EnvError::Seal(e.to_string()))
     }
 
@@ -213,9 +209,8 @@ pub fn load_edge_env() -> Result<EdgeEnv, EnvError> {
         std::env::var(name).ok().filter(|s| !s.is_empty())
     }
 
-    let auth_mode = OpenApiAuthMode::parse(
-        &opt("OPENAPI_AUTH_MODE").unwrap_or_else(|| "catalog".into()),
-    );
+    let auth_mode =
+        OpenApiAuthMode::parse(&opt("OPENAPI_AUTH_MODE").unwrap_or_else(|| "catalog".into()));
     let catalog_path = if auth_mode == OpenApiAuthMode::Catalog {
         Some(req("OPENAPI_CATALOG_PATH")?)
     } else {
@@ -340,30 +335,30 @@ mod tests {
     #[test]
     fn load_catalog_from_file() {
         with_env_lock(|| {
-        let dir = std::env::temp_dir().join(format!("openapi-env-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let catalog_path = dir.join("catalog.json");
-        let mut csprng = OsRng;
-        let signing = SigningKey::generate(&mut csprng);
-        write_dev_catalog(&catalog_path, "sk-teechat-dev", &signing).unwrap();
+            let dir = std::env::temp_dir().join(format!("openapi-env-{}", std::process::id()));
+            fs::create_dir_all(&dir).unwrap();
+            let catalog_path = dir.join("catalog.json");
+            let mut csprng = OsRng;
+            let signing = SigningKey::generate(&mut csprng);
+            write_dev_catalog(&catalog_path, "sk-teechat-dev", &signing).unwrap();
 
-        env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
-        env::set_var("OPENAPI_CATALOG_PATH", catalog_path.to_str().unwrap());
-        env::set_var(
-            "OPENAPI_CATALOG_VERIFY_KEY_HEX",
-            hex::encode(signing.verifying_key().to_bytes()),
-        );
-        env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([4u8; 32]));
+            env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
+            env::set_var("OPENAPI_CATALOG_PATH", catalog_path.to_str().unwrap());
+            env::set_var(
+                "OPENAPI_CATALOG_VERIFY_KEY_HEX",
+                hex::encode(signing.verifying_key().to_bytes()),
+            );
+            env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([4u8; 32]));
 
-        let edge = load_edge_env().unwrap();
-        let catalog = edge.load_catalog().unwrap();
-        assert!(catalog.lookup_by_api_key("sk-teechat-dev").is_ok());
+            let edge = load_edge_env().unwrap();
+            let catalog = edge.load_catalog().unwrap();
+            assert!(catalog.lookup_by_api_key("sk-teechat-dev").is_ok());
 
-        env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
-        env::remove_var("OPENAPI_CATALOG_PATH");
-        env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
-        env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
-        let _ = fs::remove_dir_all(dir);
+            env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
+            env::remove_var("OPENAPI_CATALOG_PATH");
+            env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
+            env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
+            let _ = fs::remove_dir_all(dir);
         });
     }
 
@@ -382,94 +377,100 @@ mod tests {
     #[test]
     fn env_loads_sealed_tls_paths() {
         with_env_lock(|| {
-        env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
-        env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
-        env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
-        env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
-        env::set_var("OPENAPI_TLS_CERT_PATH", "/etc/cert.pem");
-        env::set_var("OPENAPI_TLS_SEALED_KEY_PATH", "/var/openapi/tls-key.sealed.json");
-        env::set_var("OPENAPI_SEAL_ROOT_HEX", hex::encode([3u8; 32]));
+            env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
+            env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
+            env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
+            env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
+            env::set_var("OPENAPI_TLS_CERT_PATH", "/etc/cert.pem");
+            env::set_var(
+                "OPENAPI_TLS_SEALED_KEY_PATH",
+                "/var/openapi/tls-key.sealed.json",
+            );
+            env::set_var("OPENAPI_SEAL_ROOT_HEX", hex::encode([3u8; 32]));
 
-        let edge = load_edge_env().unwrap();
-        assert_eq!(edge.tls_sealed_key_path.as_deref(), Some("/var/openapi/tls-key.sealed.json"));
-        assert_eq!(edge.seal_root().unwrap(), Some([3u8; 32]));
+            let edge = load_edge_env().unwrap();
+            assert_eq!(
+                edge.tls_sealed_key_path.as_deref(),
+                Some("/var/openapi/tls-key.sealed.json")
+            );
+            assert_eq!(edge.seal_root().unwrap(), Some([3u8; 32]));
 
-        env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
-        env::remove_var("OPENAPI_CATALOG_PATH");
-        env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
-        env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
-        env::remove_var("OPENAPI_TLS_CERT_PATH");
-        env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
-        env::remove_var("OPENAPI_SEAL_ROOT_HEX");
+            env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
+            env::remove_var("OPENAPI_CATALOG_PATH");
+            env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
+            env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
+            env::remove_var("OPENAPI_TLS_CERT_PATH");
+            env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
+            env::remove_var("OPENAPI_SEAL_ROOT_HEX");
         });
     }
 
     #[test]
     fn env_loads_per_ip_limits_and_defaults() {
         with_env_lock(|| {
-        env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
-        env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
-        env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
-        env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
-        env::remove_var("OPENAPI_IP_MAX_CONNS");
-        env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
+            env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
+            env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
+            env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
+            env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
+            env::remove_var("OPENAPI_IP_MAX_CONNS");
+            env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
 
-        let edge = load_edge_env().unwrap();
-        let limits = edge.limits();
-        assert_eq!(limits.ip_max_connections, 16);
-        assert_eq!(limits.ip_requests_per_minute, 180);
+            let edge = load_edge_env().unwrap();
+            let limits = edge.limits();
+            assert_eq!(limits.ip_max_connections, 16);
+            assert_eq!(limits.ip_requests_per_minute, 180);
 
-        env::set_var("OPENAPI_IP_MAX_CONNS", "3");
-        env::set_var("OPENAPI_IP_REQUESTS_PER_MINUTE", "7");
-        let edge = load_edge_env().unwrap();
-        let limits = edge.limits();
-        assert_eq!(limits.ip_max_connections, 3);
-        assert_eq!(limits.ip_requests_per_minute, 7);
+            env::set_var("OPENAPI_IP_MAX_CONNS", "3");
+            env::set_var("OPENAPI_IP_REQUESTS_PER_MINUTE", "7");
+            let edge = load_edge_env().unwrap();
+            let limits = edge.limits();
+            assert_eq!(limits.ip_max_connections, 3);
+            assert_eq!(limits.ip_requests_per_minute, 7);
 
-        env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
-        env::remove_var("OPENAPI_CATALOG_PATH");
-        env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
-        env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
-        env::remove_var("OPENAPI_IP_MAX_CONNS");
-        env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
+            env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
+            env::remove_var("OPENAPI_CATALOG_PATH");
+            env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
+            env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
+            env::remove_var("OPENAPI_IP_MAX_CONNS");
+            env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
         });
     }
 
     #[test]
     fn prod_strips_challenge_bench_token_from_limits() {
         with_env_lock(|| {
-        env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
-        env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
-        env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
-        env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
-        env::set_var("OPENAPI_CHALLENGE_BENCH_TOKEN", "lab-secret");
-        env::remove_var("OPENAPI_PROFILE");
+            env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:1");
+            env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
+            env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
+            env::set_var("OPENAPI_USAGE_SIGN_SEED_HEX", hex::encode([2u8; 32]));
+            env::set_var("OPENAPI_CHALLENGE_BENCH_TOKEN", "lab-secret");
+            env::remove_var("OPENAPI_PROFILE");
 
-        let edge = load_edge_env().unwrap();
-        assert_eq!(edge.challenge_bench_token.as_deref(), Some("lab-secret"));
-        assert_eq!(
-            edge.limits().challenge_bench_token.as_deref(),
-            Some("lab-secret"),
-            "dev profile still exposes bench token for lab benches"
-        );
+            let edge = load_edge_env().unwrap();
+            assert_eq!(edge.challenge_bench_token.as_deref(), Some("lab-secret"));
+            assert_eq!(
+                edge.limits().challenge_bench_token.as_deref(),
+                Some("lab-secret"),
+                "dev profile still exposes bench token for lab benches"
+            );
 
-        env::set_var("OPENAPI_PROFILE", "prod");
-        env::set_var("OPENAPI_TLS_SEALED_KEY_PATH", "/var/sealed.json");
-        let edge = load_edge_env().unwrap();
-        assert!(
-            edge.validate_profile().is_err(),
-            "prod + bench token must fail validate_profile"
-        );
-        // limits() still strips even if someone skipped validate_profile.
-        assert_eq!(edge.limits().challenge_bench_token, None);
+            env::set_var("OPENAPI_PROFILE", "prod");
+            env::set_var("OPENAPI_TLS_SEALED_KEY_PATH", "/var/sealed.json");
+            let edge = load_edge_env().unwrap();
+            assert!(
+                edge.validate_profile().is_err(),
+                "prod + bench token must fail validate_profile"
+            );
+            // limits() still strips even if someone skipped validate_profile.
+            assert_eq!(edge.limits().challenge_bench_token, None);
 
-        env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
-        env::remove_var("OPENAPI_CATALOG_PATH");
-        env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
-        env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
-        env::remove_var("OPENAPI_CHALLENGE_BENCH_TOKEN");
-        env::remove_var("OPENAPI_PROFILE");
-        env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
+            env::remove_var("OPENAPI_UPSTREAM_BASE_URL");
+            env::remove_var("OPENAPI_CATALOG_PATH");
+            env::remove_var("OPENAPI_CATALOG_VERIFY_KEY_HEX");
+            env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
+            env::remove_var("OPENAPI_CHALLENGE_BENCH_TOKEN");
+            env::remove_var("OPENAPI_PROFILE");
+            env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
         });
     }
 }

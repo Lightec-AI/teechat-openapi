@@ -23,11 +23,9 @@ pub struct SgxVerifyReport {
 }
 
 pub fn verify_sgx_dcap_quote(quote_b64: &str, reject_debug: bool) -> Result<SgxVerifyReport> {
-    let quote = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        quote_b64.trim(),
-    )
-    .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
+    let quote =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, quote_b64.trim())
+            .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

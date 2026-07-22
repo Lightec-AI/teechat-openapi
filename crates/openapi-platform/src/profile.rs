@@ -32,17 +32,13 @@ pub enum ProfileError {
         "prod forbids OPENAPI_AMD_SP_DERIVED_KEY_HEX — use SNP_GET_DERIVED_KEY via /dev/sev-guest (OPS-003)"
     )]
     ProdAmdSpDerivedKeyOverride,
-    #[error(
-        "OPENAPI_PROFILE=prod forbids host-side seal-tls-key tools — run the in-TEE ceremony"
-    )]
+    #[error("OPENAPI_PROFILE=prod forbids host-side seal-tls-key tools — run the in-TEE ceremony")]
     ProdHostSealTool,
     #[error(
         "prod forbids OPENAPI_CHALLENGE_BENCH_TOKEN — challenge DoS caps must stay on (BENCH-001)"
     )]
     ProdChallengeBenchToken,
-    #[error(
-        "prod forbids OPENAPI_PROXY_MODE=transparent — use allowlist (PROXY-001)"
-    )]
+    #[error("prod forbids OPENAPI_PROXY_MODE=transparent — use allowlist (PROXY-001)")]
     ProdTransparentProxy,
 }
 

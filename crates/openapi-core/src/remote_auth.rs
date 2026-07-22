@@ -65,10 +65,7 @@ impl RevocationPollClock {
                 return;
             }
             let wait = *due - now;
-            let (guard, _) = self
-                .cvar
-                .wait_timeout(due, wait)
-                .expect("poll clock wait");
+            let (guard, _) = self.cvar.wait_timeout(due, wait).expect("poll clock wait");
             due = guard;
         }
     }
@@ -85,7 +82,11 @@ pub struct RemoteAuthenticator {
 
 impl RemoteAuthenticator {
     pub fn new(verify_key: VerifyingKey, client: Arc<dyn L0AuthorizeClient>) -> Self {
-        Self::with_poll_interval(verify_key, client, Duration::from_secs(DEFAULT_REVOKE_POLL_SECS))
+        Self::with_poll_interval(
+            verify_key,
+            client,
+            Duration::from_secs(DEFAULT_REVOKE_POLL_SECS),
+        )
     }
 
     pub fn with_poll_interval(
@@ -157,7 +158,12 @@ impl RemoteAuthenticator {
             .as_millis() as u64
     }
 
-    fn cache_hit(&self, parsed: &ParsedApiKey, hash: &str, now_ms: u64) -> Result<Option<AuthContext>, ApiError> {
+    fn cache_hit(
+        &self,
+        parsed: &ParsedApiKey,
+        hash: &str,
+        now_ms: u64,
+    ) -> Result<Option<AuthContext>, ApiError> {
         let cache = self
             .cache
             .read()
@@ -168,7 +174,12 @@ impl RemoteAuthenticator {
         if entry.authz.exp_ms <= now_ms {
             return Ok(None);
         }
-        let hash_match: bool = entry.authz.key_hash_hex.as_bytes().ct_eq(hash.as_bytes()).into();
+        let hash_match: bool = entry
+            .authz
+            .key_hash_hex
+            .as_bytes()
+            .ct_eq(hash.as_bytes())
+            .into();
         if !hash_match {
             return Ok(None);
         }
@@ -224,7 +235,10 @@ impl RemoteAuthenticator {
         })
     }
 
-    pub fn authenticate_bearer(&self, authorization: Option<&str>) -> Result<AuthContext, ApiError> {
+    pub fn authenticate_bearer(
+        &self,
+        authorization: Option<&str>,
+    ) -> Result<AuthContext, ApiError> {
         let header = authorization.ok_or(ApiError::Unauthorized)?;
         let token = header
             .strip_prefix("Bearer ")
@@ -258,7 +272,10 @@ impl EdgeAuthenticator {
         }
     }
 
-    pub fn authenticate_bearer(&self, authorization: Option<&str>) -> Result<AuthContext, ApiError> {
+    pub fn authenticate_bearer(
+        &self,
+        authorization: Option<&str>,
+    ) -> Result<AuthContext, ApiError> {
         match self {
             Self::Catalog(a) => a.authenticate_bearer(authorization),
             Self::Remote(r) => r.authenticate_bearer(authorization),
@@ -269,7 +286,9 @@ impl EdgeAuthenticator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::authz::{sign_test_authz, sign_test_authz_with_policy, sign_test_revocation, OpenApiKeyPolicy};
+    use crate::authz::{
+        sign_test_authz, sign_test_authz_with_policy, sign_test_revocation, OpenApiKeyPolicy,
+    };
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
 
@@ -312,7 +331,12 @@ mod tests {
         let secret = "A".repeat(32);
         let api_key = format!("sk-teechat-tcak_ab12CD34.{secret}");
         let hash = hash_api_key(&api_key);
-        let authz = signed_authz(&signing, "tcak_ab12CD34", &hash, RemoteAuthenticator::now_ms() + 60_000);
+        let authz = signed_authz(
+            &signing,
+            "tcak_ab12CD34",
+            &hash,
+            RemoteAuthenticator::now_ms() + 60_000,
+        );
         let client = Arc::new(MockClient {
             authz,
             delta: Mutex::new(RevocationDelta {
@@ -352,8 +376,8 @@ mod tests {
             OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 180,
-            key_set: "api".into(),
-            remaining_tokens: None,
+                key_set: "api".into(),
+                remaining_tokens: None,
             },
             5,
             &signing,
@@ -373,11 +397,7 @@ mod tests {
             .authenticate_bearer(Some(&format!("Bearer {api_key}")))
             .unwrap();
         assert_eq!(remote.local_epoch(), 5);
-        assert!(remote
-            .revocations
-            .read()
-            .unwrap()
-            .contains(victim));
+        assert!(remote.revocations.read().unwrap().contains(victim));
     }
 
     #[test]
@@ -395,8 +415,8 @@ mod tests {
             OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 60,
-            key_set: "api".into(),
-            remaining_tokens: None,
+                key_set: "api".into(),
+                remaining_tokens: None,
             },
             1,
             &signing,
@@ -409,11 +429,8 @@ mod tests {
             }),
             fetch_count: Mutex::new(0),
         });
-        let remote = RemoteAuthenticator::with_poll_interval(
-            verify_key,
-            client,
-            Duration::from_secs(30),
-        );
+        let remote =
+            RemoteAuthenticator::with_poll_interval(verify_key, client, Duration::from_secs(30));
         // Make next poll "soon"; authorize convoy should push it out by ~30s.
         {
             let clock = remote.poll_clock();
@@ -483,7 +500,12 @@ mod tests {
         let secret = "B".repeat(32);
         let api_key = format!("sk-teechat-tcak_cd56EF78.{secret}");
         let hash = hash_api_key(&api_key);
-        let authz = signed_authz(&signing, "tcak_cd56EF78", &hash, RemoteAuthenticator::now_ms() + 60_000);
+        let authz = signed_authz(
+            &signing,
+            "tcak_cd56EF78",
+            &hash,
+            RemoteAuthenticator::now_ms() + 60_000,
+        );
         let client = Arc::new(MockClient {
             authz,
             delta: Mutex::new(RevocationDelta {

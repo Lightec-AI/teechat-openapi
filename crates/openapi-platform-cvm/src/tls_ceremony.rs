@@ -222,22 +222,12 @@ pub fn seal_from_acme_live(
         .first()
         .ok_or_else(|| CeremonyError::Acme("no privkey path".into()))?;
 
-    let sealer = CvmSealer::with_profile(
-        &paths.launch_digest,
-        &paths.image_digest,
-        true,
-    );
+    let sealer = CvmSealer::with_profile(&paths.launch_digest, &paths.image_digest, true);
 
     if let Some(parent) = paths.sealed_key_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    seal_tls_key_file(
-        &sealer,
-        primary_key,
-        &paths.sealed_key_path,
-        None,
-    )
-    .map_err(map_tls_error)?;
+    seal_tls_key_file(&sealer, primary_key, &paths.sealed_key_path, None).map_err(map_tls_error)?;
 
     install_cert_chain(&acme_fullchain_path(live_dir), &paths.cert_path)?;
 
@@ -287,9 +277,7 @@ pub fn assert_no_plaintext_privkey_on_disk(
 mod tests {
     use super::*;
     use crate::amd_sp_key::{set_test_amd_sp_derived_key, AMD_SP_KEY_TEST_LOCK};
-    use crate::guest_digest::{
-        set_test_attested_launch_digest, ATTESTED_ENV_TEST_LOCK,
-    };
+    use crate::guest_digest::{set_test_attested_launch_digest, ATTESTED_ENV_TEST_LOCK};
     use openapi_platform::{Sealer, SEAL_VERSION_SNP_AMD_SP};
     use std::env;
     use std::sync::Mutex;
@@ -356,16 +344,8 @@ mod tests {
         }
         #[cfg(not(unix))]
         {
-            fs::copy(
-                archive.join("privkey1.pem"),
-                live.join("privkey.pem"),
-            )
-            .unwrap();
-            fs::copy(
-                archive.join("fullchain1.pem"),
-                live.join("fullchain.pem"),
-            )
-            .unwrap();
+            fs::copy(archive.join("privkey1.pem"), live.join("privkey.pem")).unwrap();
+            fs::copy(archive.join("fullchain1.pem"), live.join("fullchain.pem")).unwrap();
         }
         live
     }

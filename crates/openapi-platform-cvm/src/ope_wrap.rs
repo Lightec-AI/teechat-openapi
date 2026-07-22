@@ -50,8 +50,7 @@ pub fn encrypt_openai_body(
     payload: &Value,
 ) -> Result<EncryptedOpeRequest, OpeWrapError> {
     let identity = engine_identity_from_trust(trust);
-    let client_session =
-        ClientSession::generate().map_err(|e| OpeWrapError::Ope(e.to_string()))?;
+    let client_session = ClientSession::generate().map_err(|e| OpeWrapError::Ope(e.to_string()))?;
 
     let mut envelope = Envelope {
         ope_version: "1.0".into(),
@@ -147,7 +146,10 @@ mod tests {
 
     #[test]
     fn normalize_kex_aliases() {
-        assert_eq!(normalize_kex("mlkem768+x25519"), EngineIdentity::KEX_X25519_MLKEM768);
+        assert_eq!(
+            normalize_kex("mlkem768+x25519"),
+            EngineIdentity::KEX_X25519_MLKEM768
+        );
         assert_eq!(normalize_kex(""), EngineIdentity::KEX_X25519_MLKEM768);
     }
 
@@ -176,7 +178,10 @@ mod tests {
         let enc = encrypt_openai_body(&trust, "tcak_test", &payload).unwrap();
         assert_eq!(enc.envelope.enc, "e2e-hybrid-pq");
         let e2e = enc.envelope.e2e.as_ref().unwrap();
-        assert_eq!(e2e.get("ephemeral_epoch").and_then(|v| v.as_str()), Some("epoch-test"));
+        assert_eq!(
+            e2e.get("ephemeral_epoch").and_then(|v| v.as_str()),
+            Some("epoch-test")
+        );
 
         let decrypted = decrypt_request(&enc.envelope, &engine_secret).unwrap();
         assert_eq!(decrypted, payload);
@@ -189,7 +194,8 @@ mod tests {
             begin_response_session_from_share(&engine_secret, &enc.envelope, client_share).unwrap();
         let server_share = encode(&server.bytes);
         let ct = encrypt_response_chunk(&resp_key, &resp_iv, 0, b"hello").unwrap();
-        let plain = decrypt_chunk(&enc.envelope, &enc.client_session, &server_share, 0, &ct).unwrap();
+        let plain =
+            decrypt_chunk(&enc.envelope, &enc.client_session, &server_share, 0, &ct).unwrap();
         assert_eq!(plain, b"hello");
     }
 }

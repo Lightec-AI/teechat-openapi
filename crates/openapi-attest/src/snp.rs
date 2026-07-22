@@ -26,11 +26,8 @@ pub struct SnpVerifyReport {
 }
 
 pub fn verify_snp_report(quote_b64: &str, reject_debug: bool) -> Result<SnpVerifyReport> {
-    let raw = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        quote_b64.trim(),
-    )
-    .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
+    let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, quote_b64.trim())
+        .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
 
     let report = AttestationReport::from_bytes(&raw)
         .map_err(|e| AttestError::Quote(format!("parse SNP report: {e}")))?;

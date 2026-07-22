@@ -20,10 +20,10 @@ pub mod verify;
 
 pub use error::{AttestError, Result};
 pub use github_release::{
-    DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO, ATTEST_ASSET_NAME, SHA256SUMS_ASSET_NAME,
+    ATTEST_ASSET_NAME, DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO, SHA256SUMS_ASSET_NAME,
 };
 pub use manifest::{
     fetch_signed_manifest, load_signed_manifest_files, verify_signed_manifest_bytes,
-    OpenApiEdgeManifest, PINNED_KEY_ID, PINNED_PUBLIC_KEY_HEX, DEFAULT_MANIFEST_URL,
+    OpenApiEdgeManifest, DEFAULT_MANIFEST_URL, PINNED_KEY_ID, PINNED_PUBLIC_KEY_HEX,
 };
 pub use verify::{verify_openapi_edge, AttestationVerdict, VerifyOptions};

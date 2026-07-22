@@ -34,8 +34,12 @@ impl ParsedRequest {
             Status::Partial => return Ok(None),
         };
 
-        let method = req.method.ok_or_else(|| ParseError::Invalid("missing method".into()))?;
-        let path = req.path.ok_or_else(|| ParseError::Invalid("missing path".into()))?;
+        let method = req
+            .method
+            .ok_or_else(|| ParseError::Invalid("missing method".into()))?;
+        let path = req
+            .path
+            .ok_or_else(|| ParseError::Invalid("missing path".into()))?;
 
         let mut header_map = HashMap::new();
         for h in req.headers {
@@ -83,7 +87,8 @@ mod tests {
 
     #[test]
     fn parse_post_with_body() {
-        let raw = b"POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}";
+        let raw =
+            b"POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2\r\n\r\n{}";
         let req = ParsedRequest::parse(raw).unwrap().unwrap();
         assert_eq!(req.body, b"{}");
     }

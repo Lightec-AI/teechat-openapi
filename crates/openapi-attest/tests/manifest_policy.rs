@@ -43,14 +43,20 @@ fn sample_manifest_json(not_after: &str, launch: &str) -> Vec<u8> {
 
 #[test]
 fn rejects_expired_manifest() {
-    let bytes = sample_manifest_json("2020-01-01T00:00:00Z", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let bytes = sample_manifest_json(
+        "2020-01-01T00:00:00Z",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
     let err = parse_and_validate_manifest(&bytes, Some(PINNED_KEY_ID)).unwrap_err();
     assert!(err.to_string().contains("expired"), "{err}");
 }
 
 #[test]
 fn rejects_unknown_measurement() {
-    let bytes = sample_manifest_json("2099-01-01T00:00:00Z", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let bytes = sample_manifest_json(
+        "2099-01-01T00:00:00Z",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
     let m: OpenApiEdgeManifest = serde_json::from_slice(&bytes).unwrap();
     let err = find_matching_release(
         &m,

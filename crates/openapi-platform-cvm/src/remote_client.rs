@@ -39,7 +39,11 @@ impl UreqL0AuthorizeClient {
         }
     }
 
-    pub fn with_urls(authorize_url: String, revocations_url: String, internal_token: String) -> Self {
+    pub fn with_urls(
+        authorize_url: String,
+        revocations_url: String,
+        internal_token: String,
+    ) -> Self {
         Self {
             authorize_url,
             revocations_url,
@@ -86,7 +90,8 @@ impl L0AuthorizeClient for UreqL0AuthorizeClient {
         let text = resp
             .into_string()
             .map_err(|e| ApiError::Internal(format!("l0 authorize body: {e}")))?;
-        serde_json::from_str(&text).map_err(|e| ApiError::Internal(format!("l0 authorize json: {e}")))
+        serde_json::from_str(&text)
+            .map_err(|e| ApiError::Internal(format!("l0 authorize json: {e}")))
     }
 
     fn fetch_revocations(&self, since_epoch: u64) -> Result<RevocationDelta, ApiError> {
@@ -162,11 +167,11 @@ pub fn build_remote_authenticator_ex(
         None => UreqL0AuthorizeClient::new(authorize_url, internal_token),
     });
     let interval = Duration::from_secs(poll_secs.unwrap_or(DEFAULT_REVOKE_POLL_SECS).max(1));
-    Ok(openapi_core::remote_auth::RemoteAuthenticator::with_poll_interval(
-        verify_key,
-        client,
-        interval,
-    ))
+    Ok(
+        openapi_core::remote_auth::RemoteAuthenticator::with_poll_interval(
+            verify_key, client, interval,
+        ),
+    )
 }
 
 pub fn spawn_revocation_poller(remote: Arc<openapi_core::remote_auth::RemoteAuthenticator>) {
@@ -176,7 +181,11 @@ pub fn spawn_revocation_poller(remote: Arc<openapi_core::remote_auth::RemoteAuth
             remote.poll_clock().wait_until_due();
             match remote.sync_revocations_from_l0() {
                 Ok(n) if n > 0 => {
-                    tracing::info!(applied = n, epoch = remote.local_epoch(), "revocation poll applied");
+                    tracing::info!(
+                        applied = n,
+                        epoch = remote.local_epoch(),
+                        "revocation poll applied"
+                    );
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -216,7 +225,9 @@ mod tests {
     fn l0_404_maps_to_unauthorized_not_500() {
         let url = serve_once("404 Not Found", r#"{"error":"not_found"}"#);
         let client = UreqL0AuthorizeClient::new(url, "tok".into());
-        let err = client.authorize("tcak_bad", "deadbeef").expect_err("must fail");
+        let err = client
+            .authorize("tcak_bad", "deadbeef")
+            .expect_err("must fail");
         assert!(
             matches!(err, ApiError::Unauthorized),
             "expected Unauthorized, got {err:?} (status {})",
@@ -229,7 +240,9 @@ mod tests {
     fn l0_401_maps_to_unauthorized() {
         let url = serve_once("401 Unauthorized", r#"{"error":"hash_mismatch"}"#);
         let client = UreqL0AuthorizeClient::new(url, "tok".into());
-        let err = client.authorize("tcak_bad", "deadbeef").expect_err("must fail");
+        let err = client
+            .authorize("tcak_bad", "deadbeef")
+            .expect_err("must fail");
         assert!(matches!(err, ApiError::Unauthorized));
         assert_eq!(err.status_code(), 401);
     }

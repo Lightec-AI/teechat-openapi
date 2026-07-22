@@ -68,7 +68,10 @@ pub fn run() -> anyhow::Result<()> {
     let tls_acceptor = build_tls_acceptor(&env, &sealer, seal_root.as_ref())?;
     let tls_hook = tls_acceptor.map(|acceptor| {
         move |stream: std::net::TcpStream| -> Option<Box<dyn ReadWriteConn>> {
-            acceptor.accept(stream).ok().map(|s| Box::new(s) as Box<dyn ReadWriteConn>)
+            acceptor
+                .accept(stream)
+                .ok()
+                .map(|s| Box::new(s) as Box<dyn ReadWriteConn>)
         }
     });
 
@@ -89,13 +92,17 @@ fn tls_spki_hex(
         tls_config
             .load_server_config_from_sealed(sealer, Path::new(sealed_path), seal_root)
             .context("unseal tls key")?;
-        return tls_config.cert_spki_sha256_hex().map_err(|e| anyhow::anyhow!(e));
+        return tls_config
+            .cert_spki_sha256_hex()
+            .map_err(|e| anyhow::anyhow!(e));
     }
     if let Some(key_path) = &env.tls_key_path {
         warn!("using plaintext OPENAPI_TLS_KEY_PATH — seal for production");
         TlsConfig::load_server_config_from_plain_key_path(cert_path, key_path)
             .context("load plaintext tls key")?;
-        return tls_config.cert_spki_sha256_hex().map_err(|e| anyhow::anyhow!(e));
+        return tls_config
+            .cert_spki_sha256_hex()
+            .map_err(|e| anyhow::anyhow!(e));
     }
     warn!("no TLS key configured — plain TCP (dev only)");
     Ok("unknown".into())
@@ -108,7 +115,9 @@ fn build_tls_acceptor(
 ) -> anyhow::Result<Option<Arc<TlsAcceptor>>> {
     let Some(cert_path) = &env.tls_cert_path else {
         if env.profile().is_prod() {
-            anyhow::bail!("prod requires OPENAPI_TLS_CERT_PATH and a working TLS acceptor (TLS-001)");
+            anyhow::bail!(
+                "prod requires OPENAPI_TLS_CERT_PATH and a working TLS acceptor (TLS-001)"
+            );
         }
         return Ok(None);
     };

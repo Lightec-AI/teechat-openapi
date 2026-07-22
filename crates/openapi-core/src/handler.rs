@@ -5,14 +5,12 @@ use openapi_platform::AttestationPlatform;
 use serde_json::Value;
 
 use crate::auth::AuthContext;
-use crate::remote_auth::EdgeAuthenticator;
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::limits::{InflightGate, IpConnPermit, IpConnTracker, Limits, RateLimiter};
-use crate::models::{
-    AttestationChallengeRequest, ChatCompletionRequest, ModelsListResponse,
-};
+use crate::models::{AttestationChallengeRequest, ChatCompletionRequest, ModelsListResponse};
 use crate::quota::enforce_token_quota;
+use crate::remote_auth::EdgeAuthenticator;
 use crate::routes::{classify, normalize_path, RouteAction};
 use crate::upstream::{body_wants_stream, model_from_body};
 use crate::usage::{UsageReport, UsageSigner};
@@ -93,7 +91,10 @@ pub trait UpstreamForwarder: Send + Sync {
                 serde_json::to_vec(&v).map_err(|e| ApiError::Internal(e.to_string()))?,
                 "application/json".into(),
             ),
-            UpstreamResponse::Raw { bytes, content_type } => (bytes, content_type),
+            UpstreamResponse::Raw {
+                bytes,
+                content_type,
+            } => (bytes, content_type),
         };
         out.write_all(&bytes)
             .map_err(|e| ApiError::Upstream(e.to_string()))?;
@@ -172,7 +173,10 @@ pub struct StreamForwardResult {
 #[derive(Debug, Clone)]
 pub enum UpstreamResponse {
     Json(Value),
-    Raw { bytes: Vec<u8>, content_type: String },
+    Raw {
+        bytes: Vec<u8>,
+        content_type: String,
+    },
 }
 
 pub struct App<U, P>
@@ -231,7 +235,10 @@ where
     }
 
     /// Acquire a per-IP connection slot for the TCP/TLS session lifetime.
-    pub fn try_acquire_ip_conn(&self, client_ip: Option<&str>) -> Result<IpConnPermit<'_>, ApiError> {
+    pub fn try_acquire_ip_conn(
+        &self,
+        client_ip: Option<&str>,
+    ) -> Result<IpConnPermit<'_>, ApiError> {
         self.ip_conn_tracker
             .try_acquire(client_ip.unwrap_or("unknown"))
     }
@@ -348,9 +355,7 @@ where
     }
 
     fn enforce_rate_limit(&self, auth: &AuthContext) -> Result<(), ApiError> {
-        let rpm = auth
-            .policy
-            .effective_rpm(self.limits.requests_per_minute);
+        let rpm = auth.policy.effective_rpm(self.limits.requests_per_minute);
         self.rate_limiter.check_with_rpm(&auth.key_id, rpm)
     }
 
@@ -468,13 +473,8 @@ where
         completion_tokens: u64,
         now_ms: u64,
     ) -> Result<UsageReport, ApiError> {
-        self.usage_signer.sign_report(
-            key_id,
-            model,
-            prompt_tokens,
-            completion_tokens,
-            now_ms,
-        )
+        self.usage_signer
+            .sign_report(key_id, model, prompt_tokens, completion_tokens, now_ms)
     }
 
     fn handle_attestation(
@@ -537,7 +537,9 @@ where
             .platform
             .challenge(&nonce)
             .map_err(|e| ApiError::Internal(e.to_string()))?;
-        Ok(AppResponse::Json(serde_json::to_value(attestation).unwrap()))
+        Ok(AppResponse::Json(
+            serde_json::to_value(attestation).unwrap(),
+        ))
     }
 }
 
@@ -555,15 +557,13 @@ fn subtle_constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 fn upstream_to_json_response(upstream: UpstreamResponse) -> AppResponse {
     match upstream {
         UpstreamResponse::Json(body) => AppResponse::Json(body),
-        UpstreamResponse::Raw { bytes, .. } => {
-            match serde_json::from_slice::<Value>(&bytes) {
-                Ok(body) => AppResponse::Json(body),
-                Err(_) => AppResponse::Json(serde_json::json!({
-                    "object": "binary",
-                    "data": URL_SAFE_NO_PAD.encode(bytes),
-                })),
-            }
-        }
+        UpstreamResponse::Raw { bytes, .. } => match serde_json::from_slice::<Value>(&bytes) {
+            Ok(body) => AppResponse::Json(body),
+            Err(_) => AppResponse::Json(serde_json::json!({
+                "object": "binary",
+                "data": URL_SAFE_NO_PAD.encode(bytes),
+            })),
+        },
     }
 }
 
@@ -578,7 +578,10 @@ fn inference_to_app_response(
             upstream_body: serde_json::to_vec(&body).unwrap(),
             usage,
         }),
-        UpstreamResponse::Raw { bytes, content_type: _ } if stream => Ok(AppResponse::SseStream {
+        UpstreamResponse::Raw {
+            bytes,
+            content_type: _,
+        } if stream => Ok(AppResponse::SseStream {
             upstream_body: bytes,
             usage,
         }),
@@ -654,19 +657,19 @@ mod tests {
     }
 
     impl UpstreamForwarder for MockUpstream {
-    fn forward_v1(
-        &self,
-        _method: HttpMethod,
-        path: &str,
-        _body: Option<&[u8]>,
-    ) -> Result<UpstreamResponse, ApiError> {
-        self.responses
-            .lock()
-            .unwrap()
-            .get(path)
-            .cloned()
-            .ok_or(ApiError::Upstream("no mock".into()))
-    }
+        fn forward_v1(
+            &self,
+            _method: HttpMethod,
+            path: &str,
+            _body: Option<&[u8]>,
+        ) -> Result<UpstreamResponse, ApiError> {
+            self.responses
+                .lock()
+                .unwrap()
+                .get(path)
+                .cloned()
+                .ok_or(ApiError::Upstream("no mock".into()))
+        }
     }
 
     struct TestPlatform;
@@ -751,19 +754,23 @@ mod tests {
 
     #[test]
     fn chat_completions_success_with_usage() {
-        let app = build_test_app(
-            MockUpstream::default().with(
-                "/v1/chat/completions",
-                UpstreamResponse::Json(serde_json::json!({
-                    "id": "cmpl-1",
-                    "choices": [{"message": {"role":"assistant","content":"hi"}}],
-                    "usage": {"prompt_tokens": 3, "completion_tokens": 5}
-                })),
-            ),
-        );
+        let app = build_test_app(MockUpstream::default().with(
+            "/v1/chat/completions",
+            UpstreamResponse::Json(serde_json::json!({
+                "id": "cmpl-1",
+                "choices": [{"message": {"role":"assistant","content":"hi"}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 5}
+            })),
+        ));
         let body = br#"{"model":"teechat-default","messages":[{"role":"user","content":"hi"}]}"#;
         let resp = app
-            .handle(HttpMethod::Post, "/v1/chat/completions", Some(AUTH), body, 100)
+            .handle(
+                HttpMethod::Post,
+                "/v1/chat/completions",
+                Some(AUTH),
+                body,
+                100,
+            )
             .unwrap();
         match resp {
             AppResponse::JsonWithUsage { body, usage } => {
@@ -777,15 +784,13 @@ mod tests {
 
     #[test]
     fn embeddings_forwarded_with_usage() {
-        let app = build_test_app(
-            MockUpstream::default().with(
-                "/v1/embeddings",
-                UpstreamResponse::Json(serde_json::json!({
-                    "object": "list",
-                    "usage": {"prompt_tokens": 7, "total_tokens": 7}
-                })),
-            ),
-        );
+        let app = build_test_app(MockUpstream::default().with(
+            "/v1/embeddings",
+            UpstreamResponse::Json(serde_json::json!({
+                "object": "list",
+                "usage": {"prompt_tokens": 7, "total_tokens": 7}
+            })),
+        ));
         let body = br#"{"model":"m","input":"hello"}"#;
         let resp = app
             .handle(HttpMethod::Post, "/v1/embeddings", Some(AUTH), body, 1)
@@ -836,16 +841,14 @@ mod tests {
 
     #[test]
     fn chat_completions_with_query_still_inference() {
-        let app = build_test_app(
-            MockUpstream::default().with(
-                "/v1/chat/completions",
-                UpstreamResponse::Json(serde_json::json!({
-                    "id": "cmpl-q",
-                    "choices": [{"message": {"role":"assistant","content":"hi"}}],
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}
-                })),
-            ),
-        );
+        let app = build_test_app(MockUpstream::default().with(
+            "/v1/chat/completions",
+            UpstreamResponse::Json(serde_json::json!({
+                "id": "cmpl-q",
+                "choices": [{"message": {"role":"assistant","content":"hi"}}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+            })),
+        ));
         let body = br#"{"model":"teechat-default","messages":[{"role":"user","content":"hi"}]}"#;
         let resp = app
             .handle(
@@ -865,7 +868,13 @@ mod tests {
         let nonce = URL_SAFE_NO_PAD.encode([0u8; 32]);
         let body = format!(r#"{{"nonce_b64":"{nonce}"}}"#).into_bytes();
         let resp = app
-            .handle(HttpMethod::Post, "/v1/attestation/challenge", None, &body, 1)
+            .handle(
+                HttpMethod::Post,
+                "/v1/attestation/challenge",
+                None,
+                &body,
+                1,
+            )
             .unwrap();
         match resp {
             AppResponse::Json(v) => {
@@ -885,7 +894,13 @@ mod tests {
         let nonce = URL_SAFE_NO_PAD.encode([0u8; 16]);
         let body = format!(r#"{{"nonce_b64":"{nonce}"}}"#).into_bytes();
         let err = app
-            .handle(HttpMethod::Post, "/v1/attestation/challenge", None, &body, 1)
+            .handle(
+                HttpMethod::Post,
+                "/v1/attestation/challenge",
+                None,
+                &body,
+                1,
+            )
             .unwrap_err();
         assert!(matches!(err, ApiError::BadRequest(_)));
     }
@@ -1051,7 +1066,13 @@ mod tests {
         let app = build_test_app(MockUpstream::default());
         let body = br#"{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":true}"#;
         let resp = app
-            .handle(HttpMethod::Post, "/v1/chat/completions", Some(AUTH), body, 1)
+            .handle(
+                HttpMethod::Post,
+                "/v1/chat/completions",
+                Some(AUTH),
+                body,
+                1,
+            )
             .unwrap();
         match resp {
             AppResponse::SsePassthrough {
@@ -1152,19 +1173,22 @@ mod tests {
             limits,
             EdgeAuthenticator::from_catalog(Authenticator::new({
                 let sk = SigningKey::from_bytes(&[8u8; 32]);
-                KeyCatalog::from_signed(
-                    sign_test_catalog(vec![], &sk),
-                    sk.verifying_key(),
-                )
-                .unwrap()
+                KeyCatalog::from_signed(sign_test_catalog(vec![], &sk), sk.verifying_key()).unwrap()
             })),
             MockUpstream::default(),
             TestPlatform,
             UsageSigner::from_seed([1u8; 32]),
         );
         for i in 0..5 {
-            app.handle_from(HttpMethod::Get, "/healthz", None, b"", i, Some("198.51.100.9"))
-                .unwrap();
+            app.handle_from(
+                HttpMethod::Get,
+                "/healthz",
+                None,
+                b"",
+                i,
+                Some("198.51.100.9"),
+            )
+            .unwrap();
         }
     }
 
@@ -1213,8 +1237,8 @@ mod tests {
     #[test]
     fn app_try_acquire_ip_conn_caps_and_releases() {
         let sk = SigningKey::from_bytes(&[4u8; 32]);
-        let catalog = KeyCatalog::from_signed(sign_test_catalog(vec![], &sk), sk.verifying_key())
-            .unwrap();
+        let catalog =
+            KeyCatalog::from_signed(sign_test_catalog(vec![], &sk), sk.verifying_key()).unwrap();
         let mut limits = Limits::default();
         limits.ip_max_connections = 1;
         let app = App::new(
@@ -1317,10 +1341,7 @@ mod tests {
             1,
             &signing,
         );
-        let remote = RemoteAuthenticator::new(
-            signing.verifying_key(),
-            Arc::new(MockL0 { authz }),
-        );
+        let remote = RemoteAuthenticator::new(signing.verifying_key(), Arc::new(MockL0 { authz }));
         let mut limits = Limits::default();
         limits.requests_per_minute = global_rpm;
         let app = App::new(
@@ -1344,14 +1365,20 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["teechat-lite".into()],
                 rpm: 120,
-            key_set: "api".into(),
-            remaining_tokens: None,
+                key_set: "api".into(),
+                remaining_tokens: None,
             },
             120,
         );
         let body = br#"{"model":"teechat-pro","messages":[{"role":"user","content":"hi"}]}"#;
         let err = app
-            .handle(HttpMethod::Post, "/v1/chat/completions", Some(&auth), body, 1)
+            .handle(
+                HttpMethod::Post,
+                "/v1/chat/completions",
+                Some(&auth),
+                body,
+                1,
+            )
             .unwrap_err();
         match err {
             ApiError::Forbidden(msg) => assert!(msg.contains("teechat-pro")),
@@ -1372,14 +1399,20 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["teechat-lite".into()],
                 rpm: 120,
-            key_set: "api".into(),
-            remaining_tokens: None,
+                key_set: "api".into(),
+                remaining_tokens: None,
             },
             120,
         );
         let body = br#"{"model":"teechat-lite","messages":[{"role":"user","content":"hi"}]}"#;
         let resp = app
-            .handle(HttpMethod::Post, "/v1/chat/completions", Some(&auth), body, 1)
+            .handle(
+                HttpMethod::Post,
+                "/v1/chat/completions",
+                Some(&auth),
+                body,
+                1,
+            )
             .unwrap();
         assert!(matches!(resp, AppResponse::JsonWithUsage { .. }));
     }
@@ -1391,15 +1424,21 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["teechat-lite".into()],
                 rpm: 120,
-            key_set: "api".into(),
-            remaining_tokens: None,
+                key_set: "api".into(),
+                remaining_tokens: None,
             },
             120,
         );
         let body =
             br#"{"model":"teechat-pro","messages":[{"role":"user","content":"hi"}],"stream":true}"#;
         assert!(matches!(
-            app.handle(HttpMethod::Post, "/v1/chat/completions", Some(&auth), body, 1),
+            app.handle(
+                HttpMethod::Post,
+                "/v1/chat/completions",
+                Some(&auth),
+                body,
+                1
+            ),
             Err(ApiError::Forbidden(_))
         ));
     }
@@ -1417,8 +1456,8 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 2,
-            key_set: "api".into(),
-            remaining_tokens: None,
+                key_set: "api".into(),
+                remaining_tokens: None,
             },
             120,
         );
@@ -1446,8 +1485,8 @@ mod tests {
             crate::authz::OpenApiKeyPolicy {
                 models: vec!["*".into()],
                 rpm: 100,
-            key_set: "api".into(),
-            remaining_tokens: None,
+                key_set: "api".into(),
+                remaining_tokens: None,
             },
             1,
         );
@@ -1462,18 +1501,22 @@ mod tests {
 
     #[test]
     fn catalog_auth_still_allows_any_model() {
-        let app = build_test_app(
-            MockUpstream::default().with(
-                "/v1/chat/completions",
-                UpstreamResponse::Json(serde_json::json!({
-                    "id": "ok",
-                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}
-                })),
-            ),
-        );
+        let app = build_test_app(MockUpstream::default().with(
+            "/v1/chat/completions",
+            UpstreamResponse::Json(serde_json::json!({
+                "id": "ok",
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+            })),
+        ));
         let body = br#"{"model":"whatever","messages":[{"role":"user","content":"hi"}]}"#;
         assert!(app
-            .handle(HttpMethod::Post, "/v1/chat/completions", Some(AUTH), body, 1)
+            .handle(
+                HttpMethod::Post,
+                "/v1/chat/completions",
+                Some(AUTH),
+                body,
+                1
+            )
             .is_ok());
     }
 }

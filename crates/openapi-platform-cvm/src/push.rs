@@ -28,7 +28,9 @@ pub fn spawn_push_listener(
                 let mut buf = vec![0u8; 64 * 1024];
                 let mut total = 0usize;
                 loop {
-                    let Ok(n) = stream.read(&mut buf[total..]) else { break };
+                    let Ok(n) = stream.read(&mut buf[total..]) else {
+                        break;
+                    };
                     if n == 0 {
                         break;
                     }
@@ -36,7 +38,9 @@ pub fn spawn_push_listener(
                     if total >= buf.len() {
                         break;
                     }
-                    let Ok(body) = std::str::from_utf8(&buf[..total]) else { continue };
+                    let Ok(body) = std::str::from_utf8(&buf[..total]) else {
+                        continue;
+                    };
                     if !body.contains("\r\n\r\n") {
                         continue;
                     }

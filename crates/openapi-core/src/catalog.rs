@@ -59,7 +59,10 @@ pub struct KeyCatalog {
 }
 
 impl KeyCatalog {
-    pub fn from_signed(catalog: SignedKeyCatalog, verify_key: VerifyingKey) -> Result<Self, ApiError> {
+    pub fn from_signed(
+        catalog: SignedKeyCatalog,
+        verify_key: VerifyingKey,
+    ) -> Result<Self, ApiError> {
         catalog.verify_signature(&verify_key)?;
         Ok(Self {
             catalog,
@@ -80,10 +83,7 @@ impl KeyCatalog {
         self.catalog
             .keys
             .iter()
-            .find(|k| {
-                !k.revoked
-                    && k.key_hash_hex.as_bytes().ct_eq(hash.as_bytes()).into()
-            })
+            .find(|k| !k.revoked && k.key_hash_hex.as_bytes().ct_eq(hash.as_bytes()).into())
             .ok_or(ApiError::Unauthorized)
     }
 }
@@ -95,7 +95,10 @@ pub fn hash_api_key(api_key: &str) -> String {
 
 /// Build a signed catalog for unit tests (same canonical JSON as verification).
 #[cfg(any(test, feature = "test-utils"))]
-pub fn sign_test_catalog(keys: Vec<KeyRecord>, signing_key: &ed25519_dalek::SigningKey) -> SignedKeyCatalog {
+pub fn sign_test_catalog(
+    keys: Vec<KeyRecord>,
+    signing_key: &ed25519_dalek::SigningKey,
+) -> SignedKeyCatalog {
     use ed25519_dalek::Signer;
 
     let unsigned = UnsignedCatalog {

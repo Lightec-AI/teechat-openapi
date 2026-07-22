@@ -158,10 +158,7 @@ pub fn build_report_data_v1(
 /// Preimage bytes hashed into `report_data[0..32]` (version 1).
 ///
 /// Caller must pass an already-canonicalized [`EdgeIdentity`] (see [`canonicalize_edge_identity`]).
-pub fn build_preimage_v1(
-    nonce: &[u8],
-    edge: &EdgeIdentity,
-) -> Result<Vec<u8>, ChallengeBindError> {
+pub fn build_preimage_v1(nonce: &[u8], edge: &EdgeIdentity) -> Result<Vec<u8>, ChallengeBindError> {
     if nonce.len() != CHALLENGE_NONCE_LEN {
         return Err(ChallengeBindError::BadNonceLen(nonce.len()));
     }
@@ -354,9 +351,7 @@ mod tests {
         EdgeIdentity {
             build_version: "0.1.0".into(),
             code_hash: hex32(0x11),
-            measurement: Measurement::Mrenclave {
-                value: hex32(0xaa),
-            },
+            measurement: Measurement::Mrenclave { value: hex32(0xaa) },
             tls_cert_spki_sha256: hex32(0xbb),
         }
     }
@@ -434,9 +429,7 @@ mod tests {
         );
 
         let mut other_m = edge.clone();
-        other_m.measurement = Measurement::Mrenclave {
-            value: hex32(0xff),
-        };
+        other_m.measurement = Measurement::Mrenclave { value: hex32(0xff) };
         assert_ne!(
             base[..32],
             build_report_data_v1(&nonce, &other_m).unwrap()[..32]
@@ -486,9 +479,8 @@ mod tests {
         let nonce = [7u8; 32];
         let mut report = vec![0u8; 384];
         report[320] = 0xff;
-        let resp =
-            AttestationChallengeResponse::new(edge, &nonce, QuoteFormat::SgxReport, &report)
-                .unwrap();
+        let resp = AttestationChallengeResponse::new(edge, &nonce, QuoteFormat::SgxReport, &report)
+            .unwrap();
         assert!(verify_challenge_report_data(&nonce, &resp).is_err());
     }
 
@@ -499,9 +491,8 @@ mod tests {
         let rd = build_report_data_v1(&nonce, &edge).unwrap();
         let mut report = vec![0u8; SNP_REPORT_DATA_OFFSET + REPORT_DATA_LEN];
         report[SNP_REPORT_DATA_OFFSET..SNP_REPORT_DATA_OFFSET + 64].copy_from_slice(&rd);
-        let resp =
-            AttestationChallengeResponse::new(edge, &nonce, QuoteFormat::SnpReport, &report)
-                .unwrap();
+        let resp = AttestationChallengeResponse::new(edge, &nonce, QuoteFormat::SnpReport, &report)
+            .unwrap();
         verify_challenge_report_data(&nonce, &resp).unwrap();
     }
 
@@ -521,13 +512,9 @@ mod tests {
         quote[0] = 3; // Quote3 version LE
         quote[1] = 0;
         quote[SGX_DCAP_REPORT_DATA_OFFSET..SGX_DCAP_REPORT_DATA_OFFSET + 64].copy_from_slice(&rd);
-        let resp = AttestationChallengeResponse::new(
-            edge,
-            &nonce,
-            QuoteFormat::SgxDcapEcdsa,
-            &quote,
-        )
-        .unwrap();
+        let resp =
+            AttestationChallengeResponse::new(edge, &nonce, QuoteFormat::SgxDcapEcdsa, &quote)
+                .unwrap();
         assert_eq!(resp.quote_format, QuoteFormat::SgxDcapEcdsa);
         assert_eq!(sgx_dcap_quote_reportdata(&resp.quote_b64).unwrap(), rd);
         verify_challenge_report_data(&nonce, &resp).unwrap();

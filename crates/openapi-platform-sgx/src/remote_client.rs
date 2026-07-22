@@ -97,9 +97,9 @@ fn parse_http_url_with_path(url: &str) -> Result<(HttpEndpoint, String), ApiErro
         Some((auth, p)) => (auth, format!("/{p}")),
         None => (rest, "/".to_string()),
     };
-    let (host, port_s) = authority.split_once(':').ok_or_else(|| {
-        ApiError::BadRequest("l0 url must include explicit port".into())
-    })?;
+    let (host, port_s) = authority
+        .split_once(':')
+        .ok_or_else(|| ApiError::BadRequest("l0 url must include explicit port".into()))?;
     if host.is_empty() {
         return Err(ApiError::BadRequest("l0 host empty".into()));
     }
@@ -107,7 +107,13 @@ fn parse_http_url_with_path(url: &str) -> Result<(HttpEndpoint, String), ApiErro
         .parse()
         .map_err(|e| ApiError::BadRequest(format!("l0 port: {e}")))?;
     let path = if path.is_empty() { "/".into() } else { path };
-    Ok((HttpEndpoint { host: host.to_string(), port }, path))
+    Ok((
+        HttpEndpoint {
+            host: host.to_string(),
+            port,
+        },
+        path,
+    ))
 }
 
 fn revocations_url_from_authorize(authorize_url: &str) -> String {
@@ -190,9 +196,7 @@ pub fn build_remote_authenticator(
     let interval = Duration::from_secs(poll_secs.unwrap_or(DEFAULT_REVOKE_POLL_SECS).max(1));
     Ok(
         openapi_core::remote_auth::RemoteAuthenticator::with_poll_interval(
-            verify_key,
-            client,
-            interval,
+            verify_key, client, interval,
         ),
     )
 }

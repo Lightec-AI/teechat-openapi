@@ -46,13 +46,9 @@ mod tests {
 
     #[test]
     fn decode_json_ok() {
-        let resp = decode_upstream_response(
-            200,
-            "application/json",
-            br#"{"ok":true}"#.to_vec(),
-            false,
-        )
-        .unwrap();
+        let resp =
+            decode_upstream_response(200, "application/json", br#"{"ok":true}"#.to_vec(), false)
+                .unwrap();
         match resp {
             UpstreamResponse::Json(v) => assert_eq!(v["ok"], true),
             _ => panic!("expected json"),

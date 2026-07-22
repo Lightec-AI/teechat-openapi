@@ -50,7 +50,9 @@ impl EdgeUpstream {
                 );
             }
             Ok(None) => {
-                warn!("OPENAPI_GATEWAY_OPE_API_URL unset — falling back to clear HTTP upstream (dev)");
+                warn!(
+                    "OPENAPI_GATEWAY_OPE_API_URL unset — falling back to clear HTTP upstream (dev)"
+                );
                 Ok(Self::Clear(UreqUpstream::new(clear_base_url)))
             }
             Err(e) if profile.is_prod() => Err(e.into()),

@@ -44,13 +44,8 @@ impl SgxAttestationPlatform {
         quote_format: QuoteFormat,
     ) -> Result<AttestationChallengeResponse, PlatformError> {
         let _ = build_report_data_v1(nonce, &self.identity)?;
-        AttestationChallengeResponse::new(
-            self.identity.clone(),
-            nonce,
-            quote_format,
-            report_bytes,
-        )
-        .map_err(Into::into)
+        AttestationChallengeResponse::new(self.identity.clone(), nonce, quote_format, report_bytes)
+            .map_err(Into::into)
     }
 
     fn dcap_quote(&self, report_data: &[u8; 64]) -> Result<Vec<u8>, PlatformError> {
@@ -94,9 +89,7 @@ impl AttestationPlatform for SgxAttestationPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openapi_platform::{
-        build_report_data_v1, verify_challenge_report_data, REPORT_DATA_LEN,
-    };
+    use openapi_platform::{build_report_data_v1, verify_challenge_report_data, REPORT_DATA_LEN};
 
     fn hex32(b: u8) -> String {
         hex::encode([b; 32])

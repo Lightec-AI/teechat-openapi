@@ -27,10 +27,7 @@ pub fn build_sse_response(body: &[u8], usage: &UsageReport) -> Vec<u8> {
             payload.extend_from_slice(b"\n\n");
         }
     }
-    let trailer = format!(
-        "data: {}\n\n",
-        serde_json::json!({"teechat_usage": usage})
-    );
+    let trailer = format!("data: {}\n\n", serde_json::json!({"teechat_usage": usage}));
     payload.extend_from_slice(trailer.as_bytes());
 
     let headers = format!(

@@ -52,7 +52,8 @@ pub fn read_attested_launch_digest() -> Result<String, PlatformError> {
     }
 
     Err(PlatformError::Attestation(
-        "no attested launch digest source (/dev/sev-guest or OPENAPI_ATTESTED_LAUNCH_DIGEST)".into(),
+        "no attested launch digest source (/dev/sev-guest or OPENAPI_ATTESTED_LAUNCH_DIGEST)"
+            .into(),
     ))
 }
 

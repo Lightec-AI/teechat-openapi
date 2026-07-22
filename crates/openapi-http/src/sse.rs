@@ -1,11 +1,7 @@
 use openapi_core::usage::UsageReport;
 
 pub fn usage_trailer_bytes(usage: &UsageReport) -> Vec<u8> {
-    format!(
-        "data: {}\n\n",
-        serde_json::json!({"teechat_usage": usage})
-    )
-    .into_bytes()
+    format!("data: {}\n\n", serde_json::json!({"teechat_usage": usage})).into_bytes()
 }
 
 /// Append a signed usage report as the final SSE event.

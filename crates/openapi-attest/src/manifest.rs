@@ -171,11 +171,17 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-pub fn parse_and_validate_manifest(bytes: &[u8], key_id_hint: Option<&str>) -> Result<OpenApiEdgeManifest> {
-    let m: OpenApiEdgeManifest = serde_json::from_slice(bytes)
-        .map_err(|e| AttestError::Manifest(format!("json: {e}")))?;
+pub fn parse_and_validate_manifest(
+    bytes: &[u8],
+    key_id_hint: Option<&str>,
+) -> Result<OpenApiEdgeManifest> {
+    let m: OpenApiEdgeManifest =
+        serde_json::from_slice(bytes).map_err(|e| AttestError::Manifest(format!("json: {e}")))?;
     if m.schema != "teechat-openapi-edge-manifest/v1" {
-        return Err(AttestError::Manifest(format!("unsupported schema {}", m.schema)));
+        return Err(AttestError::Manifest(format!(
+            "unsupported schema {}",
+            m.schema
+        )));
     }
     if let Some(hint) = key_id_hint {
         if m.key_id != hint && hint == PINNED_KEY_ID {
@@ -227,7 +233,10 @@ pub fn fetch_signed_manifest(manifest_url: &str) -> Result<VerifiedManifest> {
     verify_signed_manifest_bytes(&bytes, &sig)
 }
 
-pub fn load_signed_manifest_files(manifest_path: &Path, sig_path: &Path) -> Result<VerifiedManifest> {
+pub fn load_signed_manifest_files(
+    manifest_path: &Path,
+    sig_path: &Path,
+) -> Result<VerifiedManifest> {
     let bytes = fs::read(manifest_path).map_err(|e| AttestError::Io(e.to_string()))?;
     let sig = fs::read_to_string(sig_path).map_err(|e| AttestError::Io(e.to_string()))?;
     verify_signed_manifest_bytes(&bytes, &sig)

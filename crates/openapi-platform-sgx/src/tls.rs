@@ -3,8 +3,8 @@ use std::io::{BufReader, Cursor};
 use std::path::Path;
 use std::sync::Arc;
 
-use openapi_platform::{PlatformError, Sealer, SealedTlsKeyBlob};
 use openapi_platform::tls::build_server_tls_config;
+use openapi_platform::{PlatformError, SealedTlsKeyBlob, Sealer};
 use rustls::pki_types::CertificateDer;
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use sha2::{Digest, Sha256};
@@ -109,8 +109,8 @@ pub fn spki_sha256_hex_from_cert_path(path: &Path) -> Result<String, TlsError> {
 
 /// SHA-256 of the leaf certificate's DER-encoded SubjectPublicKeyInfo.
 pub fn spki_sha256_hex_from_cert_der(cert_der: &[u8]) -> Result<String, TlsError> {
-    let spki = extract_spki_der(cert_der)
-        .map_err(|e| TlsError::Rustls(format!("SPKI extract: {e}")))?;
+    let spki =
+        extract_spki_der(cert_der).map_err(|e| TlsError::Rustls(format!("SPKI extract: {e}")))?;
     Ok(hex::encode(Sha256::digest(spki)))
 }
 
@@ -214,7 +214,10 @@ mod tests {
         let cert = params.self_signed(&key_pair).unwrap();
         let cert_path = dir.join("cert.pem");
         std::fs::write(&cert_path, cert.pem()).unwrap();
-        (cert_path.to_string_lossy().into_owned(), key_pair.serialize_pem().into_bytes())
+        (
+            cert_path.to_string_lossy().into_owned(),
+            key_pair.serialize_pem().into_bytes(),
+        )
     }
 
     #[test]
@@ -225,7 +228,9 @@ mod tests {
         let (cert_path, key_pem) = write_test_cert_and_key(&dir);
         let sealed_path = dir.join("key.sealed.json");
         let sealer = SgxSealer::new("mr-test");
-        sealer.seal_tls_key_to_file(&key_pem, &sealed_path, None).unwrap();
+        sealer
+            .seal_tls_key_to_file(&key_pem, &sealed_path, None)
+            .unwrap();
         let _ = TlsConfig::new(&cert_path)
             .load_server_config_from_sealed(&sealer, &sealed_path, None)
             .unwrap();

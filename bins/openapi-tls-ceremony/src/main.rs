@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use openapi_platform_cvm::{
-    assert_no_plaintext_privkey_on_disk, assert_prod_ceremony_policy, seal_from_acme_live,
-    acme_live_dir, TlsCeremonyPaths,
+    acme_live_dir, assert_no_plaintext_privkey_on_disk, assert_prod_ceremony_policy,
+    seal_from_acme_live, TlsCeremonyPaths,
 };
 
 fn main() -> anyhow::Result<()> {
@@ -14,8 +14,8 @@ fn main() -> anyhow::Result<()> {
         .next()
         .context("usage: openapi-tls-ceremony seal-from-acme [--cert-name NAME] [--letsencrypt-root DIR]\n       openapi-tls-ceremony verify-disk [--cert-name NAME] [--letsencrypt-root DIR]")?;
 
-    let cert_name = std::env::var("OPENAPI_ACME_CERT_NAME")
-        .unwrap_or_else(|_| "openapi.teechat.ai".into());
+    let cert_name =
+        std::env::var("OPENAPI_ACME_CERT_NAME").unwrap_or_else(|_| "openapi.teechat.ai".into());
     let le_root = std::env::var("OPENAPI_LETSENCRYPT_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/etc/letsencrypt"));
@@ -42,8 +42,7 @@ fn main() -> anyhow::Result<()> {
             assert_prod_ceremony_policy().context("ceremony policy")?;
             let paths = TlsCeremonyPaths::from_env().context("load ceremony paths")?;
             let live = acme_live_dir(le_root, cert_name);
-            seal_from_acme_live(&paths, &live, le_root, cert_name)
-                .context("seal from acme")?;
+            seal_from_acme_live(&paths, &live, le_root, cert_name).context("seal from acme")?;
             assert_no_plaintext_privkey_on_disk(le_root, cert_name, &[])
                 .context("verify no plaintext privkey")?;
             println!(

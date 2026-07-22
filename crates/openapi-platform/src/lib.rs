@@ -35,7 +35,9 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Measurement {
-    Mrenclave { value: String },
+    Mrenclave {
+        value: String,
+    },
     LaunchDigest {
         launch_digest: String,
         image_digest: String,

@@ -53,7 +53,9 @@ pub fn default_models() -> ModelsListResponse {
 }
 
 /// Parse `GET /v1/models` JSON from upstream.
-pub fn parse_models_json(value: serde_json::Value) -> Result<ModelsListResponse, crate::error::ApiError> {
+pub fn parse_models_json(
+    value: serde_json::Value,
+) -> Result<ModelsListResponse, crate::error::ApiError> {
     serde_json::from_value(value)
         .map_err(|e| crate::error::ApiError::Upstream(format!("invalid models list: {e}")))
 }

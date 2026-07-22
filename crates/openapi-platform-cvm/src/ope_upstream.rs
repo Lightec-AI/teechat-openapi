@@ -89,18 +89,15 @@ impl OpeDispatchUpstream {
         if let Some(e) = inv.engines.iter().find(|e| {
             e.healthy
                 && e.ready_sessions > 0
-                && e.models
-                    .iter()
-                    .any(|x| strip_model_provider_suffix(x) == m)
+                && e.models.iter().any(|x| strip_model_provider_suffix(x) == m)
         }) {
             return Ok(e);
         }
-        if let Some(e) = inv.engines.iter().find(|e| {
-            e.healthy
-                && e.models
-                    .iter()
-                    .any(|x| strip_model_provider_suffix(x) == m)
-        }) {
+        if let Some(e) = inv
+            .engines
+            .iter()
+            .find(|e| e.healthy && e.models.iter().any(|x| strip_model_provider_suffix(x) == m))
+        {
             return Ok(e);
         }
         Err(ApiError::Upstream(format!(
@@ -121,10 +118,7 @@ impl OpeDispatchUpstream {
             obj.insert("model".into(), Value::String(model.clone()));
         }
         let _guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        let inv = self
-            .client
-            .inventory(&ctx.key_set)
-            .map_err(Self::map_gw)?;
+        let inv = self.client.inventory(&ctx.key_set).map_err(Self::map_gw)?;
         let engine = Self::pick_engine(&inv, &model)?;
         let pre = self
             .client
@@ -146,7 +140,8 @@ impl OpeDispatchUpstream {
         enc: &EncryptedOpeRequest,
         ctx: &UpstreamRequestContext,
     ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), ApiError> {
-        let body = envelope_to_bytes(&enc.envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
+        let body =
+            envelope_to_bytes(&enc.envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
         let resp = self
             .client
             .dispatch(&DispatchRequest {
@@ -212,8 +207,10 @@ impl UpstreamForwarder for OpeDispatchUpstream {
             .map(|(_, v)| v.as_str());
 
         let text = decrypt_ope_body_to_text(&enc, &raw, ct)?;
-        let (prompt_tokens, completion_tokens) = usage_from_header_or_estimate(usage_hdr, body, &text);
-        let completion = openai_chat_completion_json(&model, &text, prompt_tokens, completion_tokens);
+        let (prompt_tokens, completion_tokens) =
+            usage_from_header_or_estimate(usage_hdr, body, &text);
+        let completion =
+            openai_chat_completion_json(&model, &text, prompt_tokens, completion_tokens);
         Ok(UpstreamResponse::Json(completion))
     }
 
@@ -224,13 +221,7 @@ impl UpstreamForwarder for OpeDispatchUpstream {
         body: Option<&[u8]>,
         out: &mut dyn Write,
     ) -> Result<StreamForwardResult, ApiError> {
-        self.forward_v1_stream_ctx(
-            method,
-            path,
-            body,
-            &UpstreamRequestContext::default(),
-            out,
-        )
+        self.forward_v1_stream_ctx(method, path, body, &UpstreamRequestContext::default(), out)
     }
 
     fn forward_v1_stream_ctx(
@@ -303,10 +294,7 @@ impl UpstreamForwarder for OpeDispatchUpstream {
         ctx: &UpstreamRequestContext,
         policy: &OpenApiKeyPolicy,
     ) -> Result<ModelsListResponse, ApiError> {
-        let inv = self
-            .client
-            .inventory(&ctx.key_set)
-            .map_err(Self::map_gw)?;
+        let inv = self.client.inventory(&ctx.key_set).map_err(Self::map_gw)?;
         let mut ids: Vec<String> = Vec::new();
         for e in &inv.engines {
             if !e.healthy {
@@ -395,7 +383,9 @@ fn decrypt_ndjson_to_text(enc: &EncryptedOpeRequest, raw: &[u8]) -> Result<Strin
             v.get("ciphertext").and_then(|x| x.as_str()),
         ) {
             if server_share.is_empty() {
-                return Err(ApiError::Upstream("ope ciphertext before server_share".into()));
+                return Err(ApiError::Upstream(
+                    "ope ciphertext before server_share".into(),
+                ));
             }
             let plain = decrypt_chunk(
                 &enc.envelope,
@@ -462,7 +452,9 @@ fn bridge_ope_to_openai_sse(
                 v.get("ciphertext").and_then(|x| x.as_str()),
             ) {
                 if server_share.is_empty() {
-                    return Err(ApiError::Upstream("ope ciphertext before server_share".into()));
+                    return Err(ApiError::Upstream(
+                        "ope ciphertext before server_share".into(),
+                    ));
                 }
                 let plain = decrypt_chunk(
                     &enc.envelope,
@@ -496,10 +488,7 @@ fn bridge_ope_to_openai_sse(
     let usage_src = trailer_usage.as_deref().or(usage_hdr);
     let (prompt_tokens, completion_tokens) =
         usage_from_header_or_estimate(usage_src, request_body, &full);
-    written += write_sse(
-        out,
-        &openai_sse_delta(&id, model, "", Some("stop")),
-    )?;
+    written += write_sse(out, &openai_sse_delta(&id, model, "", Some("stop")))?;
     // Final usage-bearing chunk (OpenAI-compatible clients).
     let usage_chunk = json!({
         "id": id,

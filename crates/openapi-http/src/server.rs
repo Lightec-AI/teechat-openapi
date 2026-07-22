@@ -259,22 +259,22 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::SigningKey;
     use openapi_core::auth::Authenticator;
-    use openapi_core::remote_auth::EdgeAuthenticator;
     use openapi_core::catalog::{hash_api_key, sign_test_catalog, KeyCatalog, KeyRecord};
     use openapi_core::config::Config;
     use openapi_core::handler::{HttpMethod, UpstreamResponse};
     use openapi_core::limits::Limits;
+    use openapi_core::remote_auth::EdgeAuthenticator;
     use openapi_core::usage::UsageSigner;
     use openapi_platform::{
         AttestationChallengeResponse, AttestationPlatform, EdgeIdentity, Measurement,
         PlatformError, QuoteFormat, REPORT_DATA_LEN,
     };
-    use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
-    use std::time::Duration;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::time::Duration;
 
     struct TestUpstream;
     impl UpstreamForwarder for TestUpstream {
@@ -303,9 +303,7 @@ mod tests {
             let edge = EdgeIdentity {
                 build_version: "t".into(),
                 code_hash: hex32(0x11),
-                measurement: Measurement::Mrenclave {
-                    value: hex32(0xaa),
-                },
+                measurement: Measurement::Mrenclave { value: hex32(0xaa) },
                 tls_cert_spki_sha256: hex32(0xbb),
             };
             let rd = openapi_platform::build_report_data_v1(nonce, &edge)?;

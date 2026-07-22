@@ -161,7 +161,9 @@ fn build_tls_acceptor(
 ) -> anyhow::Result<Option<Arc<TlsAcceptor>>> {
     let Some(cert_path) = &env.tls_cert_path else {
         if env.profile().is_prod() {
-            anyhow::bail!("prod requires OPENAPI_TLS_CERT_PATH and a working TLS acceptor (TLS-001)");
+            anyhow::bail!(
+                "prod requires OPENAPI_TLS_CERT_PATH and a working TLS acceptor (TLS-001)"
+            );
         }
         return Ok(None);
     };

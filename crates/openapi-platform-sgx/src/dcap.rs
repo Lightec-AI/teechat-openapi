@@ -20,9 +20,8 @@ pub struct DcapHelperClient {
 
 impl DcapHelperClient {
     pub fn from_url(url: &str) -> Result<Self, PlatformError> {
-        let endpoint = crate::upstream::parse_http_base_url(url).map_err(|e| {
-            PlatformError::Attestation(format!("OPENAPI_DCAP_HELPER_URL: {e}"))
-        })?;
+        let endpoint = crate::upstream::parse_http_base_url(url)
+            .map_err(|e| PlatformError::Attestation(format!("OPENAPI_DCAP_HELPER_URL: {e}")))?;
         Ok(Self { endpoint })
     }
 

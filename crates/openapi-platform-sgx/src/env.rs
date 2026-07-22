@@ -115,21 +115,19 @@ impl SgxEdgeEnv {
             .map_err(|e| EnvError::Catalog(format!("parse catalog: {e}")))?;
         let verify_bytes = hex::decode(&self.catalog_verify_key_hex)
             .map_err(|e| EnvError::Invalid("OPENAPI_CATALOG_VERIFY_KEY_HEX", e.to_string()))?;
-        let verify_key = VerifyingKey::from_bytes(
-            verify_bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| EnvError::Invalid("OPENAPI_CATALOG_VERIFY_KEY_HEX", "must be 32 bytes".into()))?,
-        )
-        .map_err(|e| EnvError::Invalid("OPENAPI_CATALOG_VERIFY_KEY_HEX", e.to_string()))?;
+        let verify_key =
+            VerifyingKey::from_bytes(verify_bytes.as_slice().try_into().map_err(|_| {
+                EnvError::Invalid("OPENAPI_CATALOG_VERIFY_KEY_HEX", "must be 32 bytes".into())
+            })?)
+            .map_err(|e| EnvError::Invalid("OPENAPI_CATALOG_VERIFY_KEY_HEX", e.to_string()))?;
         KeyCatalog::from_signed(signed, verify_key).map_err(|e| EnvError::Catalog(e.to_string()))
     }
 
     pub fn edge_authenticator(&self) -> Result<EdgeAuthenticator, EnvError> {
         match self.auth_mode {
-            OpenApiAuthMode::Catalog => Ok(EdgeAuthenticator::from_catalog(
-                Authenticator::new(self.load_catalog()?),
-            )),
+            OpenApiAuthMode::Catalog => Ok(EdgeAuthenticator::from_catalog(Authenticator::new(
+                self.load_catalog()?,
+            ))),
             OpenApiAuthMode::Remote => {
                 let authorize_url = self
                     .l0_authorize_url
@@ -160,10 +158,9 @@ impl SgxEdgeEnv {
     pub fn usage_signer(&self) -> Result<UsageSigner, EnvError> {
         let seed_bytes = hex::decode(&self.usage_sign_seed_hex)
             .map_err(|e| EnvError::Invalid("OPENAPI_USAGE_SIGN_SEED_HEX", e.to_string()))?;
-        let seed: [u8; 32] = seed_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| EnvError::Invalid("OPENAPI_USAGE_SIGN_SEED_HEX", "must be 32 bytes".into()))?;
+        let seed: [u8; 32] = seed_bytes.as_slice().try_into().map_err(|_| {
+            EnvError::Invalid("OPENAPI_USAGE_SIGN_SEED_HEX", "must be 32 bytes".into())
+        })?;
         Ok(UsageSigner::from_seed(seed))
     }
 
@@ -192,9 +189,9 @@ impl SgxEdgeEnv {
 
     /// Runtime sealer: MRENCLAVE from enclave report when inside SGX.
     pub fn runtime_sgx_sealer(&self) -> Result<SgxSealer, EnvError> {
-        let runtime_mr = local_mrenclave_hex().map_err(|e| EnvError::Invalid("MRENCLAVE", e.to_string()))?;
-        if (self.profile().is_prod() || self.mrenclave != "unknown")
-            && self.mrenclave != runtime_mr
+        let runtime_mr =
+            local_mrenclave_hex().map_err(|e| EnvError::Invalid("MRENCLAVE", e.to_string()))?;
+        if (self.profile().is_prod() || self.mrenclave != "unknown") && self.mrenclave != runtime_mr
         {
             return Err(EnvError::Invalid(
                 "OPENAPI_MRENCLAVE",
@@ -214,14 +211,14 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
         std::env::var(name).ok().filter(|s| !s.is_empty())
     }
 
-    let auth_mode = OpenApiAuthMode::parse(
-        &opt("OPENAPI_AUTH_MODE").unwrap_or_else(|| "catalog".into()),
-    );
+    let auth_mode =
+        OpenApiAuthMode::parse(&opt("OPENAPI_AUTH_MODE").unwrap_or_else(|| "catalog".into()));
     let catalog_json = opt("OPENAPI_CATALOG_JSON");
     let catalog_path = opt("OPENAPI_CATALOG_PATH").unwrap_or_default();
-    if auth_mode == OpenApiAuthMode::Catalog && catalog_json.is_none() && catalog_path.is_empty()
-    {
-        return Err(EnvError::Missing("OPENAPI_CATALOG_JSON|OPENAPI_CATALOG_PATH"));
+    if auth_mode == OpenApiAuthMode::Catalog && catalog_json.is_none() && catalog_path.is_empty() {
+        return Err(EnvError::Missing(
+            "OPENAPI_CATALOG_JSON|OPENAPI_CATALOG_PATH",
+        ));
     }
 
     Ok(SgxEdgeEnv {

@@ -134,11 +134,7 @@ fn load_trust_bundle(opts: &VerifyOptions) -> Result<TrustBundle> {
         }),
         Err(gh_err) => {
             // Transport / missing asset → teechat.ai signed fallback
-            let tip = fallback_tip(
-                &opts.github_owner,
-                &opts.github_repo,
-                Some(&default_gh_url),
-            );
+            let tip = fallback_tip(&opts.github_owner, &opts.github_repo, Some(&default_gh_url));
             let mut bundle = load_teechat_fallback(opts, &default_gh_url, Some(&tip))?;
             // Preserve why we fell back in tip (already set); annotate with GitHub error.
             bundle.trust_fallback_tip = format!("{tip} (GitHub error: {gh_err})");
@@ -152,10 +148,7 @@ fn load_teechat_fallback(
     default_gh_url: &str,
     tip: Option<&str>,
 ) -> Result<TrustBundle> {
-    let url = opts
-        .manifest_url
-        .as_deref()
-        .unwrap_or(DEFAULT_MANIFEST_URL);
+    let url = opts.manifest_url.as_deref().unwrap_or(DEFAULT_MANIFEST_URL);
     let manifest = fetch_signed_manifest(url)?;
     Ok(TrustBundle {
         manifest,

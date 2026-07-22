@@ -3,8 +3,8 @@ use std::io::{BufReader, Cursor};
 use std::path::Path;
 use std::sync::Arc;
 
-use openapi_platform::{PlatformError, Sealer, SealedTlsKeyBlob};
 use openapi_platform::tls::build_server_tls_config;
+use openapi_platform::{PlatformError, SealedTlsKeyBlob, Sealer};
 use rustls::pki_types::CertificateDer;
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use sha2::{Digest, Sha256};
@@ -94,8 +94,8 @@ pub fn spki_sha256_hex_from_cert_path(path: &Path) -> Result<String, TlsError> {
 
 /// SHA-256 of the leaf certificate's DER-encoded SubjectPublicKeyInfo.
 pub fn spki_sha256_hex_from_cert_der(cert_der: &[u8]) -> Result<String, TlsError> {
-    let spki = extract_spki_der(cert_der)
-        .map_err(|e| TlsError::Rustls(format!("SPKI extract: {e}")))?;
+    let spki =
+        extract_spki_der(cert_der).map_err(|e| TlsError::Rustls(format!("SPKI extract: {e}")))?;
     Ok(hex::encode(Sha256::digest(spki)))
 }
 
@@ -316,13 +316,7 @@ mod tests {
         let sealed_path = dir.join("out.sealed.json");
         let sealer = CvmSealer::new("ld-h", "id-h");
 
-        let blob = seal_tls_key_file(
-            &sealer,
-            Path::new(&key_path),
-            &sealed_path,
-            None,
-        )
-        .unwrap();
+        let blob = seal_tls_key_file(&sealer, Path::new(&key_path), &sealed_path, None).unwrap();
         assert_eq!(blob.measurement, sealer.sealing_measurement());
         let unsealed = sealer.unseal_tls_key_from_file(&sealed_path, None).unwrap();
         assert_eq!(unsealed, key_pem);

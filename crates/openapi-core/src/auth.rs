@@ -23,7 +23,10 @@ impl Authenticator {
         &self.catalog
     }
 
-    pub fn authenticate_bearer(&self, authorization: Option<&str>) -> Result<AuthContext, ApiError> {
+    pub fn authenticate_bearer(
+        &self,
+        authorization: Option<&str>,
+    ) -> Result<AuthContext, ApiError> {
         let header = authorization.ok_or(ApiError::Unauthorized)?;
         let token = header
             .strip_prefix("Bearer ")

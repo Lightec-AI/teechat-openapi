@@ -93,11 +93,7 @@ impl Sealer for CvmSealer {
                 &meta,
             );
         }
-        openapi_platform::seal_tls_private_key(
-            &self.sealing_measurement(),
-            key_pem,
-            seal_root,
-        )
+        openapi_platform::seal_tls_private_key(&self.sealing_measurement(), key_pem, seal_root)
     }
 
     fn unseal_tls_key(

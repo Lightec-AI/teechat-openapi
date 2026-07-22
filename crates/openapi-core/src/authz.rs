@@ -11,7 +11,10 @@ pub struct OpenApiKeyPolicy {
     pub rpm: u32,
     /// API key set for gateway key_set×engine_set matrix. Default `"api"`.
     /// Omitted from signed authz JSON when `"api"` so legacy fixtures / caches verify.
-    #[serde(default = "default_key_set", skip_serializing_if = "is_default_key_set")]
+    #[serde(
+        default = "default_key_set",
+        skip_serializing_if = "is_default_key_set"
+    )]
     pub key_set: String,
     /// Remaining prepaid tokens for this API account (optional). When set, edge
     /// applies the near-exhaust long-context gate (QUOTA-001).
@@ -220,7 +223,11 @@ pub fn sign_test_revocation(
     }
 }
 
-pub fn verify_family_b(payload: &[u8], signature_hex: &str, verify_key: &VerifyingKey) -> Result<(), ApiError> {
+pub fn verify_family_b(
+    payload: &[u8],
+    signature_hex: &str,
+    verify_key: &VerifyingKey,
+) -> Result<(), ApiError> {
     let sig_bytes = hex::decode(signature_hex)
         .map_err(|e| ApiError::Internal(format!("invalid signature hex: {e}")))?;
     let signature = Signature::from_slice(&sig_bytes)
@@ -279,7 +286,9 @@ mod tests {
         let fixture: serde_json::Value = serde_json::from_str(&raw).unwrap();
         let verify_hex = fixture["verify_key_hex"].as_str().unwrap();
         let verify_bytes = hex::decode(verify_hex).unwrap();
-        let verify_key = ed25519_dalek::VerifyingKey::from_bytes(verify_bytes.as_slice().try_into().unwrap()).unwrap();
+        let verify_key =
+            ed25519_dalek::VerifyingKey::from_bytes(verify_bytes.as_slice().try_into().unwrap())
+                .unwrap();
         let signed: SignedAuthz = serde_json::from_value(fixture["signed_authz"].clone()).unwrap();
         signed.verify_signature(&verify_key).unwrap();
         let payload_hex = fixture["unsigned_authz_bytes_hex"].as_str().unwrap();

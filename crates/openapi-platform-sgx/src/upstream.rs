@@ -71,7 +71,9 @@ impl UpstreamForwarder for TcpHttpUpstream {
         path: &str,
         body: Option<&[u8]>,
     ) -> Result<UpstreamResponse, ApiError> {
-        let wants_stream = body.map(openapi_core::upstream::body_wants_stream).unwrap_or(false);
+        let wants_stream = body
+            .map(openapi_core::upstream::body_wants_stream)
+            .unwrap_or(false);
         let mut stream = self.connect()?;
         match method {
             HttpMethod::Get => self.write_request(&mut stream, "GET", path, None)?,
@@ -82,7 +84,9 @@ impl UpstreamForwarder for TcpHttpUpstream {
         let mut buf = [0u8; 8192];
         if !(200..300).contains(&status) {
             let err = read_error_body(&mut stream, &framing, &mut buf)?;
-            return Err(ApiError::Upstream(format!("upstream status {status}: {err}")));
+            return Err(ApiError::Upstream(format!(
+                "upstream status {status}: {err}"
+            )));
         }
         let mut body_out = Vec::new();
         copy_body(&mut stream, &framing, &mut body_out, &mut buf)?;
@@ -108,7 +112,9 @@ impl UpstreamForwarder for TcpHttpUpstream {
         let mut buf = [0u8; 8192];
         if !(200..300).contains(&status) {
             let err = read_error_body(&mut stream, &framing, &mut buf)?;
-            return Err(ApiError::Upstream(format!("upstream status {status}: {err}")));
+            return Err(ApiError::Upstream(format!(
+                "upstream status {status}: {err}"
+            )));
         }
         let bytes_written = copy_body(&mut stream, &framing, out, &mut buf)?;
         Ok(StreamForwardResult {
@@ -135,12 +141,20 @@ fn content_type_from_headers(headers: &str) -> String {
 
 pub fn parse_http_base_url(base_url: &str) -> Result<HttpEndpoint, ApiError> {
     let url = base_url.trim().trim_end_matches('/');
-    let rest = url
-        .strip_prefix("http://")
-        .ok_or_else(|| ApiError::BadRequest("upstream must be http://IP:port (no TLS, no DNS)".into()))?;
+    let rest = url.strip_prefix("http://").ok_or_else(|| {
+        ApiError::BadRequest("upstream must be http://IP:port (no TLS, no DNS)".into())
+    })?;
     let (host, port) = match rest.split_once(':') {
-        Some((h, p)) => (h.to_string(), p.parse::<u16>().map_err(|e| ApiError::BadRequest(e.to_string()))?),
-        None => return Err(ApiError::BadRequest("upstream must include explicit port".into())),
+        Some((h, p)) => (
+            h.to_string(),
+            p.parse::<u16>()
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?,
+        ),
+        None => {
+            return Err(ApiError::BadRequest(
+                "upstream must include explicit port".into(),
+            ))
+        }
     };
     if host.is_empty() {
         return Err(ApiError::BadRequest("upstream host empty".into()));
@@ -186,18 +200,16 @@ mod tests {
                 };
                 let headers = &raw[..header_end];
                 let body_start = header_end + 4;
-                let cl = headers
-                    .split(|&b| b == b'\n')
-                    .find_map(|line| {
-                        let line = line.strip_suffix(b"\r").unwrap_or(line);
-                        let line_str = std::str::from_utf8(line).ok()?;
-                        let (name, value) = line_str.split_once(':')?;
-                        if name.eq_ignore_ascii_case("content-length") {
-                            value.trim().parse::<usize>().ok()
-                        } else {
-                            None
-                        }
-                    });
+                let cl = headers.split(|&b| b == b'\n').find_map(|line| {
+                    let line = line.strip_suffix(b"\r").unwrap_or(line);
+                    let line_str = std::str::from_utf8(line).ok()?;
+                    let (name, value) = line_str.split_once(':')?;
+                    if name.eq_ignore_ascii_case("content-length") {
+                        value.trim().parse::<usize>().ok()
+                    } else {
+                        None
+                    }
+                });
                 if let Some(len) = cl {
                     if raw.len() >= body_start + len {
                         return Ok(raw);
@@ -217,7 +229,8 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             let request = read_http_request(&mut stream).expect("read request");
             assert!(request.starts_with(b"POST /v1/chat/completions"));
-            let body = r#"{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2}}"#;
+            let body =
+                r#"{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2}}"#;
             let resp = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()

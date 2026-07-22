@@ -76,7 +76,11 @@ pub fn fetch_github_release_trust(
         bytes: attest_bytes,
     };
 
-    let sha256sums = match release.assets.iter().find(|a| a.name == SHA256SUMS_ASSET_NAME) {
+    let sha256sums = match release
+        .assets
+        .iter()
+        .find(|a| a.name == SHA256SUMS_ASSET_NAME)
+    {
         Some(a) => {
             let raw = http_get_github(&a.browser_download_url)?;
             let text = String::from_utf8(raw)
@@ -150,7 +154,10 @@ When you can reach GitHub, open {page} and confirm the release asset \
 
 fn http_get_github(url: &str) -> Result<Vec<u8>> {
     let resp = ureq::get(url)
-        .set("Accept", "application/vnd.github+json, application/octet-stream, */*")
+        .set(
+            "Accept",
+            "application/vnd.github+json, application/octet-stream, */*",
+        )
         .set("User-Agent", "teechat-openapi-attest")
         .call()
         .map_err(|e| AttestError::Http(format!("GET {url}: {e}")))?;

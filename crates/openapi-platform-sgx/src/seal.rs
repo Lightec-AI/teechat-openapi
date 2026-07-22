@@ -4,11 +4,11 @@
 use openapi_platform::{
     derive_seal_key, seal_tls_private_key, unseal_tls_private_key, SEAL_VERSION,
 };
+#[cfg(target_env = "sgx")]
+use openapi_platform::{unseal_tls_private_key, SEAL_VERSION};
 use openapi_platform::{
     Measurement, PlatformError, SealedTlsKeyBlob, Sealer, SEAL_VERSION_SGX_EGETKEY,
 };
-#[cfg(target_env = "sgx")]
-use openapi_platform::{unseal_tls_private_key, SEAL_VERSION};
 
 /// 16-byte EGETKEY label for TLS key sealing (Fortanix sealing API).
 pub const SGX_TLS_SEAL_LABEL: [u8; 16] = *b"teechat-tls-seal";
@@ -207,9 +207,10 @@ mod hw {
         let bytes = URL_SAFE_NO_PAD
             .decode(b64)
             .map_err(|e| PlatformError::Seal(format!("{field} decode: {e}")))?;
-        bytes.as_slice().try_into().map_err(|_| {
-            PlatformError::Seal(format!("{field} must be {N} bytes"))
-        })
+        bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| PlatformError::Seal(format!("{field} must be {N} bytes")))
     }
 
     fn egetkey(label: [u8; 16], seal_data: &SealData) -> Result<[u8; 16], ErrorCode> {
@@ -251,8 +252,7 @@ mod hw {
                 "seal_data attributes mismatch with current enclave".into(),
             ));
         }
-        egetkey(label, seal_data)
-            .map_err(|e| PlatformError::Seal(format!("EGETKEY unseal: {e:?}")))
+        egetkey(label, seal_data).map_err(|e| PlatformError::Seal(format!("EGETKEY unseal: {e:?}")))
     }
 
     fn aad_for(binding: &str) -> Vec<u8> {

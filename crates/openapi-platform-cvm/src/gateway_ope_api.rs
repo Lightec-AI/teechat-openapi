@@ -12,7 +12,9 @@ use openapi_platform::EdgeProfile;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::version::TLS13;
-use rustls::{ClientConfig, DigitallySignedStruct, Error as RustlsError, RootCertStore, SignatureScheme};
+use rustls::{
+    ClientConfig, DigitallySignedStruct, Error as RustlsError, RootCertStore, SignatureScheme,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{info, warn};
@@ -206,14 +208,18 @@ impl GatewayOpeApiClient {
     }
 
     /// `POST /v1/ope/api/preassign` — P1 epoch wrap material + assign_id.
-    pub fn preassign(&self, req: &PreassignRequest) -> Result<PreassignResponse, GatewayOpeApiError> {
+    pub fn preassign(
+        &self,
+        req: &PreassignRequest,
+    ) -> Result<PreassignResponse, GatewayOpeApiError> {
         if req.engine_id.trim().is_empty() {
             return Err(GatewayOpeApiError::Config(
                 "preassign requires non-empty engine_id".into(),
             ));
         }
         let url = self.url(PREASSIGN_PATH);
-        let body = serde_json::to_vec(req).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))?;
+        let body =
+            serde_json::to_vec(req).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))?;
         let resp = self
             .apply_auth(self.agent.post(&url))
             .set("Content-Type", "application/json")
@@ -251,7 +257,8 @@ impl GatewayOpeApiClient {
     pub fn dispatch_reader(
         &self,
         req: &DispatchRequest,
-    ) -> Result<(u16, Vec<(String, String)>, Box<dyn std::io::Read + Send>), GatewayOpeApiError> {
+    ) -> Result<(u16, Vec<(String, String)>, Box<dyn std::io::Read + Send>), GatewayOpeApiError>
+    {
         if req.engine_id.trim().is_empty() {
             return Err(GatewayOpeApiError::Config(
                 "dispatch requires non-empty engine_id".into(),
@@ -262,7 +269,11 @@ impl GatewayOpeApiClient {
             .apply_auth(self.agent.post(&url))
             .set("Content-Type", "application/json")
             .set(HEADER_ENGINE_ID, req.engine_id.trim());
-        if let Some(cid) = req.conversation_id.as_deref().map(str::trim).filter(|s| !s.is_empty())
+        if let Some(cid) = req
+            .conversation_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         {
             ureq_req = ureq_req.set(HEADER_CONVERSATION_ID, cid);
         }
@@ -526,7 +537,9 @@ fn urlencoding_minimal(s: &str) -> String {
     out
 }
 
-fn build_client_tls_config(config: &GatewayOpeApiConfig) -> Result<Arc<ClientConfig>, GatewayOpeApiError> {
+fn build_client_tls_config(
+    config: &GatewayOpeApiConfig,
+) -> Result<Arc<ClientConfig>, GatewayOpeApiError> {
     let builder = ClientConfig::builder_with_protocol_versions(&[&TLS13]);
 
     let builder = if config.insecure_skip_verify {
@@ -827,7 +840,11 @@ mod tests {
         );
 
         let cfg = GatewayOpeApiConfig::from_env().unwrap().unwrap();
-        assert!(cfg.client_cert_pem.as_ref().unwrap().contains("BEGIN CERTIFICATE"));
+        assert!(cfg
+            .client_cert_pem
+            .as_ref()
+            .unwrap()
+            .contains("BEGIN CERTIFICATE"));
         assert!(cfg.client_key_pem.as_ref().unwrap().contains("BEGIN"));
         GatewayOpeApiClient::try_new(cfg).expect("client builds with path PEMs");
 
@@ -971,7 +988,8 @@ mod tests {
             for _ in 0..2 {
                 let (mut stream, _) = listener.accept().unwrap();
                 let req = read_http_request(&mut stream);
-                let (status_line, body): (&str, &str) = if req.starts_with("GET /v1/ope/api/inventory")
+                let (status_line, body): (&str, &str) = if req
+                    .starts_with("GET /v1/ope/api/inventory")
                 {
                     assert!(req.contains("key_set=api"));
                     assert!(req.contains("Authorization: Bearer test-token"));
@@ -1112,7 +1130,9 @@ mod tests {
                 SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)),
                 SanType::DnsName("localhost".try_into().unwrap()),
             ];
-            server_params.key_usages.push(KeyUsagePurpose::DigitalSignature);
+            server_params
+                .key_usages
+                .push(KeyUsagePurpose::DigitalSignature);
             server_params
                 .extended_key_usages
                 .push(rcgen::ExtendedKeyUsagePurpose::ServerAuth);
@@ -1123,7 +1143,9 @@ mod tests {
             let client_key = rcgen::KeyPair::generate().unwrap();
             let mut client_params =
                 rcgen::CertificateParams::new(vec!["edge-client".into()]).unwrap();
-            client_params.key_usages.push(KeyUsagePurpose::DigitalSignature);
+            client_params
+                .key_usages
+                .push(KeyUsagePurpose::DigitalSignature);
             client_params
                 .extended_key_usages
                 .push(rcgen::ExtendedKeyUsagePurpose::ClientAuth);
@@ -1168,8 +1190,7 @@ mod tests {
                 let req = String::from_utf8_lossy(&buf[..n]);
                 assert!(req.contains("GET /v1/ope/api/health"));
                 assert!(req.contains("Authorization: Bearer test-token"));
-                let body =
-                    r#"{"ok":true,"plane":"ope_api","traffic_class_author":"api","auth":"mtls+bearer"}"#;
+                let body = r#"{"ok":true,"plane":"ope_api","traffic_class_author":"api","auth":"mtls+bearer"}"#;
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()

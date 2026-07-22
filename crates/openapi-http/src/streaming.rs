@@ -74,7 +74,10 @@ pub fn write_chunk<W: Write + ?Sized>(out: &mut W, data: &[u8]) -> Result<(), Ap
 }
 
 /// Append signed usage as a final SSE chunk, then terminate the chunked body.
-pub fn write_sse_usage_trailer<W: Write + ?Sized>(out: &mut W, usage: &UsageReport) -> Result<(), ApiError> {
+pub fn write_sse_usage_trailer<W: Write + ?Sized>(
+    out: &mut W,
+    usage: &UsageReport,
+) -> Result<(), ApiError> {
     write_chunk(out, &usage_trailer_bytes(usage))?;
     out.write_all(b"0\r\n\r\n")
         .map_err(|e| ApiError::Internal(e.to_string()))

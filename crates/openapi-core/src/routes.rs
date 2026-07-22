@@ -85,10 +85,7 @@ pub fn classify(method: HttpMethod, path: &str, mode: ProxyMode) -> RouteAction 
             HttpMethod::Post => RouteAction::InferencePost,
             _ => RouteAction::MethodNotAllowed,
         },
-        "/v1/completions"
-        | "/v1/embeddings"
-        | "/v1/responses"
-        | "/v1/moderations"
+        "/v1/completions" | "/v1/embeddings" | "/v1/responses" | "/v1/moderations"
             if method == HttpMethod::Post =>
         {
             RouteAction::InferencePost
@@ -260,11 +257,7 @@ mod tests {
     #[test]
     fn path_traversal_is_not_found() {
         assert_eq!(
-            classify(
-                HttpMethod::Get,
-                "/v1/../etc/passwd",
-                ProxyMode::Transparent
-            ),
+            classify(HttpMethod::Get, "/v1/../etc/passwd", ProxyMode::Transparent),
             RouteAction::NotFound
         );
     }

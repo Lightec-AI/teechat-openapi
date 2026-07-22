@@ -11,4 +11,6 @@ pub use server::{
     ConnectionHandler, Server, ServerError,
 };
 pub use sse::{append_usage_trailer, parse_sse_chunks, usage_trailer_bytes};
-pub use streaming::{write_chunk, write_sse_stream_headers, write_sse_usage_trailer, ChunkedWriter};
+pub use streaming::{
+    write_chunk, write_sse_stream_headers, write_sse_usage_trailer, ChunkedWriter,
+};

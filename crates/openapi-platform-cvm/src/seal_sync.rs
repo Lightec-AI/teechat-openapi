@@ -92,9 +92,8 @@ impl LocalSealer for CvmLocalSealer {
         cert_pem: Option<&[u8]>,
     ) -> attested_mtls_seal_sync::Result<()> {
         if let Some(parent) = self.sealed_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                attested_mtls_seal_sync::Error::Seal(format!("mkdir sealed: {e}"))
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|e| attested_mtls_seal_sync::Error::Seal(format!("mkdir sealed: {e}")))?;
         }
         self.sealer
             .seal_tls_key_to_file(key_pem, &self.sealed_path, None)
@@ -175,9 +174,8 @@ impl PeerAttestor for SnpChannelAttestor {
         channel_spki_sha256: &str,
     ) -> attested_mtls_seal_sync::Result<attested_mtls_seal_sync::AttestationEvidence> {
         let rd = Self::report_data_for_channel(channel_spki_sha256);
-        let report = snp_report_with_data(&rd).map_err(|e| {
-            attested_mtls_seal_sync::Error::Attestation(e.to_string())
-        })?;
+        let report = snp_report_with_data(&rd)
+            .map_err(|e| attested_mtls_seal_sync::Error::Attestation(e.to_string()))?;
         Ok(attested_mtls_seal_sync::AttestationEvidence {
             measurement: self.measurement.clone(),
             channel_spki_sha256: channel_spki_sha256.to_ascii_lowercase(),
@@ -235,7 +233,10 @@ impl PeerAttestor for SnpChannelAttestor {
 
 fn build_attestor(cfg: &SealSyncConfig, local_measurement: &str) -> EdgeSealSyncAttestor {
     let mut allow = cfg.allowlist.clone();
-    if !allow.iter().any(|a| a.eq_ignore_ascii_case(local_measurement)) {
+    if !allow
+        .iter()
+        .any(|a| a.eq_ignore_ascii_case(local_measurement))
+    {
         allow.push(local_measurement.to_ascii_lowercase());
     }
     if let Some(psk) = &cfg.mock_psk {
@@ -261,8 +262,7 @@ pub fn spawn_seal_sync_server(
     attestor: EdgeSealSyncAttestor,
     export_key: Arc<dyn Fn() -> attested_mtls_seal_sync::Result<Vec<u8>> + Send + Sync>,
 ) -> attested_mtls_seal_sync::Result<()> {
-    let (tls_cfg, channel_spki) =
-        server_tls_config(serving_cert_pem.as_bytes(), &serving_key_pem)?;
+    let (tls_cfg, channel_spki) = server_tls_config(serving_cert_pem.as_bytes(), &serving_key_pem)?;
     let listener = TcpListener::bind(listen)?;
     info!(%listen, channel_spki = %channel_spki, "seal-sync admin listening");
 
@@ -280,9 +280,8 @@ pub fn spawn_seal_sync_server(
             let export_cert = {
                 let cert_path = cert_path.clone();
                 move || {
-                    let pem = fs::read(&cert_path).map_err(|e| {
-                        attested_mtls_seal_sync::Error::Io(e)
-                    })?;
+                    let pem =
+                        fs::read(&cert_path).map_err(|e| attested_mtls_seal_sync::Error::Io(e))?;
                     Ok(Some(pem))
                 }
             };
@@ -342,8 +341,8 @@ pub fn maybe_start_seal_sync(
     }
 
     let cert_pem = fs::read_to_string(cert_path)?;
-    let measurement = read_attested_launch_digest()
-        .unwrap_or_else(|_| launch_digest.to_ascii_lowercase());
+    let measurement =
+        read_attested_launch_digest().unwrap_or_else(|_| launch_digest.to_ascii_lowercase());
     let identity = ServingIdentity::from_cert_pem(&cert_pem, measurement.clone())?;
     let attestor = build_attestor(cfg, &measurement);
 

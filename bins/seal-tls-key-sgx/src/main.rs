@@ -5,13 +5,11 @@ use openapi_platform::{assert_dev_host_seal_tool, load_edge_profile};
 use openapi_platform_sgx::{load_sgx_edge_env, seal_tls_key_file};
 
 fn main() -> anyhow::Result<()> {
-    let plain = std::env::args()
-        .nth(1)
-        .context(
-            "usage: seal-tls-key-sgx <plain-key.pem> <sealed-out.json>\n\n\
+    let plain = std::env::args().nth(1).context(
+        "usage: seal-tls-key-sgx <plain-key.pem> <sealed-out.json>\n\n\
              Dev/lab only. Production: seal inside the enclave ceremony — \
              do not host-seal under OPENAPI_PROFILE=prod (OPS-002).",
-        )?;
+    )?;
     let out = std::env::args()
         .nth(2)
         .context("usage: seal-tls-key-sgx <plain-key.pem> <sealed-out.json>")?;
@@ -31,10 +29,7 @@ fn main() -> anyhow::Result<()> {
     )
     .context("seal tls key")?;
 
-    println!(
-        "sealed tls key -> {} (mrenclave={})",
-        out, env.mrenclave
-    );
+    println!("sealed tls key -> {} (mrenclave={})", out, env.mrenclave);
     println!("measurement: {:?}", blob.measurement);
     Ok(())
 }
