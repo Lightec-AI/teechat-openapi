@@ -91,8 +91,8 @@ pub struct VerifiedGoldenManifest {
 }
 
 pub fn parse_golden_manifest(bytes: &[u8]) -> Result<GoldenDigestsManifest> {
-    let m: GoldenDigestsManifest =
-        serde_json::from_slice(bytes).map_err(|e| AttestError::Manifest(format!("golden json: {e}")))?;
+    let m: GoldenDigestsManifest = serde_json::from_slice(bytes)
+        .map_err(|e| AttestError::Manifest(format!("golden json: {e}")))?;
     if m.schema != GOLDEN_SCHEMA {
         return Err(AttestError::Manifest(format!(
             "unsupported golden schema {}",
@@ -118,7 +118,10 @@ pub fn verify_signed_golden_bytes(bytes: &[u8], sig_hex: &str) -> Result<Verifie
     })
 }
 
-pub fn load_signed_golden_files(manifest_path: &Path, sig_path: &Path) -> Result<VerifiedGoldenManifest> {
+pub fn load_signed_golden_files(
+    manifest_path: &Path,
+    sig_path: &Path,
+) -> Result<VerifiedGoldenManifest> {
     let bytes = fs::read(manifest_path).map_err(|e| AttestError::Io(e.to_string()))?;
     let sig = fs::read_to_string(sig_path).map_err(|e| AttestError::Io(e.to_string()))?;
     let mut v = verify_signed_golden_bytes(&bytes, &sig)?;
@@ -220,10 +223,9 @@ pub fn find_golden_release<'a>(
     }
     .ok_or_else(|| AttestError::Policy(format!("golden role {role} missing")))?;
 
-    let backend_obj = role_obj
-        .backends
-        .get(backend)
-        .ok_or_else(|| AttestError::Policy(format!("golden backend {backend} missing for {role}")))?;
+    let backend_obj = role_obj.backends.get(backend).ok_or_else(|| {
+        AttestError::Policy(format!("golden backend {backend} missing for {role}"))
+    })?;
 
     for rel in backend_obj.active.iter().chain(backend_obj.retired.iter()) {
         if rel.golden_version == golden_version {
@@ -278,8 +280,13 @@ mod tests {
           }
         }"#;
         let m = parse_golden_manifest(raw.as_bytes()).unwrap();
-        let g = find_golden_release(&m, "openapi", "sev-snp-cvm", "openapi-sev-snp-legacy-2026-07")
-            .unwrap();
+        let g = find_golden_release(
+            &m,
+            "openapi",
+            "sev-snp-cvm",
+            "openapi-sev-snp-legacy-2026-07",
+        )
+        .unwrap();
         assert_eq!(g.launch_digest.as_deref(), Some("aa"));
     }
 }
