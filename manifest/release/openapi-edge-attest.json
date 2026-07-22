@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-22T08:19:43.000Z",
-  "epoch": 7,
+  "published_at": "2026-07-22T08:28:34.000Z",
+  "epoch": 8,
   "not_after": "2027-07-21T01:15:00.000Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -19,19 +19,6 @@
       ],
       "active": [
         {
-          "build_version": "0.5.0",
-          "code_hash": "0b2eb1c2fcc570aeefb87fb3b40a080f4badf6e482aecd2525163670a8943787",
-          "quote_formats": [
-            "snp_report"
-          ],
-          "measurement": {
-            "kind": "launch_digest",
-            "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
-            "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
-          },
-          "notes": "0.5.0 train: AMD-SP seal + seal-sync + openapi-acme. Overlap with 0.4.5 during install (GitHub v0.5.0 binary)."
-        },
-        {
           "build_version": "0.4.5",
           "code_hash": "24ba616539d92c9bc84ae8bd2a55601d06746c5014b0547472887c78fb36213e",
           "quote_formats": [
@@ -46,6 +33,20 @@
         }
       ],
       "retired": [
+        {
+          "build_version": "0.5.0",
+          "code_hash": "0b2eb1c2fcc570aeefb87fb3b40a080f4badf6e482aecd2525163670a8943787",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
+            "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
+          },
+          "notes": "Retired: prod startup footgun (resolve_seal_root returned AMD-SP key into unseal which rejects Some).",
+          "retired_at": "2026-07-22T08:28:34.000Z"
+        },
         {
           "build_version": "0.4.2",
           "code_hash": "ed406727a3530f4ad138ea1d1b925d5d1fa28014c0391d195631d0c94ac55312",

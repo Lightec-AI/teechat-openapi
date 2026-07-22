@@ -39,7 +39,12 @@ impl CvmSealer {
         Self::new(launch_digest, image_digest)
     }
 
-    /// Resolve seal root from **host env** (`OPENAPI_SEAL_ROOT_HEX`); prod uses AMD-SP.
+    /// Resolve host-supplied seal root (`OPENAPI_SEAL_ROOT_HEX`).
+    ///
+    /// Prod always returns `None`: `seal_tls_key` / `unseal_tls_key` derive AMD-SP (v3)
+    /// or measurement HKDF (legacy v1) internally. Passing a host root into those
+    /// methods is rejected — so this must not return `Some(amd_sp_key)` (that was a
+    /// startup footgun: main forwarded it and unseal failed closed).
     pub fn resolve_seal_root(
         &self,
         host_env_supplied: Option<&[u8; 32]>,
@@ -50,11 +55,7 @@ impl CvmSealer {
                     "OPENAPI_SEAL_ROOT_HEX must not be host-supplied in prod".into(),
                 ));
             }
-            verify_launch_digest_attested(&self.launch_digest)?;
-            // Prod sealing key comes from AMD-SP; return the derived key for callers that
-            // still expect a 32-byte root (legacy v1 unseal path / tooling).
-            let meta = AmdSpSealMeta::teechat_default();
-            return Ok(Some(derive_amd_sp_seal_key(&meta)?));
+            return Ok(None);
         }
         Ok(host_env_supplied.copied())
     }
@@ -253,6 +254,8 @@ mod tests {
             let sealer = CvmSealer::with_profile(&launch, "id-prod", true);
             assert!(sealer.resolve_seal_root(Some(&[1u8; 32])).is_err());
             assert!(sealer.seal_tls_key(KEY, Some(&[1u8; 32])).is_err());
+            // Prod callers (bins/openapi) must get None and pass None into unseal.
+            assert_eq!(sealer.resolve_seal_root(None).unwrap(), None);
         });
     }
 
