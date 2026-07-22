@@ -1,0 +1,21 @@
+[package]
+name = "openapi-acme"
+description = "In-guest HTTP-01 ACME client (instant-acme) for prod-openapi CVM"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "openapi-acme"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+instant-acme = { workspace = true }
+rustls = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

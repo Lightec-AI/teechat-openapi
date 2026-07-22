@@ -81,6 +81,12 @@ export OPENAPI_TLS_CERT_PATH=cert.pem
 export OPENAPI_TLS_SEALED_KEY_PATH=tls-key.sealed.json
 ```
 
+### ACME / Let's Encrypt (not implemented for EDP yet)
+
+CVM uses in-guest **`openapi-acme`** (instant-acme). For SGX, **do not** run host certbot and import PEM into the enclave.
+
+Documented options (TeeChat sealing threat model §10): sync Rust ACME in-enclave, or CSR-split (keygen in EPC, host ACME sees CSR only). Production CVM path does not require Tokio-inside-EPC.
+
 ## 4. Run enclave
 
 ```bash
