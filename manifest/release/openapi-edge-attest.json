@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-22T09:21:14.000Z",
-  "epoch": 10,
+  "published_at": "2026-07-22T10:14:42.000Z",
+  "epoch": 11,
   "not_after": "2027-07-21T01:15:00.000Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -29,7 +29,8 @@
             "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
-          "notes": "0.5.4: Family B verify includes policy.max_in_flight (matches L0 authorize). Overlap with 0.5.2 during install."
+          "notes": "0.5.4: Family B verify includes policy.max_in_flight (matches L0 authorize). Overlap with 0.5.2 during install. Pins golden_version for split trust.",
+          "golden_version": "openapi-sev-snp-legacy-2026-07"
         },
         {
           "build_version": "0.5.2",
@@ -42,7 +43,8 @@
             "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
-          "notes": "0.5.2: fix prod seal_root\u2192unseal footgun; AMD-SP seal + seal-sync + openapi-acme. Overlap with 0.4.5 (GitHub v0.5.2)."
+          "notes": "0.5.2: fix prod seal_root\u2192unseal footgun; AMD-SP seal + seal-sync + openapi-acme. Overlap with 0.4.5 (GitHub v0.5.2).",
+          "golden_version": "openapi-sev-snp-legacy-2026-07"
         },
         {
           "build_version": "0.4.5",
@@ -55,7 +57,8 @@
             "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
-          "notes": "Same binary digest as 0.4.4 (GitHub v0.4.5); label/manifest sync after guest pin bump."
+          "notes": "Same binary digest as 0.4.4 (GitHub v0.4.5); label/manifest sync after guest pin bump.",
+          "golden_version": "openapi-sev-snp-legacy-2026-07"
         }
       ],
       "retired": [
@@ -71,7 +74,8 @@
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
           "notes": "Retired: prod startup footgun (resolve_seal_root returned AMD-SP key into unseal which rejects Some).",
-          "retired_at": "2026-07-22T08:28:34.000Z"
+          "retired_at": "2026-07-22T08:28:34.000Z",
+          "golden_version": "openapi-sev-snp-legacy-2026-07"
         },
         {
           "build_version": "0.4.2",
@@ -85,7 +89,8 @@
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
           "notes": "Production edge: F\u2032/L0 ureq keep-alive disabled + 300s F\u2032 read timeout. Overlap with 0.4.4 during install. Retired into overlap soak for 0.5.0.",
-          "retired_at": "2026-07-22T08:19:43.000Z"
+          "retired_at": "2026-07-22T08:19:43.000Z",
+          "golden_version": "openapi-sev-snp-legacy-2026-07"
         },
         {
           "build_version": "0.4.4",
@@ -99,7 +104,8 @@
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
           "notes": "Production edge: TLS recv buffer sized to max_body (fix WorkBuddy >256KiB silent close / 502). Overlap with 0.4.2 during install. Retired into overlap soak for 0.5.0.",
-          "retired_at": "2026-07-22T08:19:43.000Z"
+          "retired_at": "2026-07-22T08:19:43.000Z",
+          "golden_version": "openapi-sev-snp-legacy-2026-07"
         },
         {
           "build_version": "0.4.0",
@@ -113,7 +119,8 @@
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
           "notes": "Retired after 0.4.4 cutover (TLS buffer fix).",
-          "retired_at": "2026-07-21T01:15:00.000Z"
+          "retired_at": "2026-07-21T01:15:00.000Z",
+          "golden_version": "openapi-sev-snp-legacy-2026-07"
         },
         {
           "build_version": "0.3.0",
@@ -127,7 +134,8 @@
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
           "notes": "Retired after 0.4.2 cutover soak window.",
-          "retired_at": "2026-07-20T19:10:00.000Z"
+          "retired_at": "2026-07-20T19:10:00.000Z",
+          "golden_version": "openapi-sev-snp-legacy-2026-07"
         },
         {
           "build_version": "0.2.0",
@@ -141,7 +149,8 @@
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
           "notes": "Retired after 0.3.0 soak; removed from active before 0.4.0 train.",
-          "retired_at": "2026-07-20T16:10:55.000Z"
+          "retired_at": "2026-07-20T16:10:55.000Z",
+          "golden_version": "openapi-sev-snp-legacy-2026-07"
         },
         {
           "build_version": "0.1.1",
@@ -155,7 +164,8 @@
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
           "retired_at": "2026-07-17T09:20:00.000Z",
-          "notes": "Retired after 0.2.0 cutover. Prior placeholder hash was sha256(\"unknown\") when OPENAPI_CODE_HASH was unset."
+          "notes": "Retired after 0.2.0 cutover. Prior placeholder hash was sha256(\"unknown\") when OPENAPI_CODE_HASH was unset.",
+          "golden_version": "openapi-sev-snp-legacy-2026-07"
         }
       ]
     }

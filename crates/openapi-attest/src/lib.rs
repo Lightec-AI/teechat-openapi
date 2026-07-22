@@ -1,17 +1,17 @@
 //! Independent verifier for TeeChat OpenAPI edge attestation challenges.
 //!
 //! Trust order (fail-closed):
-//! 1. **GitHub Releases** (primary) — `openapi-edge-attest.json` + optional `SHA256SUMS`
-//!    from `Lightec-AI/teechat-openapi`.
-//! 2. **teechat.ai signed manifest** — only when GitHub is unreachable; verdict includes a tip.
-//! 3. Local `--manifest` / `--sig` override for ops.
+//! 1. **Golden digests** — `Lightec-AI/teechat-golden-digests` → www `.well-known/teechat/golden/`.
+//! 2. **App GitHub Releases** — `openapi-edge-attest.json` + `SHA256SUMS` from `teechat-openapi`.
+//! 3. **teechat.ai signed app manifest** — only when GitHub is unreachable.
+//! 4. Local `--manifest` / `--sig` (and golden local) override for ops.
 //!
-//! Then: TLS SPKI, challenge nonce, `report_data` binding, SGX DCAP or SEV-SNP quote crypto,
-//! and allowlist pin (build / code_hash / measurement).
+//! Live challenge is evidence only. See TeeChat `docs/design/golden-digests-publish.md`.
 
 pub mod challenge_client;
 pub mod error;
 pub mod github_release;
+pub mod golden;
 pub mod manifest;
 pub mod sgx;
 pub mod snp;

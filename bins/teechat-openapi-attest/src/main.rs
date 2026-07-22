@@ -7,6 +7,7 @@
 //! Primary trust: GitHub Releases. teechat.ai is a network fallback only.
 
 use anyhow::{bail, Context, Result};
+use openapi_attest::golden::GoldenLoadOptions;
 use openapi_attest::{
     verify_openapi_edge, VerifyOptions, DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO,
     DEFAULT_MANIFEST_URL,
@@ -32,6 +33,8 @@ fn main() -> Result<()> {
             let mut github_owner = DEFAULT_GITHUB_OWNER.to_string();
             let mut github_repo = DEFAULT_GITHUB_REPO.to_string();
             let mut github_tag = None;
+            let mut golden = GoldenLoadOptions::default();
+            let mut require_golden = true;
             let mut i = 0;
             while i < args.len() {
                 match args[i].as_str() {
@@ -61,6 +64,38 @@ fn main() -> Result<()> {
                         i += 1;
                         github_tag = Some(args.get(i).context("--github-tag value")?.clone());
                     }
+                    "--golden-github-owner" => {
+                        i += 1;
+                        golden.github_owner =
+                            args.get(i).context("--golden-github-owner value")?.clone();
+                    }
+                    "--golden-github-repo" => {
+                        i += 1;
+                        golden.github_repo =
+                            args.get(i).context("--golden-github-repo value")?.clone();
+                    }
+                    "--golden-github-tag" => {
+                        i += 1;
+                        golden.github_tag =
+                            Some(args.get(i).context("--golden-github-tag value")?.clone());
+                    }
+                    "--golden-manifest-url" => {
+                        i += 1;
+                        golden.www_url =
+                            Some(args.get(i).context("--golden-manifest-url value")?.clone());
+                    }
+                    "--golden-manifest" => {
+                        i += 1;
+                        golden.manifest_path =
+                            Some(args.get(i).context("--golden-manifest value")?.clone());
+                    }
+                    "--golden-sig" => {
+                        i += 1;
+                        golden.manifest_sig_path =
+                            Some(args.get(i).context("--golden-sig value")?.clone());
+                    }
+                    "--prefer-golden-www" => golden.prefer_www = true,
+                    "--skip-golden-digests" => require_golden = false,
                     other if !other.starts_with('-') => endpoint = other.to_string(),
                     other => bail!("unknown flag {other}"),
                 }
@@ -76,11 +111,18 @@ fn main() -> Result<()> {
                 github_owner,
                 github_repo,
                 github_tag,
+                golden,
+                require_golden_digests: require_golden,
             })
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             if verdict.trust_source == "teechat_fallback" && !verdict.trust_fallback_tip.is_empty()
             {
                 eprintln!("WARNING: {}", verdict.trust_fallback_tip);
+            }
+            if let Some(gs) = &verdict.golden_trust_source {
+                if gs.starts_with("teechat_fallback") {
+                    eprintln!("WARNING: golden digests via {gs}");
+                }
             }
             println!("{}", serde_json::to_string_pretty(&verdict)?);
             if !verdict.ok {
@@ -106,9 +148,9 @@ Usage:
   teechat-openapi-attest curl-example
 
 Trust (default):
-  1. GitHub Releases (Lightec-AI/teechat-openapi): openapi-edge-attest.json + SHA256SUMS
-  2. teechat.ai Ed25519-signed .well-known allowlist — only if GitHub is unreachable
-     (prints a tip on stderr; see trust_fallback_tip in JSON)
+  1. Golden digests — Lightec-AI/teechat-golden-digests (+ www .well-known/teechat/golden/)
+  2. App GitHub Releases (teechat-openapi): openapi-edge-attest.json + SHA256SUMS
+  3. teechat.ai signed app allowlist — only if app GitHub is unreachable
 
 Flags:
   --github-owner <org>   default: Lightec-AI
@@ -116,13 +158,17 @@ Flags:
   --github-tag <tag>     pin a release tag (default: latest)
   --prefer-teechat-manifest
                          skip GitHub; use teechat.ai (or --manifest-url) only
-  --manifest-url <url>   Fallback signed allowlist URL
-  --manifest <path>      Local manifest.json (use with --sig; trust_source=local)
-  --sig <path>           Local manifest.sig
+  --manifest-url <url>   Fallback signed app allowlist URL
+  --manifest <path>      Local app manifest.json (use with --sig)
+  --sig <path>           Local app manifest.sig
+  --golden-github-owner / --golden-github-repo / --golden-github-tag
+  --golden-manifest-url  www golden fallback URL
+  --golden-manifest / --golden-sig   local signed golden digests
+  --prefer-golden-www    skip golden GitHub; use www (or --golden-manifest-url)
+  --skip-golden-digests  break-glass: do not require golden channel
   --skip-session-spki    Monitors may omit peer SPKI bind (not recommended)
 
-Full verification covers: TLS SPKI, challenge nonce, report_data binding,
-SGX DCAP or SEV-SNP quote crypto, and the measurement allowlist.
+Challenge from the edge is evidence only — not the allowlist trust root.
 "
     );
 }

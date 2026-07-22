@@ -10,6 +10,9 @@ use crate::github_release::{
     cross_check_code_hash_against_sha256sums, fallback_tip, fetch_github_release_trust,
     github_releases_html_url, DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO,
 };
+use crate::golden::{
+    find_golden_release, load_golden_digests, measurement_matches_golden, GoldenLoadOptions,
+};
 use crate::manifest::{
     fetch_signed_manifest, find_matching_release, load_signed_manifest_files, VerifiedManifest,
     DEFAULT_MANIFEST_URL,
@@ -27,14 +30,19 @@ pub struct AttestationVerdict {
     pub build_version: String,
     pub code_hash: String,
     pub measurement: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub golden_version: Option<String>,
     pub tls_cert_spki_sha256: String,
     pub peer_spki_sha256: String,
     /// `spki` (contract) or `cert_der` (legacy edge that hashed the whole leaf).
     pub session_bind_mode: String,
     pub manifest_epoch: u64,
     pub manifest_key_id: String,
-    /// `github` | `teechat_fallback` | `local`
+    /// App allowlist source: `github` | `teechat_fallback` | `local`
     pub trust_source: String,
+    /// Golden digests source when `golden_version` was checked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub golden_trust_source: Option<String>,
     pub github_release_url: String,
     /// Non-empty when `trust_source=teechat_fallback`.
     pub trust_fallback_tip: String,
@@ -53,6 +61,10 @@ pub struct VerifyOptions {
     pub github_owner: String,
     pub github_repo: String,
     pub github_tag: Option<String>,
+    pub golden: GoldenLoadOptions,
+    /// When true, rows with `golden_version` must resolve on the golden channel.
+    /// Default true. Set false only for break-glass legacy tests.
+    pub require_golden_digests: bool,
 }
 
 impl Default for VerifyOptions {
@@ -67,6 +79,8 @@ impl Default for VerifyOptions {
             github_owner: DEFAULT_GITHUB_OWNER.into(),
             github_repo: DEFAULT_GITHUB_REPO.into(),
             github_tag: None,
+            golden: GoldenLoadOptions::default(),
+            require_golden_digests: true,
         }
     }
 }
@@ -95,6 +109,8 @@ pub fn verify_openapi_edge(opts: VerifyOptions) -> Result<AttestationVerdict> {
         peer.cert_sha256_hex,
         &hostname,
         opts.skip_session_spki,
+        &opts.golden,
+        opts.require_golden_digests,
     )
 }
 
@@ -166,6 +182,8 @@ fn finish_verify(
     peer_cert: String,
     hostname: &str,
     skip_session_spki: bool,
+    golden_opts: &GoldenLoadOptions,
+    require_golden_digests: bool,
 ) -> Result<AttestationVerdict> {
     let response = &outcome.response;
     let verified_manifest = &trust.manifest;
@@ -189,7 +207,7 @@ fn finish_verify(
         }
     }
 
-    find_matching_release(
+    let matched = find_matching_release(
         &verified_manifest.manifest,
         hostname,
         &response.edge.build_version,
@@ -197,6 +215,24 @@ fn finish_verify(
         &response.edge.measurement,
         response.quote_format,
     )?;
+
+    let mut golden_version = matched.golden_version.clone();
+    let mut golden_trust_source = None;
+    if let Some(gv) = golden_version.as_deref() {
+        if require_golden_digests {
+            let golden = load_golden_digests(golden_opts)?;
+            let grelease = find_golden_release(&golden.manifest, "openapi", "sev-snp-cvm", gv)?;
+            if !measurement_matches_golden(grelease, &response.edge.measurement) {
+                return Err(AttestError::Policy(format!(
+                    "challenge measurement does not match golden digests row {gv}"
+                )));
+            }
+            golden_trust_source = Some(golden.trust_source);
+        }
+    } else if require_golden_digests {
+        // Transitional: allow legacy rows without golden_version (embedded measurement only).
+        golden_version = None;
+    }
 
     cross_check_code_hash_against_sha256sums(
         &response.edge.code_hash,
@@ -247,12 +283,14 @@ fn finish_verify(
         build_version: response.edge.build_version.clone(),
         code_hash: response.edge.code_hash.clone(),
         measurement,
+        golden_version,
         tls_cert_spki_sha256: response.edge.tls_cert_spki_sha256.clone(),
         peer_spki_sha256: peer_spki,
         session_bind_mode,
         manifest_epoch: verified_manifest.manifest.epoch,
         manifest_key_id: verified_manifest.key_id.clone(),
         trust_source: trust.trust_source,
+        golden_trust_source,
         github_release_url: trust.github_release_url,
         trust_fallback_tip: trust.trust_fallback_tip,
         hardware,

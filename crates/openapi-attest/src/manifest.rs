@@ -65,6 +65,11 @@ pub struct EdgeRelease {
     pub build_version: String,
     pub code_hash: String,
     pub quote_formats: Vec<String>,
+    /// Pin into public golden digests allowlist (`teechat-golden-digests`).
+    /// When set, TEE digests are authoritative from that channel (not this row's
+    /// transitional `measurement` alone). See golden-digests-publish.md.
+    #[serde(default)]
+    pub golden_version: Option<String>,
     pub measurement: Measurement,
     #[serde(default)]
     pub notes: Option<String>,
@@ -284,7 +289,9 @@ pub fn find_matching_release<'a>(
         if !rel.code_hash.eq_ignore_ascii_case(code_hash) {
             continue;
         }
-        if !measurement_eq(&rel.measurement, measurement) {
+        // When golden_version is pinned, TEE digests are checked against the golden
+        // channel after this match — skip embedded measurement equality here.
+        if rel.golden_version.is_none() && !measurement_eq(&rel.measurement, measurement) {
             continue;
         }
         if !rel.quote_formats.iter().any(|f| f == fmt) {
