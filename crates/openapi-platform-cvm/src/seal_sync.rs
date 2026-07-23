@@ -185,6 +185,15 @@ impl SplitTrustChallengeGate {
         }
         opts.golden = golden;
         opts.require_golden_digests = true;
+        // Seal-sync peers often challenge via QEMU hostfwd IPs; allowlist rows use
+        // the public hostname.
+        if opts.allowlist_hostname.is_none() {
+            let host = std::env::var("OPENAPI_SEAL_SYNC_VERIFY_HOSTNAME")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "openapi.teechat.ai".into());
+            opts.allowlist_hostname = Some(host);
+        }
         Self {
             verify_opts_template: opts,
         }
@@ -342,7 +351,16 @@ impl PeerAttestor for SnpChannelAttestor {
 
     fn allowlisted(&self, measurement: &str) -> bool {
         let m = measurement.to_ascii_lowercase();
-        self.allowlist.iter().any(|a| a == &m) || self.measurement.eq_ignore_ascii_case(&m)
+        if self.allowlist.iter().any(|a| a == &m) || self.measurement.eq_ignore_ascii_case(&m) {
+            return true;
+        }
+        // Explicit OPENAPI_SEAL_SYNC_ALLOWLIST → deny unknowns. When unset, channel
+        // allowlist is secondary to split-trust challenge (prod root).
+        let explicit = std::env::var("OPENAPI_SEAL_SYNC_ALLOWLIST")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .is_some();
+        !explicit
     }
 }
 
@@ -459,14 +477,18 @@ pub fn run_seal_sync_client(
     Ok(outcome)
 }
 
-/// Wire seal-sync from edge env after TLS material is available.
+/// Wire seal-sync from edge env.
+///
+/// Cold fleet (`seal_sync` + peer, no sealed key yet): runs the import client with a
+/// placeholder local SPKI so export always migrates. Export listen still requires a
+/// real unsealed key + cert.
 pub fn maybe_start_seal_sync(
     cfg: &SealSyncConfig,
     launch_digest: &str,
     cert_path: &Path,
     sealed_path: &Path,
     sealer: CvmSealer,
-    unsealed_key_pem: Vec<u8>,
+    unsealed_key_pem: Option<Vec<u8>>,
 ) -> anyhow::Result<()> {
     if !cfg.enabled() {
         return Ok(());
@@ -490,10 +512,20 @@ pub fn maybe_start_seal_sync(
         }
     }
 
-    let cert_pem = fs::read_to_string(cert_path)?;
     let measurement =
         read_attested_launch_digest().unwrap_or_else(|_| launch_digest.to_ascii_lowercase());
-    let identity = ServingIdentity::from_cert_pem(&cert_pem, measurement.clone())?;
+    let cert_pem = fs::read_to_string(cert_path).ok();
+    let identity = if let Some(pem) = cert_pem.as_deref() {
+        ServingIdentity::from_cert_pem(pem, measurement.clone())?
+    } else {
+        // Cold start: no cert yet — force SPKI mismatch so peer export always migrates.
+        warn!("seal-sync cold start: no local cert; using placeholder SPKI identity");
+        ServingIdentity {
+            spki_sha256: "0".repeat(64),
+            cert_sha256: "0".repeat(64),
+            measurement: measurement.clone(),
+        }
+    };
     let attestor = build_attestor(cfg, &measurement);
 
     let gate = if cfg.use_split_trust_gate() {
@@ -520,13 +552,19 @@ pub fn maybe_start_seal_sync(
     }
 
     if let Some(listen) = &cfg.listen {
-        let key = unsealed_key_pem.clone();
+        let key_pem = unsealed_key_pem.ok_or_else(|| {
+            anyhow::anyhow!("seal-sync listen requires unsealed TLS key (export)")
+        })?;
+        let cert_pem = cert_pem.ok_or_else(|| {
+            anyhow::anyhow!("seal-sync listen requires OPENAPI_TLS_CERT_PATH")
+        })?;
+        let key = key_pem.clone();
         let export_key: Arc<dyn Fn() -> attested_mtls_seal_sync::Result<Vec<u8>> + Send + Sync> =
             Arc::new(move || Ok(key.clone()));
         spawn_seal_sync_server(
             listen,
             &cert_pem,
-            unsealed_key_pem,
+            key_pem,
             cert_path.to_path_buf(),
             identity,
             attestor,

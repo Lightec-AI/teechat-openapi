@@ -17,7 +17,7 @@ use crate::golden::{
     find_golden_release, load_golden_digests, measurement_matches_golden, GoldenLoadOptions,
 };
 use crate::manifest::{
-    fetch_signed_manifest, find_matching_release, load_signed_manifest_files, VerifiedManifest,
+    fetch_signed_manifest, find_matching_releases, load_signed_manifest_files, VerifiedManifest,
     DEFAULT_MANIFEST_URL,
 };
 use crate::sgx;
@@ -58,6 +58,9 @@ pub struct AttestationVerdict {
 #[derive(Debug, Clone)]
 pub struct VerifyOptions {
     pub endpoint: String,
+    /// When set, use this hostname for app/ceremony allowlist matching instead of
+    /// the endpoint URL host (seal-sync challenges often use `https://10.0.2.2:8446`).
+    pub allowlist_hostname: Option<String>,
     pub manifest_url: Option<String>,
     pub manifest_path: Option<String>,
     pub manifest_sig_path: Option<String>,
@@ -81,6 +84,7 @@ impl Default for VerifyOptions {
     fn default() -> Self {
         Self {
             endpoint: "https://openapi.teechat.ai".into(),
+            allowlist_hostname: None,
             manifest_url: Some(DEFAULT_MANIFEST_URL.into()),
             manifest_path: None,
             manifest_sig_path: None,
@@ -106,10 +110,15 @@ struct TrustBundle {
 }
 
 pub fn verify_openapi_edge(opts: VerifyOptions) -> Result<AttestationVerdict> {
-    let hostname = hostname_of(&opts.endpoint)?;
+    let connect_host = hostname_of(&opts.endpoint)?;
     let port = port_of(&opts.endpoint)?;
+    let allowlist_host = opts
+        .allowlist_hostname
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&connect_host);
 
-    let peer = fetch_peer_tls_identity(&hostname, port)?;
+    let peer = fetch_peer_tls_identity(&connect_host, port)?;
     let trust = load_trust_bundle(&opts)?;
 
     let nonce = generate_nonce();
@@ -119,7 +128,7 @@ pub fn verify_openapi_edge(opts: VerifyOptions) -> Result<AttestationVerdict> {
         trust,
         peer.spki_sha256_hex,
         peer.cert_sha256_hex,
-        &hostname,
+        allowlist_host,
         opts.skip_session_spki,
         &opts.golden,
         opts.require_golden_digests,
@@ -223,7 +232,7 @@ fn finish_verify(
         }
     }
 
-    let matched = find_matching_release(
+    let candidates = find_matching_releases(
         &verified_manifest.manifest,
         hostname,
         &response.edge.build_version,
@@ -233,23 +242,51 @@ fn finish_verify(
         response.edge.policy_hash.as_deref(),
     )?;
 
-    let mut golden_version = matched.golden_version.clone();
+    // Same code_hash may pin ceremony + seal_sync goldens — pick the row whose
+    // golden digests match the live challenge measurement.
     let mut golden_trust_source = None;
-    if let Some(gv) = golden_version.as_deref() {
-        if require_golden_digests {
-            let golden = load_golden_digests(golden_opts)?;
-            let grelease = find_golden_release(&golden.manifest, "openapi", "sev-snp-cvm", gv)?;
-            if !measurement_matches_golden(grelease, &response.edge.measurement) {
-                return Err(AttestError::Policy(format!(
-                    "challenge measurement does not match golden digests row {gv}"
-                )));
+    let mut golden_version = None;
+    let mut matched = None;
+    if require_golden_digests {
+        let golden = load_golden_digests(golden_opts)?;
+        for rel in &candidates {
+            match rel.golden_version.as_deref() {
+                Some(gv) => {
+                    let Ok(grelease) =
+                        find_golden_release(&golden.manifest, "openapi", "sev-snp-cvm", gv)
+                    else {
+                        continue;
+                    };
+                    if measurement_matches_golden(grelease, &response.edge.measurement) {
+                        golden_version = Some(gv.to_string());
+                        golden_trust_source = Some(golden.trust_source.clone());
+                        matched = Some(*rel);
+                        break;
+                    }
+                }
+                None => {
+                    // Transitional: embedded measurement already matched in find_matching_releases.
+                    golden_version = None;
+                    matched = Some(*rel);
+                    break;
+                }
             }
-            golden_trust_source = Some(golden.trust_source);
         }
-    } else if require_golden_digests {
-        // Transitional: allow legacy rows without golden_version (embedded measurement only).
-        golden_version = None;
+        if matched.is_none() {
+            return Err(AttestError::Policy(
+                "challenge measurement does not match any golden digests row for this build/code_hash"
+                    .into(),
+            ));
+        }
+    } else {
+        matched = candidates.first().copied();
+        golden_version = matched.and_then(|r| r.golden_version.clone());
     }
+    let _matched = matched.ok_or_else(|| {
+        AttestError::Policy(
+            "edge measurement/build/code_hash/policy_hash not on allowlist for this hostname".into(),
+        )
+    })?;
 
     if require_ceremony_spki {
         let ceremony = load_ceremony_allowlist(ceremony_opts)?;

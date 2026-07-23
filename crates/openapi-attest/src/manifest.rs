@@ -269,7 +269,10 @@ pub(crate) fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-pub fn find_matching_release<'a>(
+/// All allowlist rows matching build/code_hash/quote (and embedded measurement when
+/// `golden_version` is absent). Callers with golden digests should disambiguate
+/// ceremony vs seal_sync pins by live measurement.
+pub fn find_matching_releases<'a>(
     manifest: &'a OpenApiEdgeManifest,
     hostname: &str,
     build_version: &str,
@@ -277,7 +280,7 @@ pub fn find_matching_release<'a>(
     measurement: &Measurement,
     quote_format: QuoteFormat,
     policy_hash: Option<&str>,
-) -> Result<&'a EdgeRelease> {
+) -> Result<Vec<&'a EdgeRelease>> {
     let host = hostname.to_ascii_lowercase();
     let region = manifest
         .regions
@@ -286,8 +289,8 @@ pub fn find_matching_release<'a>(
         .ok_or_else(|| AttestError::Policy(format!("hostname {hostname} not in manifest")))?;
 
     let fmt = quote_format.as_str();
-    let candidates = region.active.iter().chain(region.retired.iter());
-    for rel in candidates {
+    let mut out = Vec::new();
+    for rel in region.active.iter().chain(region.retired.iter()) {
         if rel.build_version != build_version {
             continue;
         }
@@ -317,11 +320,35 @@ pub fn find_matching_release<'a>(
                 continue;
             }
         }
-        return Ok(rel);
+        out.push(rel);
     }
-    Err(AttestError::Policy(
-        "edge measurement/build/code_hash/policy_hash not on allowlist for this hostname".into(),
-    ))
+    if out.is_empty() {
+        return Err(AttestError::Policy(
+            "edge measurement/build/code_hash/policy_hash not on allowlist for this hostname".into(),
+        ));
+    }
+    Ok(out)
+}
+
+pub fn find_matching_release<'a>(
+    manifest: &'a OpenApiEdgeManifest,
+    hostname: &str,
+    build_version: &str,
+    code_hash: &str,
+    measurement: &Measurement,
+    quote_format: QuoteFormat,
+    policy_hash: Option<&str>,
+) -> Result<&'a EdgeRelease> {
+    let rels = find_matching_releases(
+        manifest,
+        hostname,
+        build_version,
+        code_hash,
+        measurement,
+        quote_format,
+        policy_hash,
+    )?;
+    Ok(rels[0])
 }
 
 fn measurement_eq(a: &Measurement, b: &Measurement) -> bool {

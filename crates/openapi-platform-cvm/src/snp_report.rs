@@ -24,29 +24,50 @@ pub fn snp_report_with_data(report_data: &[u8; REPORT_DATA_LEN]) -> Result<Vec<u
 }
 
 #[cfg(target_os = "linux")]
-fn snp_report_linux(report_data: &[u8; REPORT_DATA_LEN]) -> Result<Vec<u8>, PlatformError> {
-    use std::path::Path;
-    use std::process::Command;
-
-    let snpguest = Command::new("sh")
+fn snpguest_bin() -> String {
+    // Prefer explicit path (Talos data-disk layout) — do not rely on PATH alone.
+    if let Ok(p) = std::env::var("OPENAPI_SNPGUEST_BIN") {
+        let p = p.trim();
+        if !p.is_empty() {
+            return p.to_string();
+        }
+    }
+    std::process::Command::new("sh")
         .arg("-c")
         .arg("command -v snpguest")
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "snpguest".into())
+}
 
-    let Some(snpguest) = snpguest else {
+#[cfg(target_os = "linux")]
+fn snp_report_linux(report_data: &[u8; REPORT_DATA_LEN]) -> Result<Vec<u8>, PlatformError> {
+    use std::path::Path;
+    use std::process::Command;
+
+    let snpguest = snpguest_bin();
+    let snpguest_ok = Path::new(&snpguest).is_file()
+        || Command::new("sh")
+            .arg("-c")
+            .arg(format!("command -v {snpguest}"))
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .is_some();
+
+    if !snpguest_ok {
         let hint = if Path::new("/dev/sev-guest").exists() {
-            "install snpguest (device present but CLI missing)"
+            "install snpguest (device present but CLI missing); set OPENAPI_SNPGUEST_BIN"
         } else {
             "/dev/sev-guest missing and snpguest not in PATH"
         };
         return Err(PlatformError::Attestation(format!(
             "SNP report unavailable: {hint}"
         )));
-    };
+    }
 
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

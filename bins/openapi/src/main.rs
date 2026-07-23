@@ -6,8 +6,9 @@ use openapi_core::App;
 use openapi_edge::{run_edge_server, ReadWriteConn};
 use openapi_platform::Sealer;
 use openapi_platform_cvm::{
-    load_edge_env, log_compile_time_features, maybe_start_seal_sync, CvmAttestationPlatform,
-    CvmSealer, EdgeUpstream, SealSyncConfig, TlsAcceptor, TlsConfig,
+    load_edge_env, log_compile_time_features, maybe_start_seal_sync,
+    resolve_tls_key_policy_for_profile, CvmAttestationPlatform, CvmSealer, EdgeUpstream,
+    SealSyncConfig, TlsAcceptor, TlsConfig, TlsKeyPolicy,
 };
 use tracing::{info, warn};
 
@@ -35,11 +36,60 @@ fn main() -> anyhow::Result<()> {
     let sealer = env.cvm_sealer();
     let seal_root = env.seal_root().context("seal root")?;
 
+    let seal_sync_cfg = SealSyncConfig::from_env();
+    let sealed_path = env
+        .tls_sealed_key_path
+        .as_ref()
+        .map(PathBuf::from);
+    let cert_path = env.tls_cert_path.as_ref().map(PathBuf::from);
+    let sealed_missing = sealed_path
+        .as_ref()
+        .map(|p| !p.exists())
+        .unwrap_or(false);
+
+    let prod = env.profile().is_prod();
+    let key_policy = resolve_tls_key_policy_for_profile(prod)
+        .map_err(anyhow::Error::msg)
+        .context("tls_key_policy")?;
+
+    // Fleet cold start: sealed key absent — run seal-sync import before any unseal.
+    if sealed_missing
+        && seal_sync_cfg.peer.is_some()
+        && key_policy == TlsKeyPolicy::SealSync
+    {
+        let cert_path = cert_path
+            .clone()
+            .context("OPENAPI_TLS_CERT_PATH required for seal-sync cold start")?;
+        let sealed_path = sealed_path
+            .clone()
+            .context("OPENAPI_TLS_SEALED_KEY_PATH required for seal-sync cold start")?;
+        info!(
+            peer = ?seal_sync_cfg.peer,
+            "seal_sync cold start: importing sealed TLS from peer before serve"
+        );
+        maybe_start_seal_sync(
+            &seal_sync_cfg,
+            &env.launch_digest,
+            &cert_path,
+            &sealed_path,
+            sealer.clone(),
+            None,
+        )
+        .context("seal-sync cold start")?;
+        if !sealed_path.exists() {
+            anyhow::bail!(
+                "seal-sync cold start finished but sealed key still missing at {}",
+                sealed_path.display()
+            );
+        }
+        info!("seal-sync cold start: sealed key present — continuing warm path");
+    }
+
     let tls_spki = tls_spki_hex(&env, &sealer, seal_root.as_ref())?;
 
     // Blue/green sealed-key sync (private admin :9443 / peer) — see attested-mtls-seal-sync.
-    let seal_sync_cfg = SealSyncConfig::from_env();
-    if seal_sync_cfg.enabled() {
+    // Warm path: re-run when listen/export needed or peer realign.
+    if seal_sync_cfg.enabled() && !(sealed_missing && seal_sync_cfg.peer.is_some()) {
         let (cert_path, sealed_path, key_pem) =
             load_tls_material_for_seal_sync(&env, &sealer, seal_root.as_ref())
                 .context("seal-sync tls material")?;
@@ -49,9 +99,23 @@ fn main() -> anyhow::Result<()> {
             &cert_path,
             &sealed_path,
             sealer.clone(),
-            key_pem,
+            Some(key_pem),
         )
         .context("seal-sync")?;
+    } else if seal_sync_cfg.listen.is_some() {
+        // After cold import, start export listen if configured (unusual on fleet).
+        let (cert_path, sealed_path, key_pem) =
+            load_tls_material_for_seal_sync(&env, &sealer, seal_root.as_ref())
+                .context("seal-sync tls material after cold import")?;
+        maybe_start_seal_sync(
+            &seal_sync_cfg,
+            &env.launch_digest,
+            &cert_path,
+            &sealed_path,
+            sealer.clone(),
+            Some(key_pem),
+        )
+        .context("seal-sync listen after cold import")?;
     }
 
     let policy_hash = env.policy_hash_hex();

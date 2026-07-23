@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-22T12:50:30.000Z",
-  "epoch": 13,
+  "published_at": "2026-07-23T01:19:16.000Z",
+  "epoch": 14,
   "not_after": "2027-07-21T01:15:00.000Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -19,6 +19,34 @@
       ],
       "active": [
         {
+          "build_version": "0.5.8",
+          "code_hash": "2c27b3965030406ce87768bed34544e29da6e89d2c406401d62e4cf6eb8c04b1",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "d3ef84d42de13103cdc0c74d1549f6d306fadbb5ffbf62516e535b341332d43bc85f516cdabd9d45db77b944c2261a10",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.5.8 on Talos key_ceremony (live VIP during fleet seal-sync). Same bytes as GitHub v0.5.8 / prior 0.5.7 label.",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony"
+        },
+        {
+          "build_version": "0.5.8",
+          "code_hash": "2c27b3965030406ce87768bed34544e29da6e89d2c406401d62e4cf6eb8c04b1",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "7cc9ba47ce8c07642a3e45c51a8a6e6d7efa2f7a67858f843670cc7bbb90061694d12274d739f2b7bd4fe311309103b1",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.5.8 on Talos seal_sync fleet golden. Same code_hash; verifier disambiguates via golden digests.",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync"
+        },
+        {
           "build_version": "0.5.7",
           "code_hash": "2c27b3965030406ce87768bed34544e29da6e89d2c406401d62e4cf6eb8c04b1",
           "quote_formats": [
@@ -29,7 +57,7 @@
             "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
             "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
           },
-          "notes": "0.5.7: mutual seal-sync split-trust (PeerChallengeGate + OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL). Overlap with 0.5.4 during install. Same golden_version.",
+          "notes": "Overlap: Ubuntu legacy golden (pre-Talos). Same code_hash as 0.5.8.",
           "golden_version": "openapi-sev-snp-legacy-2026-07"
         },
         {

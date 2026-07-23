@@ -125,6 +125,7 @@ fn main() -> Result<()> {
             }
             let verdict = verify_openapi_edge(VerifyOptions {
                 endpoint,
+                allowlist_hostname: None,
                 manifest_url,
                 manifest_path,
                 manifest_sig_path,
