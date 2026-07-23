@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-23T01:19:16.000Z",
-  "epoch": 14,
+  "published_at": "2026-07-23T01:40:33.000Z",
+  "epoch": 15,
   "not_after": "2027-07-21T01:15:00.000Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -18,6 +18,34 @@
         "openapi.teechat.ai"
       ],
       "active": [
+        {
+          "build_version": "0.5.9",
+          "code_hash": "45f8832808f2e9c2f419ce62114b8fd967873a16a11be7b21cf05373c0a14fd9",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "7cc9ba47ce8c07642a3e45c51a8a6e6d7efa2f7a67858f843670cc7bbb90061694d12274d739f2b7bd4fe311309103b1",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.5.9: seal-sync cold start + snpguest path. GitHub v0.5.9 binary. Fleet golden.",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync"
+        },
+        {
+          "build_version": "0.5.9",
+          "code_hash": "45f8832808f2e9c2f419ce62114b8fd967873a16a11be7b21cf05373c0a14fd9",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "d3ef84d42de13103cdc0c74d1549f6d306fadbb5ffbf62516e535b341332d43bc85f516cdabd9d45db77b944c2261a10",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.5.9 on ceremony golden (optional). Same code_hash as seal_sync row.",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony"
+        },
         {
           "build_version": "0.5.8",
           "code_hash": "2c27b3965030406ce87768bed34544e29da6e89d2c406401d62e4cf6eb8c04b1",
