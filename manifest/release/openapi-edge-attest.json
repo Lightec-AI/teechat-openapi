@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-23T01:40:33.000Z",
-  "epoch": 15,
+  "published_at": "2026-07-23T15:34:04.000Z",
+  "epoch": 16,
   "not_after": "2027-07-21T01:15:00.000Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -26,10 +26,10 @@
           ],
           "measurement": {
             "kind": "launch_digest",
-            "launch_digest": "7cc9ba47ce8c07642a3e45c51a8a6e6d7efa2f7a67858f843670cc7bbb90061694d12274d739f2b7bd4fe311309103b1",
+            "launch_digest": "39e038368ecbf9845e868bc905682dc39fcec20ab38277c8b36d243f5fc69fc3",
             "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
           },
-          "notes": "0.5.9: seal-sync cold start + snpguest path. GitHub v0.5.9 binary. Fleet golden.",
+          "notes": "0.5.9: seal-sync cold start + snpguest path. GitHub v0.5.9 binary. Fleet golden. challenge-canonical LD for 0.16.x clients.",
           "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync"
         },
         {
@@ -40,10 +40,10 @@
           ],
           "measurement": {
             "kind": "launch_digest",
-            "launch_digest": "d3ef84d42de13103cdc0c74d1549f6d306fadbb5ffbf62516e535b341332d43bc85f516cdabd9d45db77b944c2261a10",
+            "launch_digest": "ad6dd11b11ce00d2f9d30c2c5868c75d6a7fd3b2be6851fe3fcfcd0dcbe61a61",
             "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
           },
-          "notes": "0.5.9 on ceremony golden (optional). Same code_hash as seal_sync row.",
+          "notes": "0.5.9 on ceremony golden (optional). Same code_hash as seal_sync row. challenge-canonical LD for 0.16.x clients.",
           "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony"
         },
         {
@@ -54,10 +54,10 @@
           ],
           "measurement": {
             "kind": "launch_digest",
-            "launch_digest": "d3ef84d42de13103cdc0c74d1549f6d306fadbb5ffbf62516e535b341332d43bc85f516cdabd9d45db77b944c2261a10",
+            "launch_digest": "ad6dd11b11ce00d2f9d30c2c5868c75d6a7fd3b2be6851fe3fcfcd0dcbe61a61",
             "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
           },
-          "notes": "0.5.8 on Talos key_ceremony (live VIP during fleet seal-sync). Same bytes as GitHub v0.5.8 / prior 0.5.7 label.",
+          "notes": "0.5.8 on Talos key_ceremony (live VIP during fleet seal-sync). Same bytes as GitHub v0.5.8 / prior 0.5.7 label. challenge-canonical LD for 0.16.x clients.",
           "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony"
         },
         {
@@ -68,10 +68,10 @@
           ],
           "measurement": {
             "kind": "launch_digest",
-            "launch_digest": "7cc9ba47ce8c07642a3e45c51a8a6e6d7efa2f7a67858f843670cc7bbb90061694d12274d739f2b7bd4fe311309103b1",
+            "launch_digest": "39e038368ecbf9845e868bc905682dc39fcec20ab38277c8b36d243f5fc69fc3",
             "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
           },
-          "notes": "0.5.8 on Talos seal_sync fleet golden. Same code_hash; verifier disambiguates via golden digests.",
+          "notes": "0.5.8 on Talos seal_sync fleet golden. Same code_hash; verifier disambiguates via golden digests. challenge-canonical LD for 0.16.x clients.",
           "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync"
         },
         {
