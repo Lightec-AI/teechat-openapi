@@ -89,19 +89,46 @@ fn main() -> anyhow::Result<()> {
 
     // Blue/green sealed-key sync (private admin :9443 / peer) — see attested-mtls-seal-sync.
     // Warm path: re-run when listen/export needed or peer realign.
+    // Peer-only warm realign is backgrounded — split-trust + AMD KDS can take minutes
+    // and must not block TLS serve after a sealed key is already present.
     if seal_sync_cfg.enabled() && !(sealed_missing && seal_sync_cfg.peer.is_some()) {
         let (cert_path, sealed_path, key_pem) =
             load_tls_material_for_seal_sync(&env, &sealer, seal_root.as_ref())
                 .context("seal-sync tls material")?;
-        maybe_start_seal_sync(
-            &seal_sync_cfg,
-            &env.launch_digest,
-            &cert_path,
-            &sealed_path,
-            sealer.clone(),
-            Some(key_pem),
-        )
-        .context("seal-sync")?;
+        let peer_only = seal_sync_cfg.peer.is_some() && seal_sync_cfg.listen.is_none();
+        if peer_only {
+            let cfg = seal_sync_cfg.clone();
+            let launch_digest = env.launch_digest.clone();
+            let sealer_bg = sealer.clone();
+            let cert_bg = cert_path.clone();
+            let sealed_bg = sealed_path.clone();
+            info!("seal-sync warm peer realign starting in background");
+            std::thread::Builder::new()
+                .name("seal-sync-warm".into())
+                .spawn(move || {
+                    if let Err(e) = maybe_start_seal_sync(
+                        &cfg,
+                        &launch_digest,
+                        &cert_bg,
+                        &sealed_bg,
+                        sealer_bg,
+                        Some(key_pem),
+                    ) {
+                        warn!(error = %e, "seal-sync warm peer realign failed");
+                    }
+                })
+                .context("spawn seal-sync warm thread")?;
+        } else {
+            maybe_start_seal_sync(
+                &seal_sync_cfg,
+                &env.launch_digest,
+                &cert_path,
+                &sealed_path,
+                sealer.clone(),
+                Some(key_pem),
+            )
+            .context("seal-sync")?;
+        }
     } else if seal_sync_cfg.listen.is_some() {
         // After cold import, start export listen if configured (unusual on fleet).
         let (cert_path, sealed_path, key_pem) =
