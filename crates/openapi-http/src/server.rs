@@ -9,7 +9,10 @@ use openapi_platform::AttestationPlatform;
 use thiserror::Error;
 
 use crate::request::ParsedRequest;
-use crate::response::{build_error_response, build_json_response, build_sse_response};
+use crate::response::{
+    build_challenge_cors_preflight, build_error_response, build_json_response, build_sse_response,
+    is_attestation_challenge_path, with_challenge_cors,
+};
 use openapi_core::SseUsageAccumulator;
 
 use crate::streaming::{write_sse_stream_headers, write_sse_usage_trailer, ChunkedWriter};
@@ -190,10 +193,26 @@ where
     U: UpstreamForwarder,
     P: AttestationPlatform,
 {
+    // Browser SPA / researcher preflight for the public challenge API.
+    if method.eq_ignore_ascii_case("OPTIONS") && is_attestation_challenge_path(path) {
+        out.write_all(&build_challenge_cors_preflight())
+            .map_err(ServerError::Io)?;
+        return Ok(());
+    }
+
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
+
+    let challenge_cors = is_attestation_challenge_path(path);
+    let maybe_cors = |bytes: Vec<u8>| {
+        if challenge_cors {
+            with_challenge_cors(bytes)
+        } else {
+            bytes
+        }
+    };
 
     let http_method = HttpMethod::parse(method);
     match app.handle_from_ex(
@@ -207,12 +226,12 @@ where
     ) {
         Ok(AppResponse::Json(body)) => {
             let bytes = serde_json::to_vec(&body).unwrap_or_default();
-            out.write_all(&build_json_response(200, &bytes, None))
+            out.write_all(&maybe_cors(build_json_response(200, &bytes, None)))
                 .map_err(ServerError::Io)?;
         }
         Ok(AppResponse::JsonWithUsage { body, usage }) => {
             let bytes = serde_json::to_vec(&body).unwrap_or_default();
-            out.write_all(&build_json_response(200, &bytes, Some(&usage)))
+            out.write_all(&maybe_cors(build_json_response(200, &bytes, Some(&usage))))
                 .map_err(ServerError::Io)?;
         }
         Ok(AppResponse::SseStream {
@@ -249,7 +268,7 @@ where
                 .map_err(|e| ServerError::Other(e.to_string()))?;
         }
         Err(err) => {
-            out.write_all(&build_error_response(err))
+            out.write_all(&maybe_cors(build_error_response(err)))
                 .map_err(ServerError::Io)?;
         }
     }

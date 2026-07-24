@@ -1,6 +1,33 @@
 use openapi_core::usage::UsageReport;
 use openapi_core::ApiError;
 
+/// Public challenge is unauthenticated; allow browser SPA / researchers to POST from any origin.
+const CHALLENGE_CORS: &str = concat!(
+    "Access-Control-Allow-Origin: *\r\n",
+    "Access-Control-Allow-Methods: POST, OPTIONS\r\n",
+    "Access-Control-Allow-Headers: content-type\r\n",
+    "Access-Control-Max-Age: 86400\r\n",
+);
+
+pub fn is_attestation_challenge_path(path: &str) -> bool {
+    let path = path.split('?').next().unwrap_or(path);
+    path == "/v1/attestation/challenge"
+}
+
+pub fn build_challenge_cors_preflight() -> Vec<u8> {
+    format!("HTTP/1.1 204 No Content\r\n{CHALLENGE_CORS}Content-Length: 0\r\nConnection: close\r\n\r\n")
+        .into_bytes()
+}
+
+/// Insert challenge CORS headers before the header/body separator.
+pub fn with_challenge_cors(mut response: Vec<u8>) -> Vec<u8> {
+    const SEP: &[u8] = b"\r\n\r\n";
+    if let Some(i) = response.windows(SEP.len()).position(|w| w == SEP) {
+        response.splice(i..i, CHALLENGE_CORS.as_bytes().iter().copied());
+    }
+    response
+}
+
 pub fn build_json_response(status: u16, body: &[u8], usage: Option<&UsageReport>) -> Vec<u8> {
     let mut headers = format!(
         "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
@@ -107,5 +134,28 @@ mod tests {
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.contains("text/event-stream"));
         assert!(text.contains("teechat_usage"));
+    }
+
+    #[test]
+    fn challenge_cors_preflight_is_204() {
+        let text = String::from_utf8(build_challenge_cors_preflight()).unwrap();
+        assert!(text.starts_with("HTTP/1.1 204"));
+        assert!(text.contains("Access-Control-Allow-Origin: *"));
+        assert!(text.contains("Access-Control-Allow-Methods: POST, OPTIONS"));
+    }
+
+    #[test]
+    fn with_challenge_cors_injects_headers() {
+        let raw = build_json_response(200, b"{}", None);
+        let text = String::from_utf8(with_challenge_cors(raw)).unwrap();
+        assert!(text.contains("Access-Control-Allow-Origin: *"));
+        assert!(text.contains("\r\n\r\n{}"));
+    }
+
+    #[test]
+    fn challenge_path_matcher() {
+        assert!(is_attestation_challenge_path("/v1/attestation/challenge"));
+        assert!(is_attestation_challenge_path("/v1/attestation/challenge?x=1"));
+        assert!(!is_attestation_challenge_path("/v1/chat/completions"));
     }
 }
