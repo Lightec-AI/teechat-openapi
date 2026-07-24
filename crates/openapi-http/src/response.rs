@@ -20,10 +20,14 @@ pub fn build_challenge_cors_preflight() -> Vec<u8> {
 }
 
 /// Insert challenge CORS headers before the header/body separator.
+///
+/// Insert **after** the last header's trailing `\r\n` (at `i + 2` of `\r\n\r\n`).
+/// Inserting at `i` would steal that CRLF and glue `Connection: close` onto
+/// `Access-Control-…`, corrupting the response for HTTP clients.
 pub fn with_challenge_cors(mut response: Vec<u8>) -> Vec<u8> {
     const SEP: &[u8] = b"\r\n\r\n";
     if let Some(i) = response.windows(SEP.len()).position(|w| w == SEP) {
-        response.splice(i..i, CHALLENGE_CORS.as_bytes().iter().copied());
+        response.splice(i + 2..i + 2, CHALLENGE_CORS.as_bytes().iter().copied());
     }
     response
 }
@@ -150,6 +154,9 @@ mod tests {
         let text = String::from_utf8(with_challenge_cors(raw)).unwrap();
         assert!(text.contains("Access-Control-Allow-Origin: *"));
         assert!(text.contains("\r\n\r\n{}"));
+        // Must not glue last header onto Access-Control-
+        assert!(text.contains("Connection: close\r\nAccess-Control-Allow-Origin"));
+        assert!(!text.contains("closeAccess-Control"));
     }
 
     #[test]
