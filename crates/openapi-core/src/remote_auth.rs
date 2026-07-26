@@ -379,6 +379,7 @@ mod tests {
                 key_set: "api".into(),
                 remaining_tokens: None,
                 max_in_flight: None,
+                max_context_tokens: None,
             },
             5,
             &signing,
@@ -419,6 +420,7 @@ mod tests {
                 key_set: "api".into(),
                 remaining_tokens: None,
                 max_in_flight: None,
+                max_context_tokens: None,
             },
             1,
             &signing,
@@ -467,6 +469,7 @@ mod tests {
             key_set: "api".into(),
             remaining_tokens: None,
             max_in_flight: None,
+            max_context_tokens: None,
         };
         let authz = sign_test_authz_with_policy(
             "tcak_ef90AB12",

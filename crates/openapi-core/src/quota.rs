@@ -83,6 +83,20 @@ pub fn enforce_token_quota(policy: &OpenApiKeyPolicy, body: &[u8]) -> Result<(),
     Ok(())
 }
 
+/// Reject prompts above the signed per-tier input context ceiling.
+pub fn enforce_max_context(policy: &OpenApiKeyPolicy, body: &[u8]) -> Result<(), ApiError> {
+    let Some(max) = policy.max_context_tokens else {
+        return Ok(());
+    };
+    let est = estimate_prompt_tokens(body);
+    if est > u64::from(max) {
+        return Err(ApiError::BadRequest(format!(
+            "context_length_exceeded: estimated prompt tokens ({est}) exceed tier max ({max})"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,6 +108,7 @@ mod tests {
             key_set: "api".into(),
             remaining_tokens: remaining,
             max_in_flight: None,
+            max_context_tokens: None,
         }
     }
 
@@ -133,5 +148,25 @@ mod tests {
         let big = "x".repeat(40_000);
         let body = format!(r#"{{"messages":[{{"role":"user","content":"{big}"}}]}}"#);
         assert!(enforce_token_quota(&policy(Some(500_000)), body.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn enforce_max_context_skips_when_unset() {
+        let body = br#"{"messages":[{"role":"user","content":"hi"}]}"#;
+        let mut p = policy(None);
+        p.max_context_tokens = None;
+        assert!(enforce_max_context(&p, body).is_ok());
+    }
+
+    #[test]
+    fn enforce_max_context_rejects_over_cap() {
+        let big = "x".repeat(40_000);
+        let body = format!(r#"{{"messages":[{{"role":"user","content":"{big}"}}]}}"#);
+        let mut p = policy(Some(500_000));
+        p.max_context_tokens = Some(1_000);
+        assert!(matches!(
+            enforce_max_context(&p, body.as_bytes()),
+            Err(ApiError::BadRequest(_))
+        ));
     }
 }

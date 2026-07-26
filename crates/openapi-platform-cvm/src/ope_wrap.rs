@@ -49,6 +49,15 @@ pub fn encrypt_openai_body(
     kid: &str,
     payload: &Value,
 ) -> Result<EncryptedOpeRequest, OpeWrapError> {
+    encrypt_openai_body_with_path(trust, kid, payload, "/v1/chat/completions")
+}
+
+pub fn encrypt_openai_body_with_path(
+    trust: &PreassignTrust,
+    kid: &str,
+    payload: &Value,
+    openai_path: &str,
+) -> Result<EncryptedOpeRequest, OpeWrapError> {
     let identity = engine_identity_from_trust(trust);
     let client_session = ClientSession::generate().map_err(|e| OpeWrapError::Ope(e.to_string()))?;
 
@@ -68,6 +77,7 @@ pub fn encrypt_openai_body(
         aad: None,
         meta: Some(json!({
             "model": payload.get("model").cloned().unwrap_or(Value::Null),
+            "openai_path": openai_path,
         })),
         e2e: None,
         sig: None,

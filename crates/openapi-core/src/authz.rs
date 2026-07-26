@@ -24,6 +24,9 @@ pub struct OpenApiKeyPolicy {
     /// Must stay in Family B unsigned JSON when set — Node `policyForAuthzSign` includes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_in_flight: Option<u32>,
+    /// Max estimated input tokens per request for this tier (OpenAPI edge enforcement).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u32>,
 }
 
 fn default_rpm() -> u32 {
@@ -47,6 +50,7 @@ impl OpenApiKeyPolicy {
             key_set: default_key_set(),
             remaining_tokens: None,
             max_in_flight: None,
+            max_context_tokens: None,
         }
     }
 
@@ -161,6 +165,7 @@ pub fn sign_test_authz(
             key_set: "api".into(),
             remaining_tokens: None,
             max_in_flight: None,
+            max_context_tokens: None,
         },
         1,
         signing_key,
@@ -264,6 +269,7 @@ mod tests {
                 key_set: "api".into(),
                 remaining_tokens: Some(1000),
                 max_in_flight: Some(2),
+                max_context_tokens: None,
             },
             exp_ms: 9_999,
             epoch: 1,
@@ -302,6 +308,7 @@ mod tests {
                 key_set: "api".into(),
                 remaining_tokens: None,
                 max_in_flight: None,
+                max_context_tokens: None,
             },
             exp_ms: 1_700_003_600_000,
             epoch: 42,
@@ -349,6 +356,7 @@ mod tests {
             key_set: "api".into(),
             remaining_tokens: None,
             max_in_flight: None,
+            max_context_tokens: None,
         };
         assert!(p.allows_model("teechat-a"));
         assert!(!p.allows_model("teechat-b"));
@@ -358,6 +366,7 @@ mod tests {
             key_set: "api".into(),
             remaining_tokens: None,
             max_in_flight: None,
+            max_context_tokens: None,
         }
         .allows_model("anything"));
         assert!(OpenApiKeyPolicy::unrestricted().allows_model("anything"));
@@ -371,6 +380,7 @@ mod tests {
             key_set: "api".into(),
             remaining_tokens: None,
             max_in_flight: None,
+            max_context_tokens: None,
         };
         assert_eq!(p.effective_rpm(120), 30);
         assert_eq!(p.effective_rpm(10), 10);

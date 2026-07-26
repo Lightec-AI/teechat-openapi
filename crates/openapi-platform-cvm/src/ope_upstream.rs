@@ -16,7 +16,9 @@ use crate::gateway_ope_api::{
     DispatchRequest, GatewayOpeApiClient, GatewayOpeApiConfig, GatewayOpeApiError, InventoryEngine,
     InventoryResponse, PreassignRequest, PreassignResponse,
 };
-use crate::ope_wrap::{decrypt_chunk, encrypt_openai_body, envelope_to_bytes, EncryptedOpeRequest};
+use crate::ope_wrap::{
+    decrypt_chunk, encrypt_openai_body_with_path, envelope_to_bytes, EncryptedOpeRequest,
+};
 
 /// Clear-HTTP break-glass (forbidden in prod).
 pub fn clear_http_break_glass_enabled() -> bool {
@@ -109,6 +111,7 @@ impl OpeDispatchUpstream {
         &self,
         body: &[u8],
         ctx: &UpstreamRequestContext,
+        openai_path: &str,
     ) -> Result<(PreassignResponse, EncryptedOpeRequest, String), ApiError> {
         // Clients sometimes send `model@teechat`; inventory/preassign use bare ids.
         let model = strip_model_provider_suffix(&model_from_body(body));
@@ -129,7 +132,7 @@ impl OpeDispatchUpstream {
                 openapi_key_id: Some(ctx.key_id.clone()),
             })
             .map_err(Self::map_gw)?;
-        let enc = encrypt_openai_body(&pre.trust, &ctx.key_id, &payload)
+        let enc = encrypt_openai_body_with_path(&pre.trust, &ctx.key_id, &payload, openai_path)
             .map_err(|e| ApiError::Internal(e.to_string()))?;
         Ok((pre, enc, model))
     }
@@ -190,7 +193,7 @@ impl UpstreamForwarder for OpeDispatchUpstream {
                 content_type: "text/event-stream".into(),
             });
         }
-        let (pre, enc, model) = self.prepare(body, ctx)?;
+        let (pre, enc, model) = self.prepare(body, ctx, path)?;
         let (status, headers, raw) = self.dispatch_encrypted(&pre, &enc, ctx)?;
         if !(200..300).contains(&status) {
             let msg = String::from_utf8_lossy(&raw);
@@ -207,6 +210,17 @@ impl UpstreamForwarder for OpeDispatchUpstream {
             .map(|(_, v)| v.as_str());
 
         let text = decrypt_ope_body_to_text(&enc, &raw, ct)?;
+        if path.contains("embeddings") {
+            let embeddings: Value = serde_json::from_str(&text).map_err(|e| {
+                ApiError::Upstream(format!("embeddings response is not JSON: {e}"))
+            })?;
+            if embeddings.get("object").and_then(|v| v.as_str()) == Some("chat.completion") {
+                return Err(ApiError::Upstream(
+                    "embeddings path returned chat.completion".into(),
+                ));
+            }
+            return Ok(UpstreamResponse::Json(embeddings));
+        }
         let (prompt_tokens, completion_tokens) =
             usage_from_header_or_estimate(usage_hdr, body, &text);
         let completion =
@@ -227,7 +241,7 @@ impl UpstreamForwarder for OpeDispatchUpstream {
     fn forward_v1_stream_ctx(
         &self,
         method: HttpMethod,
-        _path: &str,
+        path: &str,
         body: Option<&[u8]>,
         ctx: &UpstreamRequestContext,
         out: &mut dyn Write,
@@ -235,8 +249,13 @@ impl UpstreamForwarder for OpeDispatchUpstream {
         if method != HttpMethod::Post {
             return Err(ApiError::MethodNotAllowed);
         }
+        if path.contains("embeddings") {
+            return Err(ApiError::BadRequest(
+                "streaming is not supported for /v1/embeddings".into(),
+            ));
+        }
         let body = body.unwrap_or(&[]);
-        let (pre, enc, model) = self.prepare(body, ctx)?;
+        let (pre, enc, model) = self.prepare(body, ctx, path)?;
         let env_bytes =
             envelope_to_bytes(&enc.envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
         let (status, headers, mut reader) = self
