@@ -51,9 +51,13 @@ pub fn read_tls_key_policy_from(path: &Path) -> Result<TlsKeyPolicy, String> {
     })
 }
 
-/// Path to policy file. Prod goldens use [`TLS_KEY_POLICY_PATH`].
-/// `OPENAPI_TLS_KEY_POLICY_PATH` is a CI/test redirect only (must not be set on prod units).
+/// Path to policy file. Prod goldens use [`TLS_KEY_POLICY_PATH`] only.
+/// `OPENAPI_TLS_KEY_POLICY_PATH` is a CI/test redirect — forbidden when `OPENAPI_PROFILE=prod`
+/// (enforced in `openapi_platform::validate_tls_key_policy`, POLICY-001).
 pub fn tls_key_policy_path() -> std::path::PathBuf {
+    if openapi_platform::load_edge_profile().is_prod() {
+        return std::path::PathBuf::from(TLS_KEY_POLICY_PATH);
+    }
     std::env::var("OPENAPI_TLS_KEY_POLICY_PATH")
         .ok()
         .filter(|s| !s.is_empty())

@@ -40,6 +40,14 @@ pub enum ProfileError {
     ProdChallengeBenchToken,
     #[error("prod forbids OPENAPI_PROXY_MODE=transparent — use allowlist (PROXY-001)")]
     ProdTransparentProxy,
+    #[error(
+        "prod forbids OPENAPI_TLS_KEY_POLICY_PATH — use measured /etc/tls_key_policy (POLICY-001)"
+    )]
+    ProdTlsKeyPolicyPathOverride,
+    #[error(
+        "prod forbids OPENAPI_SNPGUEST_BIN on unmeasured data paths — use measured helper (SNPGUEST-001)"
+    )]
+    ProdUnmeasuredSnpguestBin,
 }
 
 /// Load profile from `OPENAPI_PROFILE` (`dev` default, `prod` / `production` → prod).
@@ -117,8 +125,33 @@ pub fn validate_tls_key_policy(profile: EdgeProfile) -> Result<(), ProfileError>
                 return Err(ProfileError::ProdTransparentProxy);
             }
         }
+        // POLICY-001: tls_key_policy must come from measured /etc/tls_key_policy.
+        if std::env::var("OPENAPI_TLS_KEY_POLICY_PATH")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
+            return Err(ProfileError::ProdTlsKeyPolicyPathOverride);
+        }
+        // SNPGUEST-001: soft-gate helper must not live on unmeasured data mounts.
+        if let Ok(bin) = std::env::var("OPENAPI_SNPGUEST_BIN") {
+            if is_unmeasured_guest_path(bin.trim()) {
+                return Err(ProfileError::ProdUnmeasuredSnpguestBin);
+            }
+        }
     }
     Ok(())
+}
+
+/// Paths under known unmeasured OpenAPI data mounts (Talos `/var/mnt/…`, pod `/data/…`).
+pub fn is_unmeasured_guest_path(path: &str) -> bool {
+    let lower = path.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+    lower == "/data"
+        || lower.starts_with("/data/")
+        || lower.starts_with("/var/mnt/teechat-openapi/")
 }
 
 /// Host-side `seal-tls-key` / `seal-tls-key-sgx` are **dev/lab only** (OPS-002).
@@ -148,6 +181,8 @@ mod tests {
         env::remove_var("OPENAPI_AMD_SP_DERIVED_KEY_HEX");
         env::remove_var("OPENAPI_CHALLENGE_BENCH_TOKEN");
         env::remove_var("OPENAPI_PROXY_MODE");
+        env::remove_var("OPENAPI_TLS_KEY_POLICY_PATH");
+        env::remove_var("OPENAPI_SNPGUEST_BIN");
     }
 
     #[test]
@@ -299,5 +334,46 @@ mod tests {
         env::set_var("OPENAPI_TLS_SEALED_KEY_PATH", "/var/sealed.json");
         assert!(validate_tls_key_policy(EdgeProfile::Prod).is_ok());
         clear_tls_env();
+    }
+
+    #[test]
+    fn prod_rejects_tls_key_policy_path_override() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        clear_tls_env();
+        env::set_var("OPENAPI_PROFILE", "prod");
+        env::set_var("OPENAPI_TLS_CERT_PATH", "/var/cert.pem");
+        env::set_var("OPENAPI_TLS_SEALED_KEY_PATH", "/var/sealed.json");
+        env::set_var(
+            "OPENAPI_TLS_KEY_POLICY_PATH",
+            "/var/mnt/teechat-openapi/tls_key_policy",
+        );
+        assert!(matches!(
+            validate_tls_key_policy(EdgeProfile::Prod),
+            Err(ProfileError::ProdTlsKeyPolicyPathOverride)
+        ));
+        clear_tls_env();
+    }
+
+    #[test]
+    fn prod_rejects_unmeasured_snpguest_bin() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        clear_tls_env();
+        env::set_var("OPENAPI_PROFILE", "prod");
+        env::set_var("OPENAPI_TLS_CERT_PATH", "/var/cert.pem");
+        env::set_var("OPENAPI_TLS_SEALED_KEY_PATH", "/var/sealed.json");
+        env::set_var("OPENAPI_SNPGUEST_BIN", "/data/bin/snpguest");
+        assert!(matches!(
+            validate_tls_key_policy(EdgeProfile::Prod),
+            Err(ProfileError::ProdUnmeasuredSnpguestBin)
+        ));
+        clear_tls_env();
+    }
+
+    #[test]
+    fn unmeasured_guest_path_detects_data_mounts() {
+        assert!(is_unmeasured_guest_path("/data/bin/snpguest"));
+        assert!(is_unmeasured_guest_path("/var/mnt/teechat-openapi/bin/snpguest"));
+        assert!(!is_unmeasured_guest_path("/usr/local/teechat/bin/snpguest"));
+        assert!(!is_unmeasured_guest_path("snpguest"));
     }
 }

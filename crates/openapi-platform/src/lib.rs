@@ -23,8 +23,8 @@ pub use edge_policy::{
     edge_runtime_policy_from_parts, EdgeRuntimePolicy,
 };
 pub use profile::{
-    assert_dev_host_seal_tool, load_edge_profile, validate_tls_key_policy, EdgeProfile,
-    ProfileError,
+    assert_dev_host_seal_tool, is_unmeasured_guest_path, load_edge_profile,
+    validate_tls_key_policy, EdgeProfile, ProfileError,
 };
 pub use seal::{
     derive_cvm_seal_root, derive_seal_key, measurement_binding_label, seal_tls_private_key,
