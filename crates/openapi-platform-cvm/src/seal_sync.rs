@@ -551,27 +551,34 @@ pub fn maybe_start_seal_sync(
         )?;
     }
 
+    // Export listen needs the unsealed key in-process. Cold-start import (peer + no
+    // key yet) must not fail after a successful migrate — warm path starts listen later.
     if let Some(listen) = &cfg.listen {
-        let key_pem = unsealed_key_pem.ok_or_else(|| {
-            anyhow::anyhow!("seal-sync listen requires unsealed TLS key (export)")
-        })?;
-        let cert_pem = cert_pem.ok_or_else(|| {
-            anyhow::anyhow!("seal-sync listen requires OPENAPI_TLS_CERT_PATH")
-        })?;
-        let key = key_pem.clone();
-        let export_key: Arc<dyn Fn() -> attested_mtls_seal_sync::Result<Vec<u8>> + Send + Sync> =
-            Arc::new(move || Ok(key.clone()));
-        spawn_seal_sync_server(
-            listen,
-            &cert_pem,
-            key_pem,
-            cert_path.to_path_buf(),
-            identity,
-            attestor,
-            gate,
-            challenge_url,
-            export_key,
-        )?;
+        match (unsealed_key_pem, cert_pem.as_deref()) {
+            (Some(key_pem), Some(cert_pem)) => {
+                let key = key_pem.clone();
+                let export_key: Arc<
+                    dyn Fn() -> attested_mtls_seal_sync::Result<Vec<u8>> + Send + Sync,
+                > = Arc::new(move || Ok(key.clone()));
+                spawn_seal_sync_server(
+                    listen,
+                    cert_pem,
+                    key_pem,
+                    cert_path.to_path_buf(),
+                    identity,
+                    attestor,
+                    gate,
+                    challenge_url,
+                    export_key,
+                )?;
+            }
+            _ => {
+                info!(
+                    %listen,
+                    "seal-sync listen deferred — no unsealed TLS key yet (import-only / cold start)"
+                );
+            }
+        }
     }
 
     Ok(())
