@@ -240,7 +240,7 @@ pub fn find_golden_release<'a>(
     )))
 }
 
-/// Challenge measurement must match the golden digests row (authoritative TEE pin).
+/// Full digest equality against a golden row (Phase-1 OS-only / SGX).
 pub fn measurement_matches_golden(golden: &GoldenRelease, measurement: &Measurement) -> bool {
     match measurement {
         Measurement::LaunchDigest {
@@ -254,6 +254,26 @@ pub fn measurement_matches_golden(golden: &GoldenRelease, measurement: &Measurem
                 return false;
             };
             gl.eq_ignore_ascii_case(launch_digest) && gi.eq_ignore_ascii_case(image_digest)
+        }
+        Measurement::Mrenclave { value } => golden
+            .mr_enclave
+            .as_deref()
+            .is_some_and(|m| m.eq_ignore_ascii_case(value)),
+    }
+}
+
+/// Hybrid app-verity OS pin: `golden_version` exists and `image_digest` matches.
+///
+/// Live SNP `MEASUREMENT` is the **composed** LD (app allowlist); the golden
+/// channel keeps the OS-family baseline LD, which must **not** be required to
+/// equal the live challenge measurement. See `app-dm-verity-volume.md` §2–3.
+pub fn golden_os_pin_matches(golden: &GoldenRelease, measurement: &Measurement) -> bool {
+    match measurement {
+        Measurement::LaunchDigest { image_digest, .. } => {
+            let Some(gi) = golden.image_digest.as_deref() else {
+                return false;
+            };
+            gi.eq_ignore_ascii_case(image_digest)
         }
         Measurement::Mrenclave { value } => golden
             .mr_enclave
@@ -323,5 +343,34 @@ mod tests {
         };
         assert!(!measurement_matches_golden(g, &wrong));
         assert!(find_golden_release(&m, "openapi", "sev-snp-cvm", "no-such-pin").is_err());
+    }
+
+    #[test]
+    fn hybrid_os_pin_accepts_composed_launch_digest() {
+        let raw = r#"{
+          "schema":"teechat-golden-digests-manifest/v1",
+          "key_id":"golden-digests-v1",
+          "published_at":"2026-07-22T10:00:00.000Z",
+          "epoch":1,
+          "not_after":"2099-01-01T00:00:00.000Z",
+          "roles":{
+            "openapi":{"backends":{"sev-snp-cvm":{"active":[{
+              "golden_version":"openapi-golden-seal-sync",
+              "launch_digest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "image_digest":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }],"retired":[]}}}
+          }
+        }"#;
+        let m = parse_golden_manifest(raw.as_bytes()).unwrap();
+        let g =
+            find_golden_release(&m, "openapi", "sev-snp-cvm", "openapi-golden-seal-sync").unwrap();
+        let composed = Measurement::LaunchDigest {
+            // Composed app-verity LD ≠ OS baseline LD on the golden row.
+            launch_digest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                .into(),
+            image_digest: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        };
+        assert!(!measurement_matches_golden(g, &composed));
+        assert!(golden_os_pin_matches(g, &composed));
     }
 }

@@ -14,7 +14,7 @@ use crate::github_release::{
     github_releases_html_url, DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO,
 };
 use crate::golden::{
-    find_golden_release, load_golden_digests, measurement_matches_golden, GoldenLoadOptions,
+    find_golden_release, golden_os_pin_matches, load_golden_digests, GoldenLoadOptions,
 };
 use crate::manifest::{
     fetch_signed_manifest, find_matching_releases, load_signed_manifest_files, VerifiedManifest,
@@ -242,8 +242,9 @@ fn finish_verify(
         response.edge.policy_hash.as_deref(),
     )?;
 
-    // Same code_hash may pin ceremony + seal_sync goldens — pick the row whose
-    // golden digests match the live challenge measurement.
+    // Candidates already matched composed (or Phase-1) LD on the app allowlist.
+    // Golden digests pin the OS family via golden_version + image_digest — not by
+    // equating OS baseline LD to live MEASUREMENT (hybrid app-verity).
     let mut golden_trust_source = None;
     let mut golden_version = None;
     let mut matched = None;
@@ -257,7 +258,7 @@ fn finish_verify(
                     else {
                         continue;
                     };
-                    if measurement_matches_golden(grelease, &response.edge.measurement) {
+                    if golden_os_pin_matches(grelease, &response.edge.measurement) {
                         golden_version = Some(gv.to_string());
                         golden_trust_source = Some(golden.trust_source.clone());
                         matched = Some(*rel);
@@ -284,7 +285,8 @@ fn finish_verify(
     }
     let _matched = matched.ok_or_else(|| {
         AttestError::Policy(
-            "edge measurement/build/code_hash/policy_hash not on allowlist for this hostname".into(),
+            "edge measurement/build/code_hash/policy_hash not on allowlist for this hostname"
+                .into(),
         )
     })?;
 

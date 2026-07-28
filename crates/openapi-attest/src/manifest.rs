@@ -66,8 +66,9 @@ pub struct EdgeRelease {
     pub code_hash: String,
     pub quote_formats: Vec<String>,
     /// Pin into public golden digests allowlist (`teechat-golden-digests`).
-    /// When set, TEE digests are authoritative from that channel (not this row's
-    /// transitional `measurement` alone). See golden-digests-publish.md.
+    /// Hybrid app-verity: this row's `measurement.launch_digest` is the **composed**
+    /// LD (authoritative for live MEASUREMENT); `golden_version` joins the OS
+    /// baseline row (`image_digest` / family). See app-dm-verity-volume.md.
     #[serde(default)]
     pub golden_version: Option<String>,
     /// SHA-256 of edge runtime policy JSON (`EdgeRuntimePolicy`). When set,
@@ -269,9 +270,10 @@ pub(crate) fn http_get_bytes(url: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// All allowlist rows matching build/code_hash/quote (and embedded measurement when
-/// `golden_version` is absent). Callers with golden digests should disambiguate
-/// ceremony vs seal_sync pins by live measurement.
+/// All allowlist rows matching build/code_hash/quote **and** embedded measurement.
+/// Ceremony vs seal_sync (same code_hash) disambiguate via composed `launch_digest`.
+/// When `golden_version` is set, callers still pin the OS baseline via the golden
+/// channel (`image_digest` / family) — not by equating OS LD to live MEASUREMENT.
 pub fn find_matching_releases<'a>(
     manifest: &'a OpenApiEdgeManifest,
     hostname: &str,
@@ -297,9 +299,8 @@ pub fn find_matching_releases<'a>(
         if !rel.code_hash.eq_ignore_ascii_case(code_hash) {
             continue;
         }
-        // When golden_version is pinned, TEE digests are checked against the golden
-        // channel after this match — skip embedded measurement equality here.
-        if rel.golden_version.is_none() && !measurement_eq(&rel.measurement, measurement) {
+        // Composed (or Phase-1 OS) LD on the app allowlist must match the challenge.
+        if !measurement_eq(&rel.measurement, measurement) {
             continue;
         }
         if !rel.quote_formats.iter().any(|f| f == fmt) {
@@ -324,7 +325,8 @@ pub fn find_matching_releases<'a>(
     }
     if out.is_empty() {
         return Err(AttestError::Policy(
-            "edge measurement/build/code_hash/policy_hash not on allowlist for this hostname".into(),
+            "edge measurement/build/code_hash/policy_hash not on allowlist for this hostname"
+                .into(),
         ));
     }
     Ok(out)
