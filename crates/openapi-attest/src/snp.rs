@@ -112,20 +112,56 @@ fn snp_product_name(report: &AttestationReport) -> String {
 }
 
 fn http_get(url: &str) -> Result<Vec<u8>> {
-    let resp = ureq::get(url)
-        .call()
-        .map_err(|e| AttestError::Http(format!("GET {url}: {e}")))?;
-    if !(200..300).contains(&resp.status()) {
-        return Err(AttestError::Http(format!(
-            "GET {url}: HTTP {}",
-            resp.status()
-        )));
+    // Disk cache: seal-sync importer+exporter both challenge the VIP within ~1s and
+    // each verify_snp_report hits AMD KDS; without a cache the second call 429s.
+    let cache_dir = std::env::var("OPENAPI_KDS_CACHE_DIR")
+        .unwrap_or_else(|_| "/var/tmp/teechat-kds-cache".into());
+    let cache_key: String = url
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let cache_path = std::path::Path::new(&cache_dir).join(&cache_key);
+    if let Ok(bytes) = std::fs::read(&cache_path) {
+        if !bytes.is_empty() {
+            return Ok(bytes);
+        }
     }
-    let mut buf = Vec::new();
-    resp.into_reader()
-        .read_to_end(&mut buf)
-        .map_err(|e| AttestError::Http(e.to_string()))?;
-    Ok(buf)
+
+    // Retry 429s — KDS rate-limits aggressively; seal-sync peers share one public IP.
+    let mut last_err = None;
+    for (attempt, sleep_ms) in [0_u64, 5_000, 15_000, 30_000, 60_000]
+        .into_iter()
+        .enumerate()
+    {
+        if sleep_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+        }
+        match ureq::get(url).call() {
+            Ok(resp) => {
+                let status = resp.status();
+                if status == 429 {
+                    last_err = Some(AttestError::Http(format!("GET {url}: HTTP 429")));
+                    continue;
+                }
+                if !(200..300).contains(&status) {
+                    return Err(AttestError::Http(format!("GET {url}: HTTP {status}")));
+                }
+                let mut buf = Vec::new();
+                resp.into_reader()
+                    .read_to_end(&mut buf)
+                    .map_err(|e| AttestError::Http(e.to_string()))?;
+                let _ = std::fs::create_dir_all(&cache_dir);
+                let _ = std::fs::write(&cache_path, &buf);
+                return Ok(buf);
+            }
+            Err(e) => {
+                last_err = Some(AttestError::Http(format!("GET {url}: {e}")));
+                // Network blips: retry; non-retryable failures still exhaust the loop.
+                let _ = attempt;
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| AttestError::Http(format!("GET {url}: exhausted retries"))))
 }
 
 pub fn expected_quote_format() -> QuoteFormat {
