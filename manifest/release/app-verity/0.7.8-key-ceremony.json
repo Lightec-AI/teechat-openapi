@@ -1,0 +1,20 @@
+{
+  "schema": "teechat-app-verity/v1",
+  "role": "openapi",
+  "os_golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+  "app_build_version": "0.7.8",
+  "code_hash": "d5bbebd2673a4e2276bdb260e4e379ed7bdc799b8adfc0555cacf41db34afb85",
+  "app_verity_root": "53fdef025c910fc5132eb62adf7d7fc8cc5f74c2b2705440039b2a69ff3fad94",
+  "launch_digest": "fbb1e21cbfb7ed0edb0f24226cc254fadba4a4836b9fb35bbf542193e9b19e85",
+  "tls_key_policy": "key_ceremony",
+  "measure_inputs": {
+    "cmdline_contains": "teechat.app_verity_root=53fdef025c910fc5132eb62adf7d7fc8cc5f74c2b2705440039b2a69ff3fad94",
+    "os_golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+    "vcpus": 2,
+    "vcpu_type": "EPYC-v4",
+    "launch_digest_raw": "260f66cfaea1b00e406683adeeb89a599630cce428be9ea8da872313ddd7a12d2b6ebbc82a785d775f47b1d382cda7fb",
+    "launch_digest_encoding": "sha256(ascii_hex(raw_measure))"
+  },
+  "notes": "Composed LD for hybrid app volume. Promote before VIP cutover; staging must seal-sync after MEASUREMENT change.",
+  "volume_sha256": "e011bc8414776ab8186c468feea3a1b16ce3419f22ee699bbf23aa64ca49381b"
+}
