@@ -1,9 +1,9 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-28T10:28:15Z",
-  "epoch": 25,
-  "not_after": "2027-07-28T10:28:15Z",
+  "published_at": "2026-07-28T11:08:27Z",
+  "epoch": 26,
+  "not_after": "2027-07-28T11:08:27Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
   "policy": {
@@ -99,8 +99,8 @@
             "launch_digest": "3cb55ee2bb2567d854f83422d634b5e49c29e9e05dd02ebab44fb911bc5126d6",
             "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
           },
-          "notes": "0.7.2 hybrid app-verity: R=8e6842f80de4e8d1\u2026 composed LD. GitHub v0.7.2 + app-verity.json. Seal_sync golden.",
-          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync"
+          "notes": "0.7.2 hybrid app-verity: R=8e6842f80de4e8d1\u2026 composed LD. GitHub v0.7.2 + app-verity.json. Seal_sync golden. golden_version\u2192appverity-072 for VIP seal-sync exporter.",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync-appverity-072"
         },
         {
           "build_version": "0.7.0",
