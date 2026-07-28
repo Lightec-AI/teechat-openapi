@@ -1,9 +1,9 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-28T05:59:24Z",
-  "epoch": 21,
-  "not_after": "2027-07-28T05:59:24Z",
+  "published_at": "2026-07-28T06:18:50Z",
+  "epoch": 22,
+  "not_after": "2027-07-28T06:18:50Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
   "policy": {
@@ -26,10 +26,10 @@
           ],
           "measurement": {
             "kind": "launch_digest",
-            "launch_digest": "ad6dd11b11ce00d2f9d30c2c5868c75d6a7fd3b2be6851fe3fcfcd0dcbe61a61",
+            "launch_digest": "a5981375b2fe10a8b3db1f13ec56aa478b7e5196535c528d424aad32c305088c",
             "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
           },
-          "notes": "0.7.2: fail-closed measured /etc/tls_key_policy + snpguest path. GitHub v0.7.2. Ceremony golden.",
+          "notes": "0.7.2 hybrid app-verity: R=8e6842f80de4e8d1\u2026 composed LD. GitHub v0.7.2 + app-verity.json. Ceremony golden.",
           "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony"
         },
         {
@@ -40,10 +40,10 @@
           ],
           "measurement": {
             "kind": "launch_digest",
-            "launch_digest": "39e038368ecbf9845e868bc905682dc39fcec20ab38277c8b36d243f5fc69fc3",
+            "launch_digest": "3cb55ee2bb2567d854f83422d634b5e49c29e9e05dd02ebab44fb911bc5126d6",
             "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
           },
-          "notes": "0.7.2: fail-closed measured /etc/tls_key_policy + snpguest path. GitHub v0.7.2. Seal_sync blue/green golden.",
+          "notes": "0.7.2 hybrid app-verity: R=8e6842f80de4e8d1\u2026 composed LD. GitHub v0.7.2 + app-verity.json. Seal_sync golden.",
           "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync"
         },
         {
