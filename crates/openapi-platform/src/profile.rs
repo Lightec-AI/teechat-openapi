@@ -71,20 +71,27 @@ pub fn validate_tls_key_policy(profile: EdgeProfile) -> Result<(), ProfileError>
         .ok()
         .filter(|s| !s.is_empty());
 
+    let ceremony_helper = std::env::var("OPENAPI_CEREMONY_HELPER_URL")
+        .ok()
+        .filter(|s| !s.is_empty());
+
     if profile.is_prod() {
         if plain.is_some() {
             return Err(ProfileError::ProdPlaintextTlsKey);
         }
-        if sealed.is_none() {
-            return Err(ProfileError::ProdMissingSealedTlsKey);
-        }
-        // TLS-001: sealed key alone is insufficient — must also present a cert chain.
-        if std::env::var("OPENAPI_TLS_CERT_PATH")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .is_none()
-        {
-            return Err(ProfileError::ProdMissingTlsCert);
+        // Option A (SGX EDP): ceremony helper serves sealed-key.json + tls.crt over TCP.
+        if ceremony_helper.is_none() {
+            if sealed.is_none() {
+                return Err(ProfileError::ProdMissingSealedTlsKey);
+            }
+            // TLS-001: sealed key alone is insufficient — must also present a cert chain.
+            if std::env::var("OPENAPI_TLS_CERT_PATH")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .is_none()
+            {
+                return Err(ProfileError::ProdMissingTlsCert);
+            }
         }
         if std::env::var("OPENAPI_SEAL_ROOT_HEX")
             .ok()
