@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
-# sgx-lab host nginx: ACME webroot (:8088) + HTTP→HTTPS gateway upstream (:18080).
+# sgx-lab host nginx: ACME webroot (:8088) + optional HTTP→HTTPS proxy (:18080).
 #
 # ACME: gateway-host proxies lab.openapi.teechat.ai:80 → 10.202.0.2:8088
-# Upstream: enclave OPENAPI_UPSTREAM_BASE_URL=http://127.0.0.1:18080
+#
+# Clear-HTTP OpenAPI upstream must be a no-auth OpenAI root (local stub/vLLM).
+# Do NOT point the enclave at gateway.teechat.ai — edge does not forward Bearer,
+# and gateway /v1/* wants a session JWT. Prefer:
+#   bash scripts/ops/run-openapi-sgx-lab-upstream-stub.sh
+#   OPENAPI_UPSTREAM_BASE_URL=http://127.0.0.1:18081
+# The :18080 gateway proxy remains optional for non-OpenAPI probes only.
 #
 # Usage (on sgx-lab as root):
-#   sudo bash deploy/sgx/install-lab-host-nginx.sh [--webroot DIR]
+#   sudo bash deploy/sgx/install-lab-host-nginx.sh [--webroot DIR] [--skip-gateway-proxy]
 set -euo pipefail
 
 WEBROOT="${OPENAPI_ACME_WEBROOT:-/var/www/acme}"
 ACME_PORT="${OPENAPI_SGX_LAB_ACME_PORT:-8088}"
 UPSTREAM_PORT="${OPENAPI_SGX_LAB_UPSTREAM_PROXY_PORT:-18080}"
 GATEWAY_HOST="${OPENAPI_GATEWAY_UPSTREAM_HOST:-gateway.teechat.ai}"
+SKIP_GATEWAY_PROXY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --webroot) WEBROOT="${2:?}"; shift 2 ;;
     --acme-port) ACME_PORT="${2:?}"; shift 2 ;;
     --upstream-port) UPSTREAM_PORT="${2:?}"; shift 2 ;;
-    -h|--help) sed -n '1,14p' "$0"; exit 0 ;;
+    --skip-gateway-proxy) SKIP_GATEWAY_PROXY=1; shift ;;
+    -h|--help) sed -n '1,18p' "$0"; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
@@ -56,6 +64,12 @@ server {
   }
 }
 
+EOF
+
+if [[ "$SKIP_GATEWAY_PROXY" -eq 0 ]]; then
+  cat >>"$SITE" <<EOF
+
+# Optional — NOT a valid OpenAPI clear-HTTP upstream (gateway needs session JWT).
 server {
   listen 127.0.0.1:${UPSTREAM_PORT};
   server_name _;
@@ -76,6 +90,7 @@ server {
   }
 }
 EOF
+fi
 
 ln -sf "$SITE" /etc/nginx/sites-enabled/teechat-openapi-sgx-lab.conf
 # Avoid default :80 colliding with unrelated local use; keep default disabled if present.
@@ -86,6 +101,11 @@ systemctl enable --now nginx
 systemctl reload nginx
 
 echo "OK: ACME webroot ${WEBROOT} on 0.0.0.0:${ACME_PORT}"
-echo "OK: gateway upstream proxy http://127.0.0.1:${UPSTREAM_PORT} → https://${GATEWAY_HOST}"
+if [[ "$SKIP_GATEWAY_PROXY" -eq 0 ]]; then
+  echo "OK: optional gateway proxy http://127.0.0.1:${UPSTREAM_PORT} → https://${GATEWAY_HOST}"
+  echo "NOTE: for OpenAPI enclave use run-openapi-sgx-lab-upstream-stub.sh (:18081), not :${UPSTREAM_PORT}"
+else
+  echo "OK: gateway upstream proxy skipped (--skip-gateway-proxy)"
+fi
 echo "Probe: echo ok | tee ${WEBROOT}/.well-known/acme-challenge/probe"
 echo "       curl -fsS http://127.0.0.1:${ACME_PORT}/.well-known/acme-challenge/probe"
