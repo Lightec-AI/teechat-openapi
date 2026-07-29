@@ -64,7 +64,7 @@ impl TlsConfig {
         }
         #[cfg(target_env = "sgx")]
         {
-            let _ = &self.cert_path;
+            let _ = (&self.cert_path, key_pem);
             Err(TlsError::Rustls(
                 "SGX: load TLS via load_server_config_from_pem_bytes / ceremony helper (std::fs unsupported)"
                     .into(),
