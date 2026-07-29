@@ -1,6 +1,6 @@
 [package]
 name = "openapi-acme-sync"
-description = "Blocking ACME (RFC 8555) client over rustls/TcpStream with pluggable DNS"
+description = "Blocking ACME (RFC 8555) client with pluggable AcmeTransport (rustls or host HTTPS relay)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

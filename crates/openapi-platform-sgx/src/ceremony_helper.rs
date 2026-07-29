@@ -1,12 +1,15 @@
-//! Talk to host `openapi-ceremony-helper` for DNS, ACME HTTP-01, and artifacts.
+//! Talk to host `openapi-ceremony-helper` for DNS, ACME HTTPS relay, HTTP-01, and artifacts.
 //!
 //! Fortanix EDP enclaves can TCP to IPs but cannot resolve DNS or write host
-//! files. The helper owns webroot + artifact storage; the enclave never sends
-//! a TLS private key PEM to the helper (only sealed JSON + public cert).
+//! files. The helper owns webroot + artifact storage and performs allowlisted
+//! HTTPS to Let's Encrypt / ZeroSSL; the enclave never sends a TLS private key
+//! PEM to the helper (only sealed JSON + public cert).
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 
+use base64::Engine;
 use openapi_platform::PlatformError;
 use serde::Deserialize;
 
@@ -23,6 +26,13 @@ pub struct CeremonyHelperClient {
 #[derive(Debug, Deserialize)]
 struct DnsResponse {
     addrs: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HttpsRelayResponse {
+    status: u16,
+    headers: HashMap<String, String>,
+    body_b64: String,
 }
 
 impl CeremonyHelperClient {
@@ -104,6 +114,44 @@ impl CeremonyHelperClient {
         })?;
         addr.set_port(port);
         Ok(addr)
+    }
+
+    /// Relay an allowlisted HTTPS request through the host helper (`POST /https-relay`).
+    pub fn https_relay(
+        &self,
+        method: &str,
+        url: &str,
+        content_type: Option<&str>,
+        body: Option<&[u8]>,
+    ) -> Result<(u16, HashMap<String, String>, Vec<u8>), PlatformError> {
+        let body_b64 = body.map(|b| base64::engine::general_purpose::STANDARD.encode(b));
+        let req = serde_json::json!({
+            "method": method,
+            "url": url,
+            "content_type": content_type,
+            "body_b64": body_b64,
+        });
+        let req_bytes = serde_json::to_vec(&req).map_err(|e| {
+            PlatformError::Attestation(format!("ceremony helper https-relay encode: {e}"))
+        })?;
+        let resp_body = self.http_exchange(
+            "POST",
+            "/https-relay",
+            Some(&req_bytes),
+            "application/json",
+        )?;
+        let parsed: HttpsRelayResponse = serde_json::from_slice(&resp_body).map_err(|e| {
+            PlatformError::Attestation(format!("ceremony helper https-relay json: {e}"))
+        })?;
+        let body = base64::engine::general_purpose::STANDARD
+            .decode(&parsed.body_b64)
+            .or_else(|_| {
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&parsed.body_b64)
+            })
+            .map_err(|e| {
+                PlatformError::Attestation(format!("ceremony helper https-relay body_b64: {e}"))
+            })?;
+        Ok((parsed.status, parsed.headers, body))
     }
 
     pub fn place_challenge(&self, token: &str, key_authorization: &str) -> Result<(), PlatformError> {

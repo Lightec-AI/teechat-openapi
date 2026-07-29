@@ -14,7 +14,7 @@ mod upstream;
 
 pub use acme_ceremony::{
     assert_acme_ceremony_policy, run_acme_ceremony, seal_from_acme_outcome, AcmeMode,
-    HelperChallengeSink, HelperDnsResolver,
+    HelperChallengeSink, HelperDnsResolver, HelperHttpsRelayTransport,
 };
 pub use attest::SgxAttestationPlatform;
 pub use ceremony_helper::{CeremonyHelperClient, DEFAULT_CEREMONY_HELPER_URL};

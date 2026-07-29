@@ -2,7 +2,8 @@
 //!
 //! Derived from [small-acme](https://github.com/Icelk/small-acme) /
 //! [instant-acme](https://github.com/InstantDomain/instant-acme) (Apache-2.0),
-//! adapted for Fortanix EDP: rustls over `TcpStream` with pluggable DNS instead of ureq.
+//! adapted for Fortanix EDP: pluggable [`AcmeTransport`] (direct rustls/`TcpStream`
+//! with DNS, or host ceremony-helper HTTPS relay).
 
 #![warn(unreachable_pub)]
 #![warn(missing_docs)]
@@ -28,7 +29,10 @@ mod provision;
 #[cfg(test)]
 mod mock_acme;
 
-pub use https::{DnsResolver, FnDnsResolver, HttpResponse, HttpsTransport, StdDnsResolver};
+pub use https::{
+    AcmeTransport, DnsResolver, FnAcmeTransport, FnDnsResolver, HttpResponse, HttpsTransport,
+    StdDnsResolver,
+};
 pub use provision::{
     provision_http01, Http01ChallengeSink, MemoryChallengeSink, ProvisionOutcome,
     ProvisionRequest,
@@ -170,10 +174,10 @@ impl Account {
     /// Restore an existing account from serialized credentials.
     pub fn from_credentials(
         credentials: AccountCredentials,
-        resolver: Arc<dyn DnsResolver>,
+        transport: Arc<dyn AcmeTransport>,
     ) -> Result<Self, Error> {
         Ok(Self {
-            inner: Arc::new(AccountInner::from_credentials(credentials, resolver)?),
+            inner: Arc::new(AccountInner::from_credentials(credentials, transport)?),
         })
     }
 
@@ -182,13 +186,13 @@ impl Account {
         id: String,
         key_pkcs8_der: &[u8],
         directory_url: &str,
-        resolver: Arc<dyn DnsResolver>,
+        transport: Arc<dyn AcmeTransport>,
     ) -> Result<Self, Error> {
         Ok(Self {
             inner: Arc::new(AccountInner {
                 id,
                 key: Key::from_pkcs8_der(key_pkcs8_der)?,
-                client: Client::new(directory_url, resolver)?,
+                client: Client::new(directory_url, transport)?,
             }),
         })
     }
@@ -198,28 +202,12 @@ impl Account {
         account: &NewAccount<'_>,
         server_url: &str,
         external_account: Option<&ExternalAccountKey>,
-        resolver: Arc<dyn DnsResolver>,
+        transport: Arc<dyn AcmeTransport>,
     ) -> Result<(Account, AccountCredentials), Error> {
         Self::create_inner(
             account,
             external_account,
-            Client::new(server_url, resolver)?,
-            server_url,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn create_with_roots(
-        account: &NewAccount<'_>,
-        server_url: &str,
-        external_account: Option<&ExternalAccountKey>,
-        resolver: Arc<dyn DnsResolver>,
-        roots: rustls::RootCertStore,
-    ) -> Result<(Account, AccountCredentials), Error> {
-        Self::create_inner(
-            account,
-            external_account,
-            Client::connect(server_url, HttpsTransport::with_roots(resolver, roots))?,
+            Client::new(server_url, transport)?,
             server_url,
         )
     }
@@ -307,17 +295,14 @@ struct AccountInner {
 impl AccountInner {
     fn from_credentials(
         credentials: AccountCredentials,
-        resolver: Arc<dyn DnsResolver>,
+        transport: Arc<dyn AcmeTransport>,
     ) -> Result<Self, Error> {
         Ok(Self {
             id: credentials.id,
             key: Key::from_pkcs8_der(credentials.key_pkcs8.as_ref())?,
             client: match (credentials.directory, credentials.urls) {
-                (Some(server_url), _) => Client::new(&server_url, resolver)?,
-                (None, Some(urls)) => Client {
-                    transport: HttpsTransport::new(resolver),
-                    urls,
-                },
+                (Some(server_url), _) => Client::new(&server_url, transport)?,
+                (None, Some(urls)) => Client { transport, urls },
                 (None, None) => return Err(Error::Str("no server URLs found")),
             },
         })
@@ -358,21 +343,44 @@ impl Signer for AccountInner {
 }
 
 pub(crate) struct Client {
-    transport: HttpsTransport,
+    transport: Arc<dyn AcmeTransport>,
     urls: DirectoryUrls,
 }
 
 impl Client {
-    pub(crate) fn new(server_url: &str, resolver: Arc<dyn DnsResolver>) -> Result<Self, Error> {
-        Self::connect(server_url, HttpsTransport::new(resolver))
+    pub(crate) fn new(
+        server_url: &str,
+        transport: Arc<dyn AcmeTransport>,
+    ) -> Result<Self, Error> {
+        Self::connect(server_url, transport)
     }
 
-    pub(crate) fn connect(server_url: &str, transport: HttpsTransport) -> Result<Self, Error> {
+    pub(crate) fn connect(
+        server_url: &str,
+        transport: Arc<dyn AcmeTransport>,
+    ) -> Result<Self, Error> {
         if !server_url.starts_with("https://") {
             return Err(Error::Str("directory URL must use HTTPS"));
         }
-        let rsp = transport.get(server_url)?;
-        let urls: DirectoryUrls = rsp.into_json()?;
+        let rsp = transport.request("GET", server_url, None, None)?;
+        if !(200..300).contains(&rsp.status) {
+            let preview: String = String::from_utf8_lossy(&rsp.body).chars().take(200).collect();
+            return Err(Error::Http(format!(
+                "ACME directory HTTP {}: {preview}",
+                rsp.status
+            )));
+        }
+        let urls: DirectoryUrls = match serde_json::from_slice(&rsp.body) {
+            Ok(u) => u,
+            Err(e) => {
+                let preview: String =
+                    String::from_utf8_lossy(&rsp.body).chars().take(240).collect();
+                return Err(Error::Http(format!(
+                    "ACME directory JSON ({e}); len={} prefix={preview:?}",
+                    rsp.body.len()
+                )));
+            }
+        };
         Ok(Client { transport, urls })
     }
 
@@ -385,7 +393,9 @@ impl Client {
     ) -> Result<HttpResponse, Error> {
         let nonce = self.nonce(nonce)?;
         let body = JoseJson::new(payload, signer.header(Some(&nonce), url), signer)?;
-        self.transport.post_json(url, JOSE_JSON, &body)
+        let bytes = serde_json::to_vec(&body).map_err(Error::from)?;
+        self.transport
+            .request("POST", url, Some(JOSE_JSON), Some(&bytes))
     }
 
     fn nonce(&self, nonce: Option<String>) -> Result<String, Error> {
@@ -393,7 +403,9 @@ impl Client {
             return Ok(nonce);
         }
 
-        let rsp = self.transport.head(&self.urls.new_nonce)?;
+        let rsp = self
+            .transport
+            .request("HEAD", &self.urls.new_nonce, None, None)?;
         if rsp.status != 200 {
             return Err(Error::Str("error response from newNonce resource"));
         }

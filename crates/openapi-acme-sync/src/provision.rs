@@ -15,7 +15,7 @@ use x509_cert::ext::pkix::{name::GeneralName, SubjectAltName};
 use x509_cert::name::Name;
 use zeroize::Zeroize;
 
-use crate::https::DnsResolver;
+use crate::https::AcmeTransport;
 use crate::{
     Account, AccountCredentials, AuthorizationStatus, ChallengeType, Error, Identifier, NewAccount,
     NewOrder, OrderStatus,
@@ -106,7 +106,7 @@ impl Drop for ProvisionOutcome {
 
 /// Run the full HTTP-01 ACME flow against `directory_url`.
 pub fn provision_http01(
-    resolver: Arc<dyn DnsResolver>,
+    transport: Arc<dyn AcmeTransport>,
     sink: &dyn Http01ChallengeSink,
     req: ProvisionRequest,
 ) -> Result<ProvisionOutcome, Error> {
@@ -115,57 +115,18 @@ pub fn provision_http01(
     }
 
     let domain = req.domain.clone();
-    let (account, account_credentials_json) =
-        open_or_create_account(resolver, &req, AccountOpener::Default)?;
+    let (account, account_credentials_json) = open_or_create_account(transport, &req)?;
 
-    finish_provision(
-        sink,
-        domain,
-        account,
-        account_credentials_json,
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn provision_http01_with_roots(
-    resolver: Arc<dyn DnsResolver>,
-    roots: rustls::RootCertStore,
-    sink: &dyn Http01ChallengeSink,
-    req: ProvisionRequest,
-) -> Result<ProvisionOutcome, Error> {
-    if !req.directory_url.starts_with("https://") {
-        return Err(Error::Str("directory URL must use HTTPS"));
-    }
-
-    let domain = req.domain.clone();
-    let (account, account_credentials_json) =
-        open_or_create_account(resolver, &req, AccountOpener::CustomRoots(roots))?;
-
-    finish_provision(
-        sink,
-        domain,
-        account,
-        account_credentials_json,
-    )
-}
-
-enum AccountOpener {
-    Default,
-    #[cfg(test)]
-    CustomRoots(rustls::RootCertStore),
+    finish_provision(sink, domain, account, account_credentials_json)
 }
 
 fn open_or_create_account(
-    resolver: Arc<dyn DnsResolver>,
+    transport: Arc<dyn AcmeTransport>,
     req: &ProvisionRequest,
-    opener: AccountOpener,
 ) -> Result<(Account, String), Error> {
     if let Some(json) = req.account_credentials_json.as_ref() {
         let creds: AccountCredentials = serde_json::from_str(json)?;
-        return Ok((
-            Account::from_credentials(creds, resolver)?,
-            json.clone(),
-        ));
+        return Ok((Account::from_credentials(creds, transport)?, json.clone()));
     }
 
     let contact = match &req.email {
@@ -179,22 +140,8 @@ fn open_or_create_account(
         only_return_existing: false,
     };
 
-    let (account, credentials) = match opener {
-        AccountOpener::Default => Account::create(
-            &new_account,
-            &req.directory_url,
-            None,
-            resolver,
-        )?,
-        #[cfg(test)]
-        AccountOpener::CustomRoots(roots) => Account::create_with_roots(
-            &new_account,
-            &req.directory_url,
-            None,
-            resolver,
-            roots,
-        )?,
-    };
+    let (account, credentials) =
+        Account::create(&new_account, &req.directory_url, None, transport)?;
 
     Ok((
         account,

@@ -119,7 +119,28 @@ pub struct Problem {
 
 impl Problem {
     pub(crate) fn check<T: DeserializeOwned>(rsp: HttpResponse) -> Result<T, Error> {
-        rsp.into_json()
+        let status = rsp.status;
+        let body = rsp.body;
+        if !(200..300).contains(&status) {
+            if let Ok(problem) = serde_json::from_slice::<Problem>(&body) {
+                return Err(Error::Api(problem));
+            }
+            let preview: String = String::from_utf8_lossy(&body).chars().take(240).collect();
+            return Err(Error::Http(format!(
+                "ACME HTTP {status}; len={} prefix={preview:?}",
+                body.len()
+            )));
+        }
+        match serde_json::from_slice::<T>(&body) {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                let preview: String = String::from_utf8_lossy(&body).chars().take(240).collect();
+                Err(Error::Http(format!(
+                    "ACME JSON ({e}); status={status} len={} prefix={preview:?}",
+                    body.len()
+                )))
+            }
+        }
     }
 
     pub(crate) fn from_response(rsp: HttpResponse) -> Result<Vec<u8>, Error> {
@@ -129,7 +150,16 @@ impl Problem {
             return Ok(body);
         }
 
-        Err(serde_json::from_slice::<Problem>(&body)?.into())
+        match serde_json::from_slice::<Problem>(&body) {
+            Ok(problem) => Err(problem.into()),
+            Err(e) => {
+                let preview: String = String::from_utf8_lossy(&body).chars().take(240).collect();
+                Err(Error::Http(format!(
+                    "ACME HTTP {status} ({e}); len={} prefix={preview:?}",
+                    body.len()
+                )))
+            }
+        }
     }
 }
 

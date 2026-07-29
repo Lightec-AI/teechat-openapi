@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use openapi_acme_sync::{
-    provision_http01, DnsResolver, Error as AcmeError, Http01ChallengeSink, LetsEncrypt,
-    ProvisionRequest,
+    provision_http01, AcmeTransport, DnsResolver, Error as AcmeError, Http01ChallengeSink,
+    HttpResponse, LetsEncrypt, ProvisionRequest,
 };
 use openapi_platform::{load_edge_profile, Sealer};
 use tracing::info;
@@ -36,6 +36,8 @@ impl AcmeMode {
 }
 
 /// DNS resolver that calls host `openapi-ceremony-helper` `/dns`.
+///
+/// Kept for host unit tests; production EDP ACME uses [`HelperHttpsRelayTransport`].
 pub struct HelperDnsResolver {
     client: CeremonyHelperClient,
 }
@@ -51,6 +53,36 @@ impl DnsResolver for HelperDnsResolver {
         self.client
             .resolve_dns(host, port)
             .map_err(|e| AcmeError::Http(e.to_string()))
+    }
+}
+
+/// ACME HTTPS via host helper `/https-relay` (EDP production path).
+///
+/// The enclave still owns ACME account key + leaf keygen/JOSE/CSR/seal; the host
+/// only performs the TLS client I/O to Let's Encrypt / ZeroSSL.
+pub struct HelperHttpsRelayTransport {
+    client: CeremonyHelperClient,
+}
+
+impl HelperHttpsRelayTransport {
+    pub fn new(client: CeremonyHelperClient) -> Self {
+        Self { client }
+    }
+}
+
+impl AcmeTransport for HelperHttpsRelayTransport {
+    fn request(
+        &self,
+        method: &str,
+        url: &str,
+        content_type: Option<&str>,
+        body: Option<&[u8]>,
+    ) -> Result<HttpResponse, AcmeError> {
+        let (status, headers, body) = self
+            .client
+            .https_relay(method, url, content_type, body)
+            .map_err(|e| AcmeError::Http(e.to_string()))?;
+        Ok(HttpResponse::new(status, headers, body))
     }
 }
 
@@ -169,7 +201,8 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
         "starting SGX Option A ACME ceremony"
     );
 
-    let resolver: Arc<dyn DnsResolver> = Arc::new(HelperDnsResolver::new(helper.clone()));
+    let transport: Arc<dyn AcmeTransport> =
+        Arc::new(HelperHttpsRelayTransport::new(helper.clone()));
     let sink = HelperChallengeSink::new(helper.clone());
     let req = ProvisionRequest {
         domain: domain.clone(),
@@ -178,8 +211,8 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
         account_credentials_json,
     };
 
-    let mut outcome =
-        provision_http01(resolver, &sink, req).map_err(|e| anyhow::anyhow!("ACME provision: {e}"))?;
+    let mut outcome = provision_http01(transport, &sink, req)
+        .map_err(|e| anyhow::anyhow!("ACME provision: {e}"))?;
 
     // Persist account for renew (contains ACME account key — not the TLS leaf key).
     helper
@@ -353,6 +386,20 @@ mod tests {
         client.put_artifact("tls.crt", b"CERT").unwrap();
         assert_eq!(client.get_artifact("tls.crt").unwrap(), b"CERT");
 
+        let relay = HelperHttpsRelayTransport::new(client.clone());
+        let rsp = relay
+            .request(
+                "GET",
+                "https://acme-staging-v02.api.letsencrypt.org/directory",
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(rsp.status, 200);
+        assert!(rsp.header("content-type").is_some() || !rsp.body.is_empty());
+        let body = String::from_utf8_lossy(&rsp.body);
+        assert!(body.contains("newNonce") || body.contains("relay-ok"));
+
         let _ = std::fs::remove_dir_all(tmp);
     }
 
@@ -407,6 +454,20 @@ mod tests {
                 200u16,
                 br#"{"addrs":["127.0.0.1:443"]}"#.to_vec(),
             )
+        } else if method == "POST" && path == "/https-relay" {
+            // Fixture does not call the public internet; echo a tiny ACME-like body.
+            let resp = serde_json::json!({
+                "status": 200u16,
+                "headers": {
+                    "content-type": "application/json",
+                    "replay-nonce": "fixture-nonce"
+                },
+                "body_b64": base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    br#"{"newNonce":"https://example/new-nonce","relay-ok":true}"#,
+                ),
+            });
+            (200, serde_json::to_vec(&resp).unwrap())
         } else if method == "PUT" && path.starts_with("/acme-challenge/") {
             let token = &path["/acme-challenge/".len()..];
             let p = state

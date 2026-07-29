@@ -83,6 +83,19 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
+    /// Build a response (e.g. from a host HTTPS relay).
+    pub fn new(status: u16, headers: HashMap<String, String>, body: Vec<u8>) -> Self {
+        let headers = headers
+            .into_iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v))
+            .collect();
+        Self {
+            status,
+            headers,
+            body,
+        }
+    }
+
     /// Case-insensitive header lookup.
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
@@ -96,6 +109,52 @@ impl HttpResponse {
     }
 }
 
+/// Pluggable ACME HTTP transport (direct rustls or host relay).
+pub trait AcmeTransport: Send + Sync {
+    /// Perform an HTTP request (`GET` / `HEAD` / `POST`).
+    fn request(
+        &self,
+        method: &str,
+        url: &str,
+        content_type: Option<&str>,
+        body: Option<&[u8]>,
+    ) -> Result<HttpResponse, Error>;
+}
+
+/// Closure-backed [`AcmeTransport`] (tests / relays).
+pub struct FnAcmeTransport {
+    f: Arc<
+        dyn Fn(&str, &str, Option<&str>, Option<&[u8]>) -> Result<HttpResponse, Error>
+            + Send
+            + Sync,
+    >,
+}
+
+impl FnAcmeTransport {
+    /// Wrap `f` as an [`AcmeTransport`].
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn(&str, &str, Option<&str>, Option<&[u8]>) -> Result<HttpResponse, Error>
+            + Send
+            + Sync
+            + 'static,
+    {
+        Self { f: Arc::new(f) }
+    }
+}
+
+impl AcmeTransport for FnAcmeTransport {
+    fn request(
+        &self,
+        method: &str,
+        url: &str,
+        content_type: Option<&str>,
+        body: Option<&[u8]>,
+    ) -> Result<HttpResponse, Error> {
+        (self.f)(method, url, content_type, body)
+    }
+}
+
 /// Blocking HTTPS client for ACME directory and JOSE POSTs.
 pub struct HttpsTransport {
     resolver: Arc<dyn DnsResolver>,
@@ -104,10 +163,18 @@ pub struct HttpsTransport {
 
 impl HttpsTransport {
     /// Build a transport that trusts the public Web PKI roots (`webpki-roots`).
+    ///
+    /// Uses [`StdDnsResolver`] internally when constructed via
+    /// [`HttpsTransport::with_std_dns`]; callers may also pass a custom resolver.
     pub fn new(resolver: Arc<dyn DnsResolver>) -> Self {
         let mut roots = RootCertStore::empty();
         roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
         Self::with_roots(resolver, roots)
+    }
+
+    /// Build a transport with [`StdDnsResolver`] and public Web PKI roots.
+    pub fn with_std_dns() -> Self {
+        Self::new(Arc::new(StdDnsResolver))
     }
 
     /// Build a transport with a custom root store (unit tests with ephemeral CA).
@@ -122,12 +189,12 @@ impl HttpsTransport {
 
     /// GET `url` (https only).
     pub fn get(&self, url: &str) -> Result<HttpResponse, Error> {
-        self.request("GET", url, None, None)
+        AcmeTransport::request(self, "GET", url, None, None)
     }
 
     /// HEAD `url` (https only).
     pub fn head(&self, url: &str) -> Result<HttpResponse, Error> {
-        self.request("HEAD", url, None, None)
+        AcmeTransport::request(self, "HEAD", url, None, None)
     }
 
     /// POST JSON to `url` with the given `Content-Type`.
@@ -138,9 +205,11 @@ impl HttpsTransport {
         body: &impl serde::Serialize,
     ) -> Result<HttpResponse, Error> {
         let bytes = serde_json::to_vec(body).map_err(Error::from)?;
-        self.request("POST", url, Some(content_type), Some(&bytes))
+        AcmeTransport::request(self, "POST", url, Some(content_type), Some(&bytes))
     }
+}
 
+impl AcmeTransport for HttpsTransport {
     fn request(
         &self,
         method: &str,
@@ -215,17 +284,24 @@ fn build_request_bytes(
     content_type: Option<&str>,
     body: Option<&[u8]>,
 ) -> Vec<u8> {
+    // Prefer identity encoding — CDNs sometimes compress anyway if we omit this.
     let header = match (content_type, body) {
         (Some(ct), Some(body)) => format!(
             "{method} {path} HTTP/1.1\r\n\
              Host: {host}\r\n\
              Content-Type: {ct}\r\n\
              Content-Length: {}\r\n\
+             Accept-Encoding: identity\r\n\
+             User-Agent: teechat-openapi-acme-sync/0.7\r\n\
              Connection: close\r\n\r\n",
             body.len()
         ),
         _ => format!(
-            "{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+            "{method} {path} HTTP/1.1\r\n\
+             Host: {host}\r\n\
+             Accept-Encoding: identity\r\n\
+             User-Agent: teechat-openapi-acme-sync/0.7\r\n\
+             Connection: close\r\n\r\n"
         ),
     };
     let mut out = header.into_bytes();
@@ -257,8 +333,12 @@ fn read_http_response<R: Read>(reader: &mut R, head_only: bool) -> Result<HttpRe
 
     let mut headers = [EMPTY_HEADER; 64];
     let mut resp = httparse::Response::new(&mut headers);
-    resp.parse(&raw)
+    let parsed = resp
+        .parse(&raw)
         .map_err(|e| Error::Http(format!("parse response headers: {e}")))?;
+    if !parsed.is_complete() {
+        return Err(Error::Str("incomplete HTTP response headers"));
+    }
     let status = resp
         .code
         .ok_or(Error::Str("missing HTTP status"))?;
@@ -274,7 +354,13 @@ fn read_http_response<R: Read>(reader: &mut R, head_only: bool) -> Result<HttpRe
 
     let mut body = Vec::new();
     if !head_only {
-        if let Some(cl) = header_map.get("content-length") {
+        let te = header_map
+            .get("transfer-encoding")
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_default();
+        if te.split(',').any(|t| t.trim() == "chunked") {
+            read_chunked_body(reader, &mut body)?;
+        } else if let Some(cl) = header_map.get("content-length") {
             let len: usize = cl
                 .parse()
                 .map_err(|_| Error::Str("invalid Content-Length"))?;
@@ -282,8 +368,6 @@ fn read_http_response<R: Read>(reader: &mut R, head_only: bool) -> Result<HttpRe
             if len > 0 {
                 reader.read_exact(&mut body).map_err(Error::HttpIo)?;
             }
-        } else if header_map.get("transfer-encoding") == Some(&"chunked".to_owned()) {
-            read_chunked_body(reader, &mut body)?;
         } else {
             reader.read_to_end(&mut body).map_err(Error::HttpIo)?;
         }

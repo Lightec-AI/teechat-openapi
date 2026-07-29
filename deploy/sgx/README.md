@@ -90,9 +90,11 @@ Fortanix EDP: **no `std::fs`**, DNS hangs, TCP to IP works. The TLS private key 
 
 | Component | Role |
 |-----------|------|
-| `openapi-ceremony-helper` | Host loopback `:18501` — DNS resolve, ACME HTTP-01 webroot, artifact store |
+| `openapi-ceremony-helper` | Host loopback `:18501` — DNS, allowlisted ACME HTTPS relay (`/https-relay`), HTTP-01 webroot, artifact store |
 | `openapi-enclave` + `OPENAPI_MODE=acme-issue\|acme-renew` | In-enclave `openapi-acme-sync` HTTP-01 + seal → PUT `sealed-key.json` + `tls.crt` |
 | Host nginx | Serve `${OPENAPI_ACME_WEBROOT}/.well-known/acme-challenge/` publicly |
+
+**Why `/https-relay`:** Direct `rustls-rustcrypto` HTTPS from the enclave to Let's Encrypt can reach the wire but return truncated/corrupt ACME JSON bodies on Fortanix EDP. Production Option A therefore keeps account key + leaf keygen/JOSE/CSR/seal inside EPC, and has the host helper perform the HTTPS client I/O to allowlisted `*.letsencrypt.org` / `*.zerossl.com` hosts (same trust boundary as DNS + webroot). The TLS leaf private key PEM never leaves the enclave.
 
 **Lab (staging LE):**
 
@@ -179,4 +181,5 @@ deploy/sgx/                     # build/run/ceremony scripts
 | Upstream connect fail | Use `http://127.0.0.1:PORT`, not hostname |
 | TLS fails in enclave | Run ceremony helper; set `OPENAPI_CEREMONY_HELPER_URL`; artifacts `tls.crt` + `sealed-key.json` present |
 | ACME DNS hang | Enclave must use helper `/dns` (never enclave libc DNS) |
+| ACME JSON truncated / `expected value at line …` | EDP path must use helper `/https-relay` (not direct enclave HTTPS to LE) |
 | ACME challenge 404 | Host nginx must map `/.well-known/acme-challenge/` → `OPENAPI_ACME_WEBROOT` |

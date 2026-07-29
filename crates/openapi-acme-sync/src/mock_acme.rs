@@ -11,11 +11,8 @@ use rcgen::{CertificateParams, DistinguishedName, KeyPair, SanType};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{RootCertStore, ServerConfig, ServerConnection, StreamOwned};
 
-use crate::https::{ensure_crypto_provider, FnDnsResolver, StdDnsResolver};
-use crate::provision::{
-    provision_http01, provision_http01_with_roots, Http01ChallengeSink, MemoryChallengeSink,
-    ProvisionRequest,
-};
+use crate::https::{ensure_crypto_provider, AcmeTransport, FnDnsResolver, HttpsTransport};
+use crate::provision::{provision_http01, Http01ChallengeSink, MemoryChallengeSink, ProvisionRequest};
 use crate::{Account, AccountCredentials, Error, NewAccount};
 
 static NONCE: AtomicU64 = AtomicU64::new(1);
@@ -107,6 +104,10 @@ impl MockAcmeServer {
             .add(self.cert_der.clone())
             .expect("add mock root");
         roots
+    }
+
+    pub(crate) fn transport(&self) -> Arc<dyn AcmeTransport> {
+        Arc::new(HttpsTransport::with_roots(self.resolver(), self.roots()))
     }
 }
 
@@ -282,9 +283,8 @@ fn empty_response(status: u16, nonce: Option<&str>, location: Option<&str>) -> S
 fn full_provision_http01_against_mock() -> Result<(), Error> {
     let server = MockAcmeServer::start()?;
     let sink = MemoryChallengeSink::new();
-    let outcome = provision_http01_with_roots(
-        server.resolver(),
-        server.roots(),
+    let outcome = provision_http01(
+        server.transport(),
         &sink,
         ProvisionRequest {
             domain: "example.test".into(),
@@ -307,7 +307,7 @@ fn full_provision_http01_against_mock() -> Result<(), Error> {
 fn reject_non_https_directory_url() {
     let sink = MemoryChallengeSink::new();
     let err = provision_http01(
-        Arc::new(StdDnsResolver),
+        Arc::new(HttpsTransport::with_std_dns()),
         &sink,
         ProvisionRequest {
             domain: "example.test".into(),
@@ -336,10 +336,8 @@ fn challenge_sink_place_and_clear() -> Result<(), Error> {
 #[test]
 fn credentials_deserialize_roundtrip() -> Result<(), Error> {
     let server = MockAcmeServer::start()?;
-    let resolver = server.resolver();
-    let roots = server.roots();
 
-    let (_account, credentials) = Account::create_with_roots(
+    let (_account, credentials) = Account::create(
         &NewAccount {
             contact: &[],
             terms_of_service_agreed: true,
@@ -347,8 +345,7 @@ fn credentials_deserialize_roundtrip() -> Result<(), Error> {
         },
         &server.directory_url(),
         None,
-        resolver,
-        roots,
+        server.transport(),
     )?;
     let json = serde_json::to_string(&credentials)?;
     let parsed: AccountCredentials = serde_json::from_str(&json)?;
