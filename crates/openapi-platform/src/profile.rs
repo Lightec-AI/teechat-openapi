@@ -48,6 +48,10 @@ pub enum ProfileError {
         "prod forbids OPENAPI_SNPGUEST_BIN on unmeasured data paths — use measured helper (SNPGUEST-001)"
     )]
     ProdUnmeasuredSnpguestBin,
+    #[error(
+        "prod requires measured app path — teechat.app_verity_root on cmdline and binary not under /data (APP-VERITY-001)"
+    )]
+    ProdMissingAppVerity,
 }
 
 /// Load profile from `OPENAPI_PROFILE` (`dev` default, `prod` / `production` → prod).
@@ -151,14 +155,50 @@ pub fn validate_tls_key_policy(profile: EdgeProfile) -> Result<(), ProfileError>
 }
 
 /// Paths under known unmeasured OpenAPI data mounts (Talos `/var/mnt/…`, pod `/data/…`).
+/// Measured app volume lives under `/var/mnt/teechat-openapi/app/…` (verity) — still on the
+/// data *disk* but opened via dm-verity; Phase-1 `…/bin/openapi` (no `/app/`) is rejected.
 pub fn is_unmeasured_guest_path(path: &str) -> bool {
     let lower = path.trim().to_ascii_lowercase();
     if lower.is_empty() {
         return false;
     }
-    lower == "/data"
-        || lower.starts_with("/data/")
-        || lower.starts_with("/var/mnt/teechat-openapi/")
+    if lower == "/data" || lower.starts_with("/data/") {
+        return true;
+    }
+    // Data disk helpers / Phase-1 binary — but allow measured app mount.
+    if lower.starts_with("/var/mnt/teechat-openapi/app/")
+        || lower.starts_with("/usr/local/teechat/")
+    {
+        return false;
+    }
+    lower.starts_with("/var/mnt/teechat-openapi/")
+}
+
+/// Kernel cmdline (Linux `/proc/cmdline`, or `OPENAPI_TEST_CMDLINE` under `cfg(test)`).
+fn read_kernel_cmdline() -> Option<String> {
+    #[cfg(test)]
+    if let Ok(c) = std::env::var("OPENAPI_TEST_CMDLINE") {
+        return Some(c);
+    }
+    std::fs::read_to_string("/proc/cmdline").ok()
+}
+
+/// Prod fail-closed: measured app volume (`teechat.app_verity_root`) + not exec from `/data`.
+pub fn validate_measured_app_path(profile: EdgeProfile) -> Result<(), ProfileError> {
+    if !profile.is_prod() {
+        return Ok(());
+    }
+    let cmdline = read_kernel_cmdline().unwrap_or_default();
+    if !cmdline.split_whitespace().any(|t| t.starts_with("teechat.app_verity_root=")) {
+        return Err(ProfileError::ProdMissingAppVerity);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let p = exe.to_string_lossy();
+        if is_unmeasured_guest_path(&p) {
+            return Err(ProfileError::ProdMissingAppVerity);
+        }
+    }
+    Ok(())
 }
 
 /// Host-side `seal-tls-key` / `seal-tls-key-sgx` are **dev/lab only** (OPS-002).
@@ -190,6 +230,7 @@ mod tests {
         env::remove_var("OPENAPI_PROXY_MODE");
         env::remove_var("OPENAPI_TLS_KEY_POLICY_PATH");
         env::remove_var("OPENAPI_SNPGUEST_BIN");
+        env::remove_var("OPENAPI_TEST_CMDLINE");
     }
 
     #[test]
@@ -380,7 +421,29 @@ mod tests {
     fn unmeasured_guest_path_detects_data_mounts() {
         assert!(is_unmeasured_guest_path("/data/bin/snpguest"));
         assert!(is_unmeasured_guest_path("/var/mnt/teechat-openapi/bin/snpguest"));
+        assert!(!is_unmeasured_guest_path(
+            "/var/mnt/teechat-openapi/app/usr/local/teechat/bin/openapi"
+        ));
         assert!(!is_unmeasured_guest_path("/usr/local/teechat/bin/snpguest"));
         assert!(!is_unmeasured_guest_path("snpguest"));
+    }
+
+    #[test]
+    fn prod_requires_app_verity_cmdline() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        clear_tls_env();
+        env::remove_var("OPENAPI_TEST_CMDLINE");
+        env::set_var("OPENAPI_PROFILE", "prod");
+        assert!(matches!(
+            validate_measured_app_path(EdgeProfile::Prod),
+            Err(ProfileError::ProdMissingAppVerity)
+        ));
+        env::set_var(
+            "OPENAPI_TEST_CMDLINE",
+            "BOOT_IMAGE=/boot/vmlinuz teechat.app_verity_root=abc123",
+        );
+        assert!(validate_measured_app_path(EdgeProfile::Prod).is_ok());
+        env::remove_var("OPENAPI_TEST_CMDLINE");
+        clear_tls_env();
     }
 }

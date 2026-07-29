@@ -4,8 +4,8 @@ use std::fs;
 use std::path::Path;
 
 use openapi_platform::{
-    edge_runtime_policy_from_parts, load_edge_profile, validate_tls_key_policy, EdgeProfile,
-    EdgeRuntimePolicy, ProfileError,
+    edge_runtime_policy_from_parts, load_edge_profile, validate_measured_app_path,
+    validate_tls_key_policy, EdgeProfile, EdgeRuntimePolicy, ProfileError,
 };
 
 use crate::seal::CvmSealer;
@@ -217,6 +217,7 @@ impl EdgeEnv {
 
     pub fn validate_profile(&self) -> Result<(), EnvError> {
         validate_tls_key_policy(self.profile())?;
+        validate_measured_app_path(self.profile())?;
         Ok(())
     }
 
