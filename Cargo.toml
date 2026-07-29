@@ -8,6 +8,7 @@ members = [
     "crates/openapi-platform-cvm",
     "crates/openapi-platform-sgx",
     "crates/openapi-attest",
+    "crates/openapi-acme-sync",
     "bins/openapi",
     "bins/openapi-enclave",
     "bins/openapi-dcap-helper",
