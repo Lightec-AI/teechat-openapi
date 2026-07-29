@@ -33,7 +33,16 @@ fn main() -> anyhow::Result<()> {
     }
 
     match acme_mode {
-        Some(mode) => openapi_platform_sgx::run_acme_ceremony(mode),
+        Some(mode) => {
+            // Prefer explicit exit over returning Err from main: ftxsgx-runner
+            // reports some Result failures as "Enclave panicked" even when the
+            // ceremony only failed closed on an ACME policy / LE error.
+            if let Err(err) = openapi_platform_sgx::run_acme_ceremony(mode) {
+                eprintln!("openapi ACME ceremony failed: {err:#}");
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         None => openapi_platform_sgx::run(),
     }
 }
