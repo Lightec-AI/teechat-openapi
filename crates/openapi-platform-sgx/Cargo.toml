@@ -10,6 +10,8 @@ rust-version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 aes-gcm = { workspace = true }
+# EDP: rustls-rustcrypto (not aws-lc-rs). Same wire as CVM seal-sync.
+attested-mtls-seal-sync = { workspace = true, features = ["rustcrypto"] }
 base64 = { workspace = true }
 hex = { workspace = true }
 hkdf = { workspace = true }

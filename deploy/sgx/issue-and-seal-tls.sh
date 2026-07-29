@@ -104,12 +104,19 @@ if ! curl -fsS "${HELPER_URL}/healthz" >/dev/null 2>&1; then
 fi
 
 ACME_MODE="acme-${MODE}"
+# Slot-prefixed artifacts (ceremony|blue|green). Default ceremony for mint path.
+ARTIFACT_SLOT="${OPENAPI_ARTIFACT_SLOT:-ceremony}"
+TLS_KEY_POLICY="${OPENAPI_TLS_KEY_POLICY:-key_ceremony}"
+mkdir -p "${OPENAPI_ARTIFACT_DIR:-/var/lib/teechat-openapi/sgx}/${ARTIFACT_SLOT}"
+
 ARGS=(
   "OPENAPI_MODE=${ACME_MODE}"
   "OPENAPI_MRENCLAVE=${OPENAPI_MRENCLAVE}"
   "OPENAPI_PROFILE=${EDGE_PROFILE}"
   "OPENAPI_ACME_DOMAIN=${DOMAIN}"
   "OPENAPI_CEREMONY_HELPER_URL=${HELPER_URL}"
+  "OPENAPI_ARTIFACT_SLOT=${ARTIFACT_SLOT}"
+  "OPENAPI_TLS_KEY_POLICY=${TLS_KEY_POLICY}"
   "RUST_LOG=${RUST_LOG:-info}"
 )
 [[ -n "$EMAIL" ]] && ARGS+=("OPENAPI_ACME_EMAIL=${EMAIL}")
@@ -121,22 +128,24 @@ echo ">> Running enclave ACME ceremony (${ACME_MODE}) for ${DOMAIN}"
 echo "   enclave: ${SIGNED}"
 echo "   helper:  ${HELPER_URL}"
 echo "   profile: ${EDGE_PROFILE}"
+echo "   slot:    ${ARTIFACT_SLOT} policy=${TLS_KEY_POLICY}"
 
 ftxsgx-runner --signature coresident "${SIGNED}" "${ARGS[@]}"
 
 ARTIFACT_DIR="${OPENAPI_ARTIFACT_DIR:-/var/lib/teechat-openapi/sgx}"
+SLOT_DIR="${ARTIFACT_DIR}/${ARTIFACT_SLOT}"
 echo ""
 echo "OK: ACME ${MODE} complete for ${DOMAIN}"
 echo "Artifacts (host):"
-echo "  ${ARTIFACT_DIR}/sealed-key.json   # EGETKEY-sealed; never a PEM"
-echo "  ${ARTIFACT_DIR}/tls.crt           # public fullchain"
+echo "  ${SLOT_DIR}/sealed-key.json   # EGETKEY-sealed; never a PEM"
+echo "  ${SLOT_DIR}/tls.crt           # public fullchain"
 echo ""
 echo "Next steps:"
 echo "  1. Keep ./deploy/sgx/run-ceremony-helper.sh running (serves artifacts to enclave)."
 echo "  2. Ensure nginx serves \${OPENAPI_ACME_WEBROOT}/.well-known/acme-challenge for renewals."
-echo "  3. Start the edge:"
-echo "       export OPENAPI_CEREMONY_HELPER_URL=${HELPER_URL}"
-echo "       export OPENAPI_PROFILE=${EDGE_PROFILE}"
-echo "       # plus catalog / upstream / MRENCLAVE as usual"
-echo "       ./deploy/sgx/run-enclave.sh"
-echo "  4. Publish SPKI pin after prod ceremony (openapi-tls-ceremony allowlist)."
+echo "  3. Start ceremony export (seal-sync listen), then sync blue:"
+echo "       # TeaChat repo:"
+echo "       bash scripts/ops/run-sgx-slot-enclave.sh --slot ceremony"
+echo "       bash scripts/ops/sgx-openapi-seal-sync.sh --to blue --from ceremony"
+echo "       bash scripts/ops/sgx-openapi-park-ceremony.sh --shred-sealed"
+echo "  4. Lab trust: update config/openapi-sgx-lab/trust.json (SPKI + MRENCLAVE)."

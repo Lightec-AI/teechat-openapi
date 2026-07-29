@@ -9,6 +9,7 @@ mod remote_client;
 mod report;
 mod run;
 mod seal;
+mod seal_sync;
 mod tls;
 mod tls_key_policy;
 mod upstream;
@@ -25,6 +26,10 @@ pub use env::{
 pub use remote_client::{spawn_revocation_poller, TcpL0Client};
 pub use run::run;
 pub use seal::{local_mrenclave_hex, SgxSealer, SGX_SEAL_ROOT_LABEL, SGX_TLS_SEAL_LABEL};
+pub use seal_sync::{
+    maybe_start_seal_sync, run_seal_sync_client, spawn_seal_sync_server, DcapChannelAttestor,
+    EdgeSealSyncAttestor, SealSyncConfig, SgxLocalSealer,
+};
 pub use tls::{
     load_server_config_from_pem_bytes, seal_tls_key_file, spki_sha256_hex_from_cert_bytes,
     spki_sha256_hex_from_cert_path, TlsAcceptor, TlsConfig,

@@ -10,7 +10,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 attested-mtls = { workspace = true }
-attested-mtls-seal-sync = { workspace = true }
+attested-mtls-seal-sync = { workspace = true, features = ["aws-lc"] }
 attested-mtls-snp-seal = { workspace = true, features = ["sev-guest", "test-hooks"] }
 base64 = { workspace = true }
 ed25519-dalek = { workspace = true }
