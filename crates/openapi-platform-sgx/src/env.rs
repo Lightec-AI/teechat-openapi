@@ -51,6 +51,8 @@ pub struct SgxEdgeEnv {
     pub tls_cert_path: Option<String>,
     pub tls_key_path: Option<String>,
     pub tls_sealed_key_path: Option<String>,
+    /// Host `openapi-ceremony-helper` base URL (Fortanix: fetch tls.crt + sealed-key.json).
+    pub ceremony_helper_url: Option<String>,
     pub seal_root_hex: Option<String>,
     pub max_body_bytes: usize,
     pub requests_per_minute: u32,
@@ -249,6 +251,7 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
         tls_cert_path: opt("OPENAPI_TLS_CERT_PATH"),
         tls_key_path: opt("OPENAPI_TLS_KEY_PATH"),
         tls_sealed_key_path: opt("OPENAPI_TLS_SEALED_KEY_PATH"),
+        ceremony_helper_url: opt("OPENAPI_CEREMONY_HELPER_URL"),
         seal_root_hex: opt("OPENAPI_SEAL_ROOT_HEX"),
         max_body_bytes: opt("OPENAPI_MAX_BODY_BYTES")
             .and_then(|v| v.parse().ok())

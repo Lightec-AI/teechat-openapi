@@ -4,12 +4,14 @@ use std::sync::Arc;
 use anyhow::Context;
 use openapi_core::App;
 use openapi_edge::{run_edge_server, ReadWriteConn};
+use openapi_platform::Sealer;
 use tracing::{info, warn};
 
 use crate::attest::SgxAttestationPlatform;
+use crate::ceremony_helper::CeremonyHelperClient;
 use crate::env::{load_sgx_edge_env, SgxEdgeEnv};
 use crate::seal::{local_mrenclave_hex, SgxSealer};
-use crate::tls::{TlsAcceptor, TlsConfig};
+use crate::tls::{spki_sha256_hex_from_cert_bytes, TlsAcceptor, TlsConfig};
 use crate::upstream::TcpHttpUpstream;
 
 pub fn run() -> anyhow::Result<()> {
@@ -78,20 +80,65 @@ pub fn run() -> anyhow::Result<()> {
     run_edge_server(&env.listen_addr, app, tls_hook)
 }
 
+fn use_ceremony_helper(env: &SgxEdgeEnv) -> bool {
+    env.ceremony_helper_url
+        .as_ref()
+        .map(|u| !u.is_empty())
+        .unwrap_or(false)
+}
+
+fn fetch_tls_artifacts(
+    env: &SgxEdgeEnv,
+) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+    let url = env
+        .ceremony_helper_url
+        .as_deref()
+        .context("OPENAPI_CEREMONY_HELPER_URL")?;
+    let client = CeremonyHelperClient::from_url(url).context("ceremony helper")?;
+    let cert = client
+        .get_artifact("tls.crt")
+        .context("fetch tls.crt from ceremony helper")?;
+    let sealed = client
+        .get_artifact("sealed-key.json")
+        .context("fetch sealed-key.json from ceremony helper")?;
+    Ok((cert, sealed))
+}
+
 fn tls_spki_hex(
     env: &SgxEdgeEnv,
     sealer: &SgxSealer,
     seal_root: Option<&[u8; 32]>,
 ) -> anyhow::Result<String> {
+    if use_ceremony_helper(env) {
+        let (cert_pem, sealed_json) = fetch_tls_artifacts(env)?;
+        // Touch sealed path to ensure unseal works (same as acceptor).
+        let blob: openapi_platform::SealedTlsKeyBlob = serde_json::from_slice(&sealed_json)
+            .context("parse sealed-key.json from helper")?;
+        let _key = sealer
+            .unseal_tls_key(&blob, seal_root)
+            .context("unseal tls key from helper artifact")?;
+        return spki_sha256_hex_from_cert_bytes(&cert_pem).map_err(|e| anyhow::anyhow!(e));
+    }
+
     let Some(cert_path) = &env.tls_cert_path else {
         warn!("OPENAPI_TLS_CERT_PATH not set — plain TCP (dev only)");
         return Ok("unknown".into());
     };
     let tls_config = TlsConfig::new(cert_path);
     if let Some(sealed_path) = &env.tls_sealed_key_path {
-        tls_config
-            .load_server_config_from_sealed(sealer, Path::new(sealed_path), seal_root)
-            .context("unseal tls key")?;
+        match tls_config.load_server_config_from_sealed(sealer, Path::new(sealed_path), seal_root)
+        {
+            Ok(_) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("operation not supported") || msg.contains("not supported") {
+                    anyhow::bail!(
+                        "TLS load failed ({msg}); set OPENAPI_CEREMONY_HELPER_URL to fetch tls.crt + sealed-key.json without std::fs"
+                    );
+                }
+                return Err(e).context("unseal tls key");
+            }
+        }
         return tls_config
             .cert_spki_sha256_hex()
             .map_err(|e| anyhow::anyhow!(e));
@@ -113,10 +160,20 @@ fn build_tls_acceptor(
     sealer: &SgxSealer,
     seal_root: Option<&[u8; 32]>,
 ) -> anyhow::Result<Option<Arc<TlsAcceptor>>> {
+    if use_ceremony_helper(env) {
+        info!("loading TLS cert + sealed key from ceremony helper");
+        let (cert_pem, sealed_json) = fetch_tls_artifacts(env)?;
+        let tls_config = TlsConfig::new("helper://tls.crt");
+        let server_config = tls_config
+            .load_server_config_from_sealed_bytes(sealer, &sealed_json, &cert_pem, seal_root)
+            .context("unseal tls key from helper")?;
+        return Ok(Some(Arc::new(TlsAcceptor::new(server_config))));
+    }
+
     let Some(cert_path) = &env.tls_cert_path else {
         if env.profile().is_prod() {
             anyhow::bail!(
-                "prod requires OPENAPI_TLS_CERT_PATH and a working TLS acceptor (TLS-001)"
+                "prod requires OPENAPI_TLS_CERT_PATH (or OPENAPI_CEREMONY_HELPER_URL) and a working TLS acceptor (TLS-001)"
             );
         }
         return Ok(None);
@@ -124,9 +181,22 @@ fn build_tls_acceptor(
     let tls_config = TlsConfig::new(cert_path);
     let server_config = if let Some(sealed_path) = &env.tls_sealed_key_path {
         info!(path = %sealed_path, "loading sealed tls private key");
-        tls_config
-            .load_server_config_from_sealed(sealer, Path::new(sealed_path), seal_root)
-            .context("unseal tls key")?
+        match tls_config.load_server_config_from_sealed(sealer, Path::new(sealed_path), seal_root)
+        {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("operation not supported")
+                    || msg.contains("File::open unsupported")
+                    || msg.contains("not supported")
+                {
+                    anyhow::bail!(
+                        "TLS File::open failed on this target ({msg}); set OPENAPI_CEREMONY_HELPER_URL so the enclave can fetch tls.crt + sealed-key.json over TCP"
+                    );
+                }
+                return Err(e).context("unseal tls key");
+            }
+        }
     } else if let Some(key_path) = &env.tls_key_path {
         if env.profile().is_prod() {
             anyhow::bail!("prod forbids plaintext TLS key path (use sealed key)");

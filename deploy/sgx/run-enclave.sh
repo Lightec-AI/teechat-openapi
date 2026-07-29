@@ -46,7 +46,10 @@ ARGS=(
   "OPENAPI_BUILD_VERSION=${OPENAPI_BUILD_VERSION:-sgx}"
 )
 [[ -n "${OPENAPI_TLS_CERT_PATH:-}" ]] && ARGS+=("OPENAPI_TLS_CERT_PATH=${OPENAPI_TLS_CERT_PATH}")
+[[ -n "${OPENAPI_TLS_SEALED_KEY_PATH:-}" ]] && ARGS+=("OPENAPI_TLS_SEALED_KEY_PATH=${OPENAPI_TLS_SEALED_KEY_PATH}")
 [[ -n "${OPENAPI_DCAP_HELPER_URL:-}" ]] && ARGS+=("OPENAPI_DCAP_HELPER_URL=${OPENAPI_DCAP_HELPER_URL}")
+[[ -n "${OPENAPI_CEREMONY_HELPER_URL:-}" ]] && ARGS+=("OPENAPI_CEREMONY_HELPER_URL=${OPENAPI_CEREMONY_HELPER_URL}")
+[[ -n "${OPENAPI_PROFILE:-}" ]] && ARGS+=("OPENAPI_PROFILE=${OPENAPI_PROFILE}")
 [[ -n "${RUST_LOG:-}" ]] && ARGS+=("RUST_LOG=${RUST_LOG}")
 # Challenge rate limits (0 = unlimited for bench). Fortanix does not inherit host env.
 [[ -n "${OPENAPI_CHALLENGE_RPM:-}" ]] && ARGS+=("OPENAPI_CHALLENGE_RPM=${OPENAPI_CHALLENGE_RPM}")
@@ -57,5 +60,9 @@ ARGS=(
 if [[ -z "${OPENAPI_DCAP_HELPER_URL:-}" ]]; then
   ARGS+=("OPENAPI_DCAP_HELPER_URL=http://127.0.0.1:18500")
 fi
+
+# Ceremony helper (TLS artifacts) — required for sealed TLS on EDP (no std::fs).
+# Set OPENAPI_CEREMONY_HELPER_URL=http://127.0.0.1:18501 after issue-and-seal-tls.sh.
+# When unset, edge may run plain TCP (lab) or fail clearly if sealed paths need FS.
 
 exec ftxsgx-runner --signature coresident "${SIGNED}" "${ARGS[@]}"

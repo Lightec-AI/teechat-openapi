@@ -165,8 +165,13 @@ fn dispatch(
         ("GET", p) if p.starts_with("/artifacts/") => {
             let name = &p["/artifacts/".len()..];
             let path = artifact_file_path(&paths.artifact_dir, name)?;
-            let body = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-            Ok((200, body, "application/octet-stream"))
+            match std::fs::read(&path) {
+                Ok(body) => Ok((200, body, "application/octet-stream")),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    Ok((404, b"not found".to_vec(), "text/plain"))
+                }
+                Err(e) => Err(e).with_context(|| format!("read {}", path.display())),
+            }
         }
         ("DELETE", p) if p.starts_with("/artifacts/") => {
             let name = &p["/artifacts/".len()..];

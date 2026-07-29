@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::io::{BufReader, Cursor};
 use std::path::Path;
 use std::sync::Arc;
@@ -54,7 +53,20 @@ impl TlsConfig {
         &self,
         key_pem: &[u8],
     ) -> Result<Arc<ServerConfig>, TlsError> {
-        load_server_config_from_pem_paths(&self.cert_path, key_pem)
+        // Prefer in-memory cert when caller already loaded bytes (helper path).
+        // Host unit tests still use File::open via load_server_config_from_pem_paths.
+        #[cfg(not(target_env = "sgx"))]
+        {
+            load_server_config_from_pem_paths(&self.cert_path, key_pem)
+        }
+        #[cfg(target_env = "sgx")]
+        {
+            let _ = &self.cert_path;
+            Err(TlsError::Rustls(
+                "SGX: load TLS via load_server_config_from_pem_bytes / ceremony helper (std::fs unsupported)"
+                    .into(),
+            ))
+        }
     }
 
     pub fn load_server_config_from_sealed(
@@ -63,31 +75,77 @@ impl TlsConfig {
         sealed_path: &Path,
         seal_root: Option<&[u8; 32]>,
     ) -> Result<Arc<ServerConfig>, TlsError> {
-        let key_pem = sealer.unseal_tls_key_from_file(sealed_path, seal_root)?;
-        self.load_server_config_from_key_pem(&key_pem)
+        #[cfg(not(target_env = "sgx"))]
+        {
+            let key_pem = sealer.unseal_tls_key_from_file(sealed_path, seal_root)?;
+            self.load_server_config_from_key_pem(&key_pem)
+        }
+        #[cfg(target_env = "sgx")]
+        {
+            let _ = (sealer, sealed_path, seal_root, &self.cert_path);
+            Err(TlsError::Rustls(
+                "SGX: sealed key must be fetched via ceremony helper (File::open unsupported)"
+                    .into(),
+            ))
+        }
+    }
+
+    pub fn load_server_config_from_sealed_bytes(
+        &self,
+        sealer: &SgxSealer,
+        sealed_json: &[u8],
+        cert_pem: &[u8],
+        seal_root: Option<&[u8; 32]>,
+    ) -> Result<Arc<ServerConfig>, TlsError> {
+        let blob: SealedTlsKeyBlob = serde_json::from_slice(sealed_json)
+            .map_err(|e| TlsError::Seal(PlatformError::Seal(format!("parse sealed blob: {e}"))))?;
+        let key_pem = sealer.unseal_tls_key(&blob, seal_root)?;
+        let _ = &self.cert_path;
+        load_server_config_from_pem_bytes(cert_pem, &key_pem)
     }
 
     pub fn load_server_config_from_plain_key_path(
         cert_path: &str,
         key_path: &str,
     ) -> Result<Arc<ServerConfig>, TlsError> {
-        let key_pem = std::fs::read(key_path)?;
-        load_server_config_from_pem_paths(cert_path, &key_pem)
+        #[cfg(not(target_env = "sgx"))]
+        {
+            let key_pem = std::fs::read(key_path)?;
+            load_server_config_from_pem_paths(cert_path, &key_pem)
+        }
+        #[cfg(target_env = "sgx")]
+        {
+            let _ = (cert_path, key_path);
+            Err(TlsError::Rustls(
+                "SGX: plaintext key path unsupported (use sealed key via ceremony helper)".into(),
+            ))
+        }
     }
 
     pub fn cert_spki_sha256_hex(&self) -> Result<String, TlsError> {
-        spki_sha256_hex_from_cert_path(Path::new(&self.cert_path))
+        #[cfg(not(target_env = "sgx"))]
+        {
+            spki_sha256_hex_from_cert_path(Path::new(&self.cert_path))
+        }
+        #[cfg(target_env = "sgx")]
+        {
+            let _ = &self.cert_path;
+            Err(TlsError::Rustls(
+                "SGX: compute SPKI from cert bytes (ceremony helper), not File::open".into(),
+            ))
+        }
     }
 }
 
-pub fn load_server_config_from_pem_paths(
-    cert_path: &str,
+/// Load server TLS config from in-memory PEM cert + key (Fortanix EDP / helper path).
+pub fn load_server_config_from_pem_bytes(
+    cert_pem: &[u8],
     key_pem: &[u8],
 ) -> Result<Arc<ServerConfig>, TlsError> {
-    let cert_file = File::open(cert_path)?;
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut BufReader::new(cert_file))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| TlsError::Rustls(e.to_string()))?;
+    let certs: Vec<CertificateDer<'static>> =
+        rustls_pemfile::certs(&mut BufReader::new(Cursor::new(cert_pem)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| TlsError::Rustls(e.to_string()))?;
     let key = rustls_pemfile::private_key(&mut BufReader::new(Cursor::new(key_pem)))
         .map_err(|e| TlsError::Rustls(e.to_string()))?
         .ok_or_else(|| TlsError::Rustls("missing private key".into()))?;
@@ -95,16 +153,38 @@ pub fn load_server_config_from_pem_paths(
     build_server_tls_config(certs, key).map_err(|e| TlsError::Rustls(e.to_string()))
 }
 
-pub fn spki_sha256_hex_from_cert_path(path: &Path) -> Result<String, TlsError> {
-    let file = File::open(path)?;
-    let mut reader = BufReader::new(file);
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| TlsError::Rustls(e.to_string()))?;
+#[cfg(not(target_env = "sgx"))]
+pub fn load_server_config_from_pem_paths(
+    cert_path: &str,
+    key_pem: &[u8],
+) -> Result<Arc<ServerConfig>, TlsError> {
+    let cert_pem = std::fs::read(cert_path)?;
+    load_server_config_from_pem_bytes(&cert_pem, key_pem)
+}
+
+pub fn spki_sha256_hex_from_cert_bytes(cert_pem: &[u8]) -> Result<String, TlsError> {
+    let certs: Vec<CertificateDer<'static>> =
+        rustls_pemfile::certs(&mut BufReader::new(Cursor::new(cert_pem)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| TlsError::Rustls(e.to_string()))?;
     let cert = certs
         .first()
         .ok_or_else(|| TlsError::Rustls("no certificate found".into()))?;
     spki_sha256_hex_from_cert_der(cert.as_ref())
+}
+
+#[cfg(not(target_env = "sgx"))]
+pub fn spki_sha256_hex_from_cert_path(path: &Path) -> Result<String, TlsError> {
+    let cert_pem = std::fs::read(path)?;
+    spki_sha256_hex_from_cert_bytes(&cert_pem)
+}
+
+#[cfg(target_env = "sgx")]
+pub fn spki_sha256_hex_from_cert_path(_path: &Path) -> Result<String, TlsError> {
+    Err(TlsError::Rustls(
+        "operation not supported: File::open unavailable on Fortanix EDP; set OPENAPI_CEREMONY_HELPER_URL and serve tls.crt via helper"
+            .into(),
+    ))
 }
 
 /// SHA-256 of the leaf certificate's DER-encoded SubjectPublicKeyInfo.
