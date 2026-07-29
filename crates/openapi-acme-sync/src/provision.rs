@@ -1,17 +1,25 @@
 //! HTTP-01 certificate provisioning orchestration.
 
+use std::str::FromStr;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 
-use rcgen::{CertificateParams, DistinguishedName, KeyPair};
+use p256::ecdsa::{DerSignature, SigningKey};
+use p256::pkcs8::{EncodePrivateKey, LineEnding};
+use rand_core::OsRng;
+use x509_cert::builder::{Builder, RequestBuilder};
+use x509_cert::der::asn1::Ia5String;
+use x509_cert::der::Encode;
+use x509_cert::ext::pkix::{name::GeneralName, SubjectAltName};
+use x509_cert::name::Name;
 use zeroize::Zeroize;
 
+use crate::https::DnsResolver;
 use crate::{
     Account, AccountCredentials, AuthorizationStatus, ChallengeType, Error, Identifier, NewAccount,
     NewOrder, OrderStatus,
 };
-use crate::https::DnsResolver;
 
 /// Pluggable hook to publish HTTP-01 challenge responses.
 pub trait Http01ChallengeSink: Send + Sync {
@@ -255,14 +263,7 @@ fn finish_provision(
         }
     }
 
-    let key_pair = KeyPair::generate().map_err(|e| Error::Http(e.to_string()))?;
-    let mut params = CertificateParams::new(vec![domain])
-        .map_err(|e| Error::Http(e.to_string()))?;
-    params.distinguished_name = DistinguishedName::new();
-    let csr = params
-        .serialize_request(&key_pair)
-        .map_err(|e| Error::Http(e.to_string()))?;
-    let csr_der = csr.der().to_vec();
+    let (private_key_pem, csr_der) = generate_p256_key_and_csr(&domain)?;
 
     order.finalize(&csr_der)?;
 
@@ -283,8 +284,33 @@ fn finish_provision(
     }
 
     Ok(ProvisionOutcome {
-        private_key_pem: key_pair.serialize_pem(),
+        private_key_pem,
         certificate_chain_pem: cert_chain_pem,
         account_credentials_json,
     })
+}
+
+/// Generate a PKCS#8 P-256 leaf key + PKCS#10 CSR (pure RustCrypto; no ring/rcgen).
+fn generate_p256_key_and_csr(domain: &str) -> Result<(String, Vec<u8>), Error> {
+    let signing_key = SigningKey::random(&mut OsRng);
+    let private_key_pem = signing_key
+        .to_pkcs8_pem(LineEnding::LF)
+        .map_err(|e| Error::CryptoKey(e.to_string()))?
+        .to_string();
+
+    let subject = Name::from_str(&format!("CN={domain}"))
+        .map_err(|e| Error::Http(format!("csr subject: {e}")))?;
+    let mut builder = RequestBuilder::new(subject, &signing_key)
+        .map_err(|e| Error::Http(format!("csr builder: {e}")))?;
+    let dns = Ia5String::new(domain).map_err(|e| Error::Http(format!("csr san: {e}")))?;
+    builder
+        .add_extension(&SubjectAltName(vec![GeneralName::DnsName(dns)]))
+        .map_err(|e| Error::Http(format!("csr san ext: {e}")))?;
+    let csr = builder
+        .build::<DerSignature>()
+        .map_err(|e| Error::Http(format!("csr sign: {e}")))?;
+    let csr_der = csr
+        .to_der()
+        .map_err(|e| Error::Http(format!("csr der: {e}")))?;
+    Ok((private_key_pem, csr_der))
 }

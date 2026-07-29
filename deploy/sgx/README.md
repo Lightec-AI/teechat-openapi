@@ -86,6 +86,8 @@ export OPENAPI_MRENCLAVE=...
 
 Fortanix EDP: **no `std::fs`**, DNS hangs, TCP to IP works. The TLS private key must be sealed with **EGETKEY** (`SgxSealer`) inside the **same** `openapi-enclave` binary that serves traffic (same `MRENCLAVE`). The host must **never** see a private key PEM.
 
+**Crypto on EDP:** `ring` ECDSA / key-exchange hits `#UD` (`exception_vector: 6`) inside Fortanix enclaves on sgx-lab (92 MiB EPC). Option A ACME JOSE/CSR uses pure Rust **`p256`/`ecdsa`**, and both the ACME HTTPS client and edge TLS server use **`rustls-rustcrypto`** via `builder_with_provider` (not `rustls`+ring).
+
 | Component | Role |
 |-----------|------|
 | `openapi-ceremony-helper` | Host loopback `:18501` — DNS resolve, ACME HTTP-01 webroot, artifact store |

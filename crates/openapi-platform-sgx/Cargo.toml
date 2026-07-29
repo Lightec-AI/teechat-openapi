@@ -33,8 +33,8 @@ zeroize = { version = "1", features = ["derive"] }
 rustls = { workspace = true }
 
 [target.'cfg(target_env = "sgx")'.dependencies]
-ring = { version = "0.17", features = ["less-safe-getrandom-custom-or-rdrand"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+rustls-rustcrypto = { version = "0.0.2-alpha", default-features = false, features = ["std", "zeroize"] }
 sgx-isa = { version = "0.4", features = ["sgxstd"] }
 
 [dev-dependencies]

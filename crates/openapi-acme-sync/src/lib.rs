@@ -12,12 +12,16 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use ring::digest::{digest, SHA256};
-use ring::rand::SystemRandom;
-use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
-use ring::{hmac, pkcs8};
+use hmac::{Hmac, Mac};
+use p256::ecdsa::signature::Signer as _;
+use p256::ecdsa::{Signature as EcdsaSignature, SigningKey};
+use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey};
+use rand_core::OsRng;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+type HmacSha256 = Hmac<Sha256>;
 
 mod https;
 mod provision;
@@ -248,7 +252,7 @@ impl Account {
         let id = account_url.ok_or(Error::Str("failed to get account URL"))?;
         let credentials = AccountCredentials {
             id: id.clone(),
-            key_pkcs8: key_pkcs8.as_ref().to_vec(),
+            key_pkcs8,
             directory: Some(server_url.to_owned()),
             urls: None,
         };
@@ -411,37 +415,35 @@ impl fmt::Debug for Client {
 }
 
 struct Key {
-    rng: SystemRandom,
     signing_algorithm: SigningAlgorithm,
-    inner: EcdsaKeyPair,
+    inner: SigningKey,
     thumb: String,
 }
 
 impl Key {
-    fn generate() -> Result<(Self, pkcs8::Document), Error> {
-        let rng = SystemRandom::new();
-        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)?;
-        let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)?;
+    fn generate() -> Result<(Self, Vec<u8>), Error> {
+        let key = SigningKey::random(&mut OsRng);
+        let pkcs8 = key
+            .to_pkcs8_der()
+            .map_err(|e| Error::CryptoKey(e.to_string()))?;
         let thumb = URL_SAFE_NO_PAD.encode(Jwk::thumb_sha256(&key)?);
 
         Ok((
             Self {
-                rng,
                 signing_algorithm: SigningAlgorithm::Es256,
                 inner: key,
                 thumb,
             },
-            pkcs8,
+            pkcs8.as_bytes().to_vec(),
         ))
     }
 
     fn from_pkcs8_der(pkcs8_der: &[u8]) -> Result<Self, Error> {
-        let rng = SystemRandom::new();
-        let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8_der, &rng)?;
+        let key = SigningKey::from_pkcs8_der(pkcs8_der)
+            .map_err(|e| Error::CryptoKey(e.to_string()))?;
         let thumb = URL_SAFE_NO_PAD.encode(Jwk::thumb_sha256(&key)?);
 
         Ok(Self {
-            rng,
             signing_algorithm: SigningAlgorithm::Es256,
             inner: key,
             thumb,
@@ -450,7 +452,7 @@ impl Key {
 }
 
 impl Signer for Key {
-    type Signature = ring::signature::Signature;
+    type Signature = Vec<u8>;
 
     fn header<'n, 'u: 'n, 's: 'u>(&'s self, nonce: Option<&'n str>, url: &'u str) -> Header<'n> {
         debug_assert!(nonce.is_some());
@@ -463,7 +465,8 @@ impl Signer for Key {
     }
 
     fn sign(&self, payload: &[u8]) -> Result<Self::Signature, Error> {
-        Ok(self.inner.sign(&self.rng, payload)?)
+        let sig: EcdsaSignature = self.inner.sign(payload);
+        Ok(sig.to_bytes().to_vec())
     }
 }
 
@@ -482,7 +485,7 @@ impl KeyAuthorization {
 
     /// SHA-256 digest of the key authorization (TLS-ALPN-01).
     pub fn digest(&self) -> impl AsRef<[u8]> {
-        digest(&SHA256, self.0.as_bytes())
+        Sha256::digest(self.0.as_bytes())
     }
 
     /// Base64-encoded SHA256 digest (DNS-01).
@@ -500,7 +503,7 @@ impl fmt::Debug for KeyAuthorization {
 /// External account binding key (RFC 8555 section 7.3.4).
 pub struct ExternalAccountKey {
     id: String,
-    key: hmac::Key,
+    key: Vec<u8>,
 }
 
 impl ExternalAccountKey {
@@ -508,13 +511,13 @@ impl ExternalAccountKey {
     pub fn new(id: String, key_value: &[u8]) -> Self {
         Self {
             id,
-            key: hmac::Key::new(hmac::HMAC_SHA256, key_value),
+            key: key_value.to_vec(),
         }
     }
 }
 
 impl Signer for ExternalAccountKey {
-    type Signature = hmac::Tag;
+    type Signature = Vec<u8>;
 
     fn header<'n, 'u: 'n, 's: 'u>(&'s self, nonce: Option<&'n str>, url: &'u str) -> Header<'n> {
         debug_assert_eq!(nonce, None);
@@ -527,7 +530,10 @@ impl Signer for ExternalAccountKey {
     }
 
     fn sign(&self, payload: &[u8]) -> Result<Self::Signature, Error> {
-        Ok(hmac::sign(&self.key, payload))
+        let mut mac =
+            HmacSha256::new_from_slice(&self.key).map_err(|_| Error::Crypto)?;
+        mac.update(payload);
+        Ok(mac.finalize().into_bytes().to_vec())
     }
 }
 

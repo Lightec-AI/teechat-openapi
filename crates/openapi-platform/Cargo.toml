@@ -25,8 +25,8 @@ thiserror = { workspace = true }
 rustls = { workspace = true }
 
 [target.'cfg(target_env = "sgx")'.dependencies]
-ring = { version = "0.17", features = ["less-safe-getrandom-custom-or-rdrand"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+rustls-rustcrypto = { version = "0.0.2-alpha", default-features = false, features = ["std", "zeroize"] }
 
 [dev-dependencies]
 rcgen = "0.13"

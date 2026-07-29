@@ -2,6 +2,7 @@ use std::io::{BufReader, Cursor};
 use std::path::Path;
 use std::sync::Arc;
 
+#[cfg(not(target_env = "sgx"))]
 use openapi_platform::tls::build_server_tls_config;
 use openapi_platform::{PlatformError, SealedTlsKeyBlob, Sealer};
 use rustls::pki_types::CertificateDer;
@@ -40,11 +41,13 @@ impl TlsConfig {
                 .install_default()
                 .map_err(|_| TlsError::Rustls("install aws-lc provider".into()))?;
         }
+        // Fortanix EDP: ring ECDSA/KX hits #UD — prefer rustls-rustcrypto via
+        // builder_with_provider (see openapi_platform::tls / load paths below).
         #[cfg(target_env = "sgx")]
         {
-            rustls::crypto::ring::default_provider()
+            rustls_rustcrypto::provider()
                 .install_default()
-                .map_err(|_| TlsError::Rustls("install ring provider".into()))?;
+                .map_err(|_| TlsError::Rustls("install rustls-rustcrypto provider".into()))?;
         }
         Ok(())
     }
@@ -150,7 +153,22 @@ pub fn load_server_config_from_pem_bytes(
         .map_err(|e| TlsError::Rustls(e.to_string()))?
         .ok_or_else(|| TlsError::Rustls("missing private key".into()))?;
 
-    build_server_tls_config(certs, key).map_err(|e| TlsError::Rustls(e.to_string()))
+    #[cfg(not(target_env = "sgx"))]
+    {
+        build_server_tls_config(certs, key).map_err(|e| TlsError::Rustls(e.to_string()))
+    }
+    #[cfg(target_env = "sgx")]
+    {
+        use rustls::version::TLS13;
+        // Explicit provider so ring is never selected for ECDSA leaf serve.
+        let config = ServerConfig::builder_with_provider(Arc::new(rustls_rustcrypto::provider()))
+            .with_protocol_versions(&[&TLS13])
+            .map_err(|e| TlsError::Rustls(e.to_string()))?
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .map_err(|e| TlsError::Rustls(e.to_string()))?;
+        Ok(Arc::new(config))
+    }
 }
 
 #[cfg(not(target_env = "sgx"))]

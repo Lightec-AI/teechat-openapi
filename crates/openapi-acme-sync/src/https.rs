@@ -13,7 +13,10 @@ use crate::types::Error;
 
 static CRYPTO_INIT: OnceLock<()> = OnceLock::new();
 
-/// Install the platform TLS crypto provider once (aws-lc-rs on host, ring on SGX).
+/// Install the platform TLS crypto provider once (aws-lc-rs on host).
+///
+/// On SGX, ACME HTTPS uses `ClientConfig::builder_with_provider(rustls_rustcrypto)`
+/// so ring ECDSA/KX is never selected (Fortanix EDP hits #UD on ring ECC).
 pub(crate) fn ensure_crypto_provider() {
     CRYPTO_INIT.get_or_init(|| {
         #[cfg(not(target_env = "sgx"))]
@@ -22,7 +25,8 @@ pub(crate) fn ensure_crypto_provider() {
         }
         #[cfg(target_env = "sgx")]
         {
-            let _ = rustls::crypto::ring::default_provider().install_default();
+            // Prefer per-builder provider; install as fallback for any builder() paths.
+            let _ = rustls_rustcrypto::provider().install_default();
         }
     });
 }
@@ -109,9 +113,7 @@ impl HttpsTransport {
     /// Build a transport with a custom root store (unit tests with ephemeral CA).
     pub fn with_roots(resolver: Arc<dyn DnsResolver>, roots: RootCertStore) -> Self {
         ensure_crypto_provider();
-        let config = ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+        let config = build_client_config(roots);
         Self {
             resolver,
             config: Arc::new(config),
@@ -167,6 +169,23 @@ impl HttpsTransport {
         tls.flush().map_err(Error::HttpIo)?;
 
         read_http_response(&mut tls, method == "HEAD")
+    }
+}
+
+fn build_client_config(roots: RootCertStore) -> ClientConfig {
+    #[cfg(not(target_env = "sgx"))]
+    {
+        ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+    }
+    #[cfg(target_env = "sgx")]
+    {
+        ClientConfig::builder_with_provider(Arc::new(rustls_rustcrypto::provider()))
+            .with_safe_default_protocol_versions()
+            .expect("rustls-rustcrypto protocol versions")
+            .with_root_certificates(roots)
+            .with_no_client_auth()
     }
 }
 

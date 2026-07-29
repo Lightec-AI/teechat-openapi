@@ -14,13 +14,22 @@ pub fn build_server_tls_config(
     certs: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
 ) -> Result<Arc<ServerConfig>, rustls::Error> {
+    #[cfg(not(target_env = "sgx"))]
     let config = ServerConfig::builder_with_protocol_versions(&[&TLS13])
         .with_no_client_auth()
         .with_single_cert(certs, key)?;
+
+    // Fortanix EDP: ring ECDSA/KX hits #UD — use rustls-rustcrypto explicitly.
+    #[cfg(target_env = "sgx")]
+    let config = ServerConfig::builder_with_provider(Arc::new(rustls_rustcrypto::provider()))
+        .with_protocol_versions(&[&TLS13])?
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
+
     Ok(Arc::new(config))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_env = "sgx")))]
 mod tests {
     use super::*;
 

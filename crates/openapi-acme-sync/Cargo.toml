@@ -9,22 +9,26 @@ rust-version.workspace = true
 
 [dependencies]
 base64 = { workspace = true }
+ecdsa = { version = "0.16", features = ["digest", "pem"] }
+hmac = { version = "0.12", default-features = false }
 httparse = { workspace = true }
-rcgen = "0.13"
-ring = { version = "0.17" }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "pem"] }
+rand_core = { version = "0.6", default-features = false, features = ["getrandom"] }
 rustls-pki-types = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true, features = ["oid"] }
 thiserror = { workspace = true }
 webpki-roots = "0.26"
+x509-cert = { version = "0.2", default-features = false, features = ["builder", "pem", "std"] }
 zeroize = { version = "1", features = ["derive"] }
 
 [target.'cfg(not(target_env = "sgx"))'.dependencies]
 rustls = { workspace = true }
 
 [target.'cfg(target_env = "sgx")'.dependencies]
-ring = { version = "0.17", features = ["less-safe-getrandom-custom-or-rdrand"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23", default-features = false, features = ["std"] }
+rustls-rustcrypto = { version = "0.0.2-alpha", default-features = false, features = ["std", "zeroize"] }
 
 [dev-dependencies]
 rcgen = "0.13"

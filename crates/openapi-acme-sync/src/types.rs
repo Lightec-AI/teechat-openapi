@@ -1,12 +1,13 @@
 use std::fmt;
+
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use ring::digest::{digest, Digest, SHA256};
-use ring::signature::{EcdsaKeyPair, KeyPair};
+use p256::ecdsa::SigningKey;
 use rustls_pki_types::CertificateDer;
 use serde::de::DeserializeOwned;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::https::HttpResponse;
@@ -44,18 +45,6 @@ pub enum Error {
 impl From<&'static str> for Error {
     fn from(s: &'static str) -> Self {
         Error::Str(s)
-    }
-}
-
-impl From<ring::error::Unspecified> for Error {
-    fn from(_: ring::error::Unspecified) -> Self {
-        Error::Crypto
-    }
-}
-
-impl From<ring::error::KeyRejected> for Error {
-    fn from(e: ring::error::KeyRejected) -> Self {
-        Error::CryptoKey(format!("{e:?}"))
     }
 }
 
@@ -193,7 +182,7 @@ pub(crate) enum KeyOrKeyId<'a> {
 }
 
 impl<'a> KeyOrKeyId<'a> {
-    pub(crate) fn from_key(key: &EcdsaKeyPair) -> KeyOrKeyId<'static> {
+    pub(crate) fn from_key(key: &SigningKey) -> KeyOrKeyId<'static> {
         KeyOrKeyId::Key(Jwk::new(key))
     }
 }
@@ -209,8 +198,10 @@ pub(crate) struct Jwk {
 }
 
 impl Jwk {
-    pub(crate) fn new(key: &EcdsaKeyPair) -> Self {
-        let (x, y) = key.public_key().as_ref()[1..].split_at(32);
+    pub(crate) fn new(key: &SigningKey) -> Self {
+        let point = key.verifying_key().to_encoded_point(false);
+        let x = point.x().expect("P-256 uncompressed x");
+        let y = point.y().expect("P-256 uncompressed y");
         Self {
             alg: SigningAlgorithm::Es256,
             crv: "P-256",
@@ -221,17 +212,15 @@ impl Jwk {
         }
     }
 
-    pub(crate) fn thumb_sha256(key: &EcdsaKeyPair) -> Result<Digest, serde_json::Error> {
+    pub(crate) fn thumb_sha256(key: &SigningKey) -> Result<[u8; 32], serde_json::Error> {
         let jwk = Self::new(key);
-        Ok(digest(
-            &SHA256,
-            &serde_json::to_vec(&JwkThumb {
-                crv: jwk.crv,
-                kty: jwk.kty,
-                x: &jwk.x,
-                y: &jwk.y,
-            })?,
-        ))
+        let digest = Sha256::digest(&serde_json::to_vec(&JwkThumb {
+            crv: jwk.crv,
+            kty: jwk.kty,
+            x: &jwk.x,
+            y: &jwk.y,
+        })?);
+        Ok(digest.into())
     }
 }
 
