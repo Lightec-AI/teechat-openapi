@@ -1,0 +1,19 @@
+[package]
+name = "openapi-ceremony-helper"
+description = "Host-side ACME HTTP-01 webroot + artifact helper for Fortanix EDP enclaves"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "openapi-ceremony-helper"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -12,6 +12,7 @@ members = [
     "bins/openapi",
     "bins/openapi-enclave",
     "bins/openapi-dcap-helper",
+    "bins/openapi-ceremony-helper",
     "bins/seal-tls-key",
     "bins/seal-tls-key-sgx",
     "bins/openapi-tls-ceremony",
