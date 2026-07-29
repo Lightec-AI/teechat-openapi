@@ -149,15 +149,18 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// True if SPKI is on active list, or retired within grace.
-pub fn spki_on_ceremony_allowlist(manifest: &CeremonyManifest, spki_sha256: &str) -> bool {
+/// Active (or grace-retired) ceremony row for a serving SPKI, if any.
+pub fn find_ceremony_release_by_spki<'a>(
+    manifest: &'a CeremonyManifest,
+    spki_sha256: &str,
+) -> Option<&'a CeremonyRelease> {
     let h = spki_sha256.trim().to_ascii_lowercase();
-    if manifest
+    if let Some(r) = manifest
         .active
         .iter()
-        .any(|r| r.spki_sha256.eq_ignore_ascii_case(&h))
+        .find(|r| r.spki_sha256.eq_ignore_ascii_case(&h))
     {
-        return true;
+        return Some(r);
     }
     let grace = manifest.retired_grace_period_days.saturating_mul(86400);
     let now = now_unix();
@@ -166,17 +169,61 @@ pub fn spki_on_ceremony_allowlist(manifest: &CeremonyManifest, spki_sha256: &str
             continue;
         }
         let Some(retired_at) = &r.retired_at else {
-            return true;
+            return Some(r);
         };
         match parse_rfc3339_secs(retired_at) {
-            Ok(retired) if now <= retired.saturating_add(grace) => return true,
+            Ok(retired) if now <= retired.saturating_add(grace) => return Some(r),
             _ => continue,
         }
     }
-    false
+    None
+}
+
+/// True if SPKI is on active list, or retired within grace.
+pub fn spki_on_ceremony_allowlist(manifest: &CeremonyManifest, spki_sha256: &str) -> bool {
+    find_ceremony_release_by_spki(manifest, spki_sha256).is_some()
 }
 
 /// When `active` is empty, ceremony pin is not yet enforced (bootstrap).
 pub fn ceremony_pin_required(manifest: &CeremonyManifest) -> bool {
     !manifest.active.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_active_spki_row() {
+        let raw = r#"{
+          "schema":"teechat-openapi-tls-ceremony/v1",
+          "key_id":"openapi-attestation-v1",
+          "published_at":"2026-07-29T00:00:00Z",
+          "epoch":1,
+          "not_after":"2099-01-01T00:00:00Z",
+          "hostnames":["openapi.teechat.ai"],
+          "active":[{
+            "ceremony_id":"c1",
+            "spki_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "golden_version":"openapi-golden-20260729-key-ceremony",
+            "published_at":"2026-07-29T00:00:00Z"
+          }],
+          "retired":[]
+        }"#;
+        let m = parse_ceremony_manifest(raw.as_bytes()).unwrap();
+        let row = find_ceremony_release_by_spki(
+            &m,
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        )
+        .unwrap();
+        assert_eq!(row.golden_version, "openapi-golden-20260729-key-ceremony");
+        assert!(spki_on_ceremony_allowlist(
+            &m,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ));
+        assert!(!spki_on_ceremony_allowlist(
+            &m,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ));
+    }
 }

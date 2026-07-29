@@ -7,6 +7,11 @@
 //! 4. Local `--manifest` / `--sig` (and golden local) override for ops.
 //!
 //! Live challenge is evidence only. See TeeChat `docs/design/golden-digests-publish.md`.
+//!
+//! SNP fail-closed bind: quote `MEASUREMENT` → challenge-canonical
+//! `sha256(ascii_hex(raw))` must equal the app-allowlist **composed** `launch_digest`
+//! (hybrid app-verity). Ceremony SPKI rows must resolve `golden_version` to a golden
+//! with `tls_key_policy=key_ceremony`.
 
 pub mod ceremony;
 pub mod challenge_client;

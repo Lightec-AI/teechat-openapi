@@ -4,8 +4,11 @@ use openapi_platform::{verify_challenge_report_data, QuoteFormat};
 use serde::Serialize;
 use url::Url;
 
+use openapi_platform::Measurement;
+
 use crate::ceremony::{
-    ceremony_pin_required, load_ceremony_allowlist, spki_on_ceremony_allowlist, CeremonyLoadOptions,
+    ceremony_pin_required, find_ceremony_release_by_spki, load_ceremony_allowlist,
+    CeremonyLoadOptions,
 };
 use crate::challenge_client::{challenge_edge, generate_nonce, ChallengeOutcome};
 use crate::error::{AttestError, Result};
@@ -283,7 +286,7 @@ fn finish_verify(
         matched = candidates.first().copied();
         golden_version = matched.and_then(|r| r.golden_version.clone());
     }
-    let _matched = matched.ok_or_else(|| {
+    let matched_release = matched.ok_or_else(|| {
         AttestError::Policy(
             "edge measurement/build/code_hash/policy_hash not on allowlist for this hostname"
                 .into(),
@@ -303,12 +306,31 @@ fn finish_verify(
                     "hostname {hostname} not on TLS ceremony allowlist"
                 )));
             }
-            if !spki_on_ceremony_allowlist(&ceremony.manifest, &response.edge.tls_cert_spki_sha256)
-            {
+            let Some(crow) = find_ceremony_release_by_spki(
+                &ceremony.manifest,
+                &response.edge.tls_cert_spki_sha256,
+            ) else {
                 return Err(AttestError::Policy(format!(
                     "serving SPKI {} not on TLS ceremony allowlist (publish after key ceremony)",
                     response.edge.tls_cert_spki_sha256
                 )));
+            };
+            // Ceremony SPKI must pin a key_ceremony OS golden (not seal_sync).
+            let golden = load_golden_digests(golden_opts)?;
+            let grelease = find_golden_release(
+                &golden.manifest,
+                "openapi",
+                "sev-snp-cvm",
+                &crow.golden_version,
+            )?;
+            match grelease.tls_key_policy.as_deref() {
+                Some("key_ceremony") => {}
+                other => {
+                    return Err(AttestError::Policy(format!(
+                        "ceremony SPKI golden_version {} tls_key_policy={:?} (want key_ceremony)",
+                        crow.golden_version, other
+                    )));
+                }
             }
         }
     }
@@ -319,6 +341,7 @@ fn finish_verify(
     )?;
 
     let reject_debug = verified_manifest.manifest.policy.reject_debug;
+    let matched_measurement = &matched_release.measurement;
     let hardware = match response.quote_format {
         QuoteFormat::SgxReport => {
             return Err(AttestError::Policy(
@@ -328,6 +351,21 @@ fn finish_verify(
         }
         QuoteFormat::SgxDcapEcdsa => {
             let r = sgx::verify_sgx_dcap_quote(&response.quote_b64, reject_debug)?;
+            match matched_measurement {
+                Measurement::Mrenclave { value } => {
+                    if !value.eq_ignore_ascii_case(&r.mrenclave_hex) {
+                        return Err(AttestError::Policy(format!(
+                            "quote MRENCLAVE {} != allowlist {}",
+                            r.mrenclave_hex, value
+                        )));
+                    }
+                }
+                Measurement::LaunchDigest { .. } => {
+                    return Err(AttestError::Policy(
+                        "sgx_dcap_ecdsa quote but allowlist measurement is launch_digest".into(),
+                    ));
+                }
+            }
             serde_json::json!({
                 "kind": "sgx_dcap_ecdsa",
                 "mrenclave": r.mrenclave_hex,
@@ -340,10 +378,27 @@ fn finish_verify(
         }
         QuoteFormat::SnpReport => {
             let r = snp::verify_snp_report(&response.quote_b64, reject_debug)?;
+            let composed = snp::challenge_canonical_launch_digest(&r.launch_measurement_hex);
+            match matched_measurement {
+                Measurement::LaunchDigest { launch_digest, .. } => {
+                    if !launch_digest.eq_ignore_ascii_case(&composed) {
+                        return Err(AttestError::Policy(format!(
+                            "quote MEASUREMENT (challenge-canonical {}) != allowlist composed launch_digest {}",
+                            composed, launch_digest
+                        )));
+                    }
+                }
+                Measurement::Mrenclave { .. } => {
+                    return Err(AttestError::Policy(
+                        "snp_report quote but allowlist measurement is mrenclave".into(),
+                    ));
+                }
+            }
             serde_json::json!({
                 "kind": "snp_report",
                 "product": r.product_name,
                 "launch_measurement": r.launch_measurement_hex,
+                "challenge_canonical_launch_digest": composed,
                 "chip_id": r.chip_id_hex,
                 "policy_debug": r.policy_debug,
                 "guest_svn": r.guest_svn,

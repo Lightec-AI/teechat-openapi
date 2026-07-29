@@ -10,6 +10,7 @@ use std::io::Read;
 use openapi_platform::{snp_report_reportdata, QuoteFormat};
 use sev::certs::snp::{builtin, Certificate, Chain, Verifiable};
 use sev::firmware::guest::AttestationReport;
+use sha2::{Digest, Sha256};
 
 use crate::error::{AttestError, Result};
 
@@ -23,6 +24,16 @@ pub struct SnpVerifyReport {
     pub chip_id_hex: String,
     pub policy_debug: bool,
     pub guest_svn: u32,
+}
+
+/// Challenge-canonical composed LD encoding used by OpenAPI challenge / app-verity bake:
+/// `sha256(ascii_hex(raw_MEASUREMENT))` where `raw_MEASUREMENT` is 48 bytes (96 hex).
+///
+/// Input is the hex encoding of the SNP report MEASUREMENT field (typically lowercase).
+/// Hash is over the **ASCII hex string bytes**, not the decoded binary.
+pub fn challenge_canonical_launch_digest(raw_measurement_hex: &str) -> String {
+    let normalized = raw_measurement_hex.trim().to_ascii_lowercase();
+    hex::encode(Sha256::digest(normalized.as_bytes()))
 }
 
 pub fn verify_snp_report(quote_b64: &str, reject_debug: bool) -> Result<SnpVerifyReport> {
@@ -166,4 +177,22 @@ fn http_get(url: &str) -> Result<Vec<u8>> {
 
 pub fn expected_quote_format() -> QuoteFormat {
     QuoteFormat::SnpReport
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn challenge_canonical_is_sha256_of_ascii_hex() {
+        let raw = "00".repeat(48);
+        let got = challenge_canonical_launch_digest(&raw);
+        // sha256(utf8("00" * 48))
+        assert_eq!(
+            got,
+            "cb0216e7ae909ac5f758bc9bc9de34a36e93432ae178dea5a43fcdbf67202c76"
+        );
+        // Uppercase input normalizes to the same digest.
+        assert_eq!(challenge_canonical_launch_digest(&raw.to_ascii_uppercase()), got);
+    }
 }
