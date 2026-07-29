@@ -18,6 +18,7 @@ use zeroize::Zeroize;
 use crate::ceremony_helper::CeremonyHelperClient;
 use crate::seal::SgxSealer;
 use crate::tls::{spki_sha256_hex_from_cert_bytes, TlsConfig};
+use crate::tls_key_policy::{resolve_tls_key_policy_optional, TlsKeyPolicy};
 
 /// ACME ceremony mode (same binary as the edge server).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +165,16 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     assert_acme_ceremony_policy(staging)?;
+
+    let key_policy = resolve_tls_key_policy_optional().map_err(anyhow::Error::msg)?;
+    if mode == AcmeMode::Issue {
+        if matches!(key_policy, Some(TlsKeyPolicy::SealSync)) {
+            bail!(
+                "tls_key_policy=seal_sync forbids acme-issue (mint only on key_ceremony); \
+                 use seal-sync import or acme-renew on the active color"
+            );
+        }
+    }
 
     let domain = std::env::var("OPENAPI_ACME_DOMAIN")
         .or_else(|_| std::env::var("OPENAPI_ACME_CERT_NAME"))

@@ -21,6 +21,8 @@ pub const DEFAULT_CEREMONY_HELPER_URL: &str = "http://127.0.0.1:18501";
 #[derive(Debug, Clone)]
 pub struct CeremonyHelperClient {
     endpoint: HttpEndpoint,
+    /// Optional slot prefix (`ceremony`|`blue`|`green`) for sealed-key/tls.crt paths.
+    artifact_slot: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,13 +42,35 @@ impl CeremonyHelperClient {
         let endpoint = crate::upstream::parse_http_base_url(url).map_err(|e| {
             PlatformError::Attestation(format!("OPENAPI_CEREMONY_HELPER_URL: {e}"))
         })?;
-        Ok(Self { endpoint })
+        Ok(Self {
+            endpoint,
+            artifact_slot: None,
+        })
     }
 
     pub fn from_env() -> Result<Self, PlatformError> {
         let url = std::env::var("OPENAPI_CEREMONY_HELPER_URL")
             .unwrap_or_else(|_| DEFAULT_CEREMONY_HELPER_URL.to_string());
-        Self::from_url(&url)
+        let mut client = Self::from_url(&url)?;
+        if let Ok(slot) = std::env::var("OPENAPI_ARTIFACT_SLOT") {
+            let slot = slot.trim().to_ascii_lowercase();
+            if matches!(slot.as_str(), "ceremony" | "blue" | "green") {
+                client.artifact_slot = Some(slot);
+            } else if !slot.is_empty() {
+                return Err(PlatformError::Attestation(format!(
+                    "OPENAPI_ARTIFACT_SLOT invalid {slot:?} (want ceremony|blue|green)"
+                )));
+            }
+        }
+        Ok(client)
+    }
+
+    /// Resolve artifact path, applying slot prefix for sealed TLS artifacts.
+    pub fn slotted_artifact_name(&self, name: &str) -> String {
+        match (&self.artifact_slot, name) {
+            (Some(slot), "sealed-key.json" | "tls.crt") => format!("{slot}/{name}"),
+            _ => name.to_owned(),
+        }
     }
 
     fn connect(&self) -> Result<TcpStream, PlatformError> {
@@ -172,20 +196,28 @@ impl CeremonyHelperClient {
     }
 
     pub fn put_artifact(&self, name: &str, body: &[u8]) -> Result<(), PlatformError> {
+        let name = self.slotted_artifact_name(name);
         let path = format!("/artifacts/{name}");
         let _ = self.http_exchange("PUT", &path, Some(body), "application/octet-stream")?;
         Ok(())
     }
 
     pub fn get_artifact(&self, name: &str) -> Result<Vec<u8>, PlatformError> {
+        let name = self.slotted_artifact_name(name);
         let path = format!("/artifacts/{name}");
         self.http_exchange("GET", &path, None, "application/octet-stream")
     }
 
     pub fn delete_artifact(&self, name: &str) -> Result<(), PlatformError> {
+        let name = self.slotted_artifact_name(name);
         let path = format!("/artifacts/{name}");
         let _ = self.http_exchange("DELETE", &path, None, "application/octet-stream")?;
         Ok(())
+    }
+
+    /// True when slotted sealed-key.json exists on the helper.
+    pub fn has_sealed_key(&self) -> bool {
+        self.get_artifact("sealed-key.json").is_ok()
     }
 }
 

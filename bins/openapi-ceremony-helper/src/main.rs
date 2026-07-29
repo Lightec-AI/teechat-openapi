@@ -26,12 +26,16 @@ const DEFAULT_WEBROOT: &str = "/var/www/acme";
 const DEFAULT_ARTIFACT_DIR: &str = "/var/lib/teechat-openapi/sgx";
 const MAX_BODY: usize = 256 * 1024;
 
-const ARTIFACT_ALLOWLIST: &[&str] = &[
+/// Bare artifact basenames (also allowed as `{slot}/{basename}`).
+const ARTIFACT_BASENAMES: &[&str] = &[
     "account.json",
     "account.staging.json",
     "sealed-key.json",
     "tls.crt",
 ];
+
+/// Ceremony / blue / green slots for seal-sync practice (CVM parity).
+const ARTIFACT_SLOTS: &[&str] = &["ceremony", "blue", "green"];
 
 #[derive(Clone)]
 struct HelperPaths {
@@ -339,15 +343,24 @@ pub(crate) fn sanitize_challenge_token(token: &str) -> Result<&str> {
     Ok(token)
 }
 
-/// Allowlisted artifact basename only.
+/// Allowlisted artifact name: basename or `{ceremony|blue|green}/{basename}`.
 pub(crate) fn sanitize_artifact_name(name: &str) -> Result<&str> {
-    if name.contains("..") || name.contains('/') || name.contains('\\') {
+    if name.contains("..") || name.contains('\\') || name.contains('\0') {
         bail!("forbidden artifact name");
     }
-    if !ARTIFACT_ALLOWLIST.contains(&name) {
+    if let Some((slot, base)) = name.split_once('/') {
+        if base.contains('/') {
+            bail!("forbidden artifact name: nested path");
+        }
+        if ARTIFACT_SLOTS.contains(&slot) && ARTIFACT_BASENAMES.contains(&base) {
+            return Ok(name);
+        }
         bail!("forbidden artifact name: {name} not allowlisted");
     }
-    Ok(name)
+    if ARTIFACT_BASENAMES.contains(&name) {
+        return Ok(name);
+    }
+    bail!("forbidden artifact name: {name} not allowlisted");
 }
 
 fn challenge_file_path(webroot: &Path, token: &str) -> Result<PathBuf> {
@@ -496,9 +509,17 @@ mod tests {
 
     #[test]
     fn artifact_allowlist_accepts_known_names() {
-        for name in ARTIFACT_ALLOWLIST {
+        for name in ARTIFACT_BASENAMES {
             assert_eq!(sanitize_artifact_name(name).unwrap(), *name);
         }
+        assert_eq!(
+            sanitize_artifact_name("blue/sealed-key.json").unwrap(),
+            "blue/sealed-key.json"
+        );
+        assert_eq!(
+            sanitize_artifact_name("ceremony/tls.crt").unwrap(),
+            "ceremony/tls.crt"
+        );
     }
 
     #[test]
@@ -508,6 +529,7 @@ mod tests {
         assert!(sanitize_artifact_name("foo/account.json").is_err());
         assert!(sanitize_artifact_name("account.json/../x").is_err());
         assert!(sanitize_artifact_name("sealed-key.json.bak").is_err());
+        assert!(sanitize_artifact_name("blue/evil.pem").is_err());
     }
 
     #[test]
