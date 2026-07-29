@@ -4,17 +4,17 @@
   "os_golden_version": "openapi-golden-20260729-6f84bc625867-seal-sync",
   "app_build_version": "0.7.11",
   "code_hash": "6d0808764dbe1112e918bd2737fe34d79d139da7d4f246c5a761ad85a991f11f",
-  "app_verity_root": "c8a4c39a57989b3f6fd8f96639bd6bdc2156ea78aa9a45a82a98b3b26f376151",
-  "launch_digest": "523f55b488519ce946db64c0d6f779dc2a6759f256873d7801600c09eb98dec1",
+  "app_verity_root": "bc3f08d458245215057c58c52ecd2b541d51a73d6b6b51ee888cbe8c4ec3eccd",
+  "launch_digest": "dbd0ce74fae81499a24cfc0625b3a184e0bc2f819f81dfe7ede9f04d239a7031",
   "tls_key_policy": "seal_sync",
   "measure_inputs": {
-    "cmdline_contains": "teechat.app_verity_root=c8a4c39a57989b3f6fd8f96639bd6bdc2156ea78aa9a45a82a98b3b26f376151",
+    "cmdline_contains": "teechat.app_verity_root=bc3f08d458245215057c58c52ecd2b541d51a73d6b6b51ee888cbe8c4ec3eccd",
     "os_golden_version": "openapi-golden-20260729-6f84bc625867-seal-sync",
     "vcpus": 2,
     "vcpu_type": "EPYC-v4",
     "launch_digest_encoding": "sha256(ascii_hex(raw_measure))",
-    "launch_digest_raw": "4638634a75dacf08a74288a9d653c2d05b6b0b76c0ec2bcf2ecc518dca36603315ef88ad9efe4937ab3c08ab8d69c07f"
+    "launch_digest_raw": "2e23719a6162cb3f694e471b8f7b2294e077de457bca1b3e994e2beae1b6a62db9424c9fb196ca356a9000a73df634f1"
   },
   "notes": "Composed LD for hybrid app volume. Promote before VIP cutover; staging must seal-sync after MEASUREMENT change.",
-  "volume_sha256": "85c441344b373667ee9929e771fcb90690e48587e5559d5e5bc6f470c5595f78"
+  "volume_sha256": "a907c8fbe89f6bf4f359e966962d7a82d32f4619df527ee70474e8b28ae1a588"
 }

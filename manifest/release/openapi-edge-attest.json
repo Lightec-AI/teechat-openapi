@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-29T02:35:30Z",
-  "epoch": 27,
+  "published_at": "2026-07-29T05:05:59Z",
+  "epoch": 28,
   "not_after": "2027-07-29T02:35:30Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -26,10 +26,10 @@
           ],
           "measurement": {
             "kind": "launch_digest",
-            "launch_digest": "6e1a7fa961fa5abea3adec96643f8843b856092911cad8140e3b99645ace0cb2",
-            "image_digest": "ea0d46da9e748aeac606e001def5d48f43d131c252f87de0b988a02ec068d99e"
+            "launch_digest": "1b69f72ca9cc770a51c2c7bb1a23577177b841b0b44543adf16746b4500ddac4",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
           },
-          "notes": "0.7.11 dm-verity ENABLED=1: R=c8a4c39a\u2026 composed LD on CONFIG_DM_VERITY=y OS golden. GitHub v0.7.11. Ceremony golden.",
+          "notes": "0.7.11 dm-verity ENABLED=1: hybrid OS (CONFIG_DM_VERITY=y) + app-verity R=bc3f08d4\u2026 (snpguest on volume). GitHub v0.7.11. Ceremony golden.",
           "golden_version": "openapi-golden-20260729-6f84bc625867-key-ceremony"
         },
         {
@@ -40,10 +40,10 @@
           ],
           "measurement": {
             "kind": "launch_digest",
-            "launch_digest": "523f55b488519ce946db64c0d6f779dc2a6759f256873d7801600c09eb98dec1",
-            "image_digest": "f2e2163c5bfef0c9681323b58dc266a08464c1a38bbe2f2ed74a5b505af8064e"
+            "launch_digest": "dbd0ce74fae81499a24cfc0625b3a184e0bc2f819f81dfe7ede9f04d239a7031",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
           },
-          "notes": "0.7.11 dm-verity ENABLED=1: R=c8a4c39a\u2026 composed LD on CONFIG_DM_VERITY=y OS golden. GitHub v0.7.11. Seal_sync blue/green.",
+          "notes": "0.7.11 dm-verity ENABLED=1: hybrid OS (CONFIG_DM_VERITY=y) + app-verity R=bc3f08d4\u2026 (snpguest on volume). GitHub v0.7.11. Seal_sync blue/green.",
           "golden_version": "openapi-golden-20260729-6f84bc625867-seal-sync"
         },
         {
