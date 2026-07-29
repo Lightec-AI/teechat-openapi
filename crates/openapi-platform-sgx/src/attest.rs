@@ -25,6 +25,7 @@ impl SgxAttestationPlatform {
         code_hash: &str,
         mrenclave: &str,
         tls_spki_sha256: &str,
+        policy_hash: Option<String>,
     ) -> Self {
         Self::new(EdgeIdentity {
             build_version: build_version.to_string(),
@@ -33,7 +34,7 @@ impl SgxAttestationPlatform {
                 value: mrenclave.to_string(),
             },
             tls_cert_spki_sha256: tls_spki_sha256.to_string(),
-            policy_hash: None,
+            policy_hash,
         })
     }
 
@@ -97,7 +98,13 @@ mod tests {
     }
 
     fn platform() -> SgxAttestationPlatform {
-        SgxAttestationPlatform::from_env("0.1.0", &hex32(0x11), &hex32(0xaa), &hex32(0xbb))
+        SgxAttestationPlatform::from_env(
+            "0.1.0",
+            &hex32(0x11),
+            &hex32(0xaa),
+            &hex32(0xbb),
+            Some(hex32(0xcc)),
+        )
     }
 
     #[test]

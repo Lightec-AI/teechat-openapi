@@ -70,6 +70,10 @@ cd /path/to/teechat-openapi
 | `OPENAPI_SEAL_ROOT_HEX` | dev | Dev HKDF input only — **forbidden in prod** (EGETKEY-derived in enclave) |
 | `OPENAPI_DCAP_HELPER_URL` | attest | Host AESM quote helper (default `http://127.0.0.1:18500`) |
 
+### CFG-001 — measured runtime policy (`policy_hash`)
+
+`ftxsgx-runner` passes host-visible `OPENAPI_*=…` argv into an empty enclave env. **MRENCLAVE** binds code, not catalog/upstream/L0 knobs. The edge now hashes those knobs into challenge `policy_hash` via `EdgeRuntimePolicy` (same digest as CVM; not in `report_data` v1). Publish the expected hex on SGX trust / allowlist rows after lab env changes (auth mode, catalog verify key, upstream URL, L0 URLs, gateway OPE URL).
+
 Sealing: [SECURITY.md](../../SECURITY.md).
 
 ### Seal TLS key to MRENCLAVE (lab import — not prod)

@@ -54,6 +54,7 @@ pub fn run() -> anyhow::Result<()> {
         &env.code_hash,
         &runtime_mr,
         &tls_spki,
+        Some(env.policy_hash_hex()),
     );
 
     let upstream = TcpHttpUpstream::new(&env.upstream_base_url)

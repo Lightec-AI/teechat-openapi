@@ -11,7 +11,10 @@ use openapi_core::routes::ProxyMode;
 use openapi_core::usage::UsageSigner;
 use thiserror::Error;
 
-use openapi_platform::{load_edge_profile, validate_tls_key_policy, EdgeProfile, ProfileError};
+use openapi_platform::{
+    edge_runtime_policy_from_parts, load_edge_profile, validate_tls_key_policy, EdgeProfile,
+    EdgeRuntimePolicy, ProfileError,
+};
 
 use crate::seal::{local_mrenclave_hex, SgxSealer};
 
@@ -105,6 +108,31 @@ impl SgxEdgeEnv {
             ip_max_connections: self.ip_max_connections,
             ip_requests_per_minute: self.ip_requests_per_minute,
         }
+    }
+
+    /// Security-critical runtime policy (challenge `policy_hash` + allowlist pin).
+    /// CFG-001: host-visible OPENAPI_* argv that shapes trust/upstream is hashed here.
+    pub fn runtime_policy(&self) -> EdgeRuntimePolicy {
+        let auth = match self.auth_mode {
+            OpenApiAuthMode::Catalog => "catalog",
+            OpenApiAuthMode::Remote => "remote",
+        };
+        let gateway_ope = std::env::var("OPENAPI_GATEWAY_OPE_API_URL")
+            .ok()
+            .filter(|s| !s.is_empty());
+        edge_runtime_policy_from_parts(
+            auth,
+            &self.region,
+            &self.catalog_verify_key_hex,
+            self.l0_authorize_url.as_deref(),
+            self.l0_revocations_url.as_deref(),
+            gateway_ope.as_deref(),
+            &self.upstream_base_url,
+        )
+    }
+
+    pub fn policy_hash_hex(&self) -> String {
+        self.runtime_policy().policy_hash_hex()
     }
 
     pub fn load_catalog(&self) -> Result<KeyCatalog, EnvError> {
