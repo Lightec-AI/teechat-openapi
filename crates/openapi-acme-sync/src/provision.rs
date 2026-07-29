@@ -169,54 +169,63 @@ fn finish_provision(
         identifiers: &[identifier],
     })?;
 
-    if !matches!(order.state().status, OrderStatus::Pending) {
-        return Err(Error::Str("expected pending order"));
-    }
+    // Fresh orders are Pending; re-issue after a recent cert may open Ready
+    // (authorizations still valid) — skip HTTP-01 in that case.
+    match order.state().status {
+        OrderStatus::Pending => {
+            let authorizations = order.authorizations()?;
+            let mut challenge_urls = Vec::new();
+            let mut tokens = Vec::new();
 
-    let authorizations = order.authorizations()?;
-    let mut challenge_urls = Vec::new();
-    let mut tokens = Vec::new();
+            for authz in &authorizations {
+                match authz.status {
+                    AuthorizationStatus::Pending => {}
+                    AuthorizationStatus::Valid => continue,
+                    _ => return Err(Error::Str("unexpected authorization status")),
+                }
 
-    for authz in &authorizations {
-        match authz.status {
-            AuthorizationStatus::Pending => {}
-            AuthorizationStatus::Valid => continue,
-            _ => return Err(Error::Str("unexpected authorization status")),
+                let challenge = authz
+                    .challenges
+                    .iter()
+                    .find(|c| c.r#type == ChallengeType::Http01)
+                    .ok_or(Error::Str("no http-01 challenge found"))?;
+
+                let key_auth = order.key_authorization(challenge);
+                sink.place(&challenge.token, key_auth.as_str())?;
+                tokens.push(challenge.token.clone());
+                challenge_urls.push(challenge.url.clone());
+            }
+
+            for url in &challenge_urls {
+                order.set_challenge_ready(url)?;
+            }
+
+            let mut tries = 1u8;
+            let mut delay = Duration::from_millis(250);
+            loop {
+                sleep(delay);
+                order.refresh()?;
+                let status = order.state().status;
+                if status == OrderStatus::Invalid {
+                    return Err(Error::Str("order is invalid"));
+                }
+                if matches!(status, OrderStatus::Ready | OrderStatus::Valid) {
+                    break;
+                }
+                delay *= 2;
+                tries += 1;
+                if tries >= 5 {
+                    return Err(Error::Str("order not ready"));
+                }
+            }
+
+            for token in tokens {
+                sink.clear(&token)?;
+            }
         }
-
-        let challenge = authz
-            .challenges
-            .iter()
-            .find(|c| c.r#type == ChallengeType::Http01)
-            .ok_or(Error::Str("no http-01 challenge found"))?;
-
-        let key_auth = order.key_authorization(challenge);
-        sink.place(&challenge.token, key_auth.as_str())?;
-        tokens.push(challenge.token.clone());
-        challenge_urls.push(challenge.url.clone());
-    }
-
-    for url in &challenge_urls {
-        order.set_challenge_ready(url)?;
-    }
-
-    let mut tries = 1u8;
-    let mut delay = Duration::from_millis(250);
-    loop {
-        sleep(delay);
-        order.refresh()?;
-        let status = order.state().status;
-        if status == OrderStatus::Invalid {
-            return Err(Error::Str("order is invalid"));
-        }
-        if matches!(status, OrderStatus::Ready | OrderStatus::Valid) {
-            break;
-        }
-        delay *= 2;
-        tries += 1;
-        if tries >= 5 {
-            return Err(Error::Str("order not ready"));
-        }
+        OrderStatus::Ready | OrderStatus::Valid => {}
+        OrderStatus::Invalid => return Err(Error::Str("order is invalid")),
+        _ => return Err(Error::Str("unexpected order status")),
     }
 
     let (private_key_pem, csr_der) = match existing_private_key_pem {
@@ -237,10 +246,6 @@ fn finish_provision(
             return Err(Error::Str("no certificate received"));
         }
     };
-
-    for token in tokens {
-        sink.clear(&token)?;
-    }
 
     Ok(ProvisionOutcome {
         private_key_pem,
