@@ -125,6 +125,8 @@ export OPENAPI_PROFILE=dev
 
 Renew: `./deploy/sgx/issue-and-seal-tls.sh renew --domain …` (same binary / MRENCLAVE).
 
+**Stable leaf key:** `issue` generates and seals once; `renew` unseals `sealed-key.json`, CSRs with the same key, writes a new `tls.crt`, and re-seals. Serving SPKI must not change on renew (ceremony aborts if it would). Re-key = run `issue` again (then update lab trust pins).
+
 ## 4. Run enclave
 
 ```bash

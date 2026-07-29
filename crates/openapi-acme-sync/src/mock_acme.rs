@@ -291,6 +291,7 @@ fn full_provision_http01_against_mock() -> Result<(), Error> {
             directory_url: server.directory_url(),
             email: Some("admin@example.test".into()),
             account_credentials_json: None,
+            existing_private_key_pem: None,
         },
     )?;
 
@@ -300,6 +301,40 @@ fn full_provision_http01_against_mock() -> Result<(), Error> {
     assert_eq!(sink.placed_tokens(), vec!["tok123"]);
     assert_eq!(sink.cleared_tokens(), vec!["tok123"]);
     assert!(sink.get("tok123").is_none());
+    Ok(())
+}
+
+#[test]
+fn renew_reuses_existing_leaf_key() -> Result<(), Error> {
+    let server = MockAcmeServer::start()?;
+    let sink = MemoryChallengeSink::new();
+    let first = provision_http01(
+        server.transport(),
+        &sink,
+        ProvisionRequest {
+            domain: "example.test".into(),
+            directory_url: server.directory_url(),
+            email: Some("admin@example.test".into()),
+            account_credentials_json: None,
+            existing_private_key_pem: None,
+        },
+    )?;
+    let leaf_pem = first.private_key_pem.clone();
+    let account = first.account_credentials_json.clone();
+
+    let second = provision_http01(
+        server.transport(),
+        &MemoryChallengeSink::new(),
+        ProvisionRequest {
+            domain: "example.test".into(),
+            directory_url: server.directory_url(),
+            email: None,
+            account_credentials_json: Some(account),
+            existing_private_key_pem: Some(leaf_pem.clone()),
+        },
+    )?;
+    assert_eq!(second.private_key_pem, leaf_pem);
+    assert!(second.certificate_chain_pem.contains("MOCKCERT"));
     Ok(())
 }
 
@@ -314,6 +349,7 @@ fn reject_non_https_directory_url() {
             directory_url: "http://example.test/directory".into(),
             email: None,
             account_credentials_json: None,
+            existing_private_key_pem: None,
         },
     )
     .err()

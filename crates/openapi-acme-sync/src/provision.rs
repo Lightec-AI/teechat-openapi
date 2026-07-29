@@ -6,7 +6,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use p256::ecdsa::{DerSignature, SigningKey};
-use p256::pkcs8::{EncodePrivateKey, LineEnding};
+use p256::pkcs8::{DecodePrivateKey, EncodePrivateKey, LineEnding};
 use rand_core::OsRng;
 use x509_cert::builder::{Builder, RequestBuilder};
 use x509_cert::der::asn1::Ia5String;
@@ -86,6 +86,8 @@ pub struct ProvisionRequest {
     pub email: Option<String>,
     /// Existing account credentials JSON, or `None` to create a new account.
     pub account_credentials_json: Option<String>,
+    /// Reuse an existing leaf private key PEM (renew). `None` → generate a new key (issue).
+    pub existing_private_key_pem: Option<String>,
 }
 
 /// Successful HTTP-01 provisioning result.
@@ -117,7 +119,13 @@ pub fn provision_http01(
     let domain = req.domain.clone();
     let (account, account_credentials_json) = open_or_create_account(transport, &req)?;
 
-    finish_provision(sink, domain, account, account_credentials_json)
+    finish_provision(
+        sink,
+        domain,
+        account,
+        account_credentials_json,
+        req.existing_private_key_pem,
+    )
 }
 
 fn open_or_create_account(
@@ -154,6 +162,7 @@ fn finish_provision(
     domain: String,
     account: Account,
     account_credentials_json: String,
+    existing_private_key_pem: Option<String>,
 ) -> Result<ProvisionOutcome, Error> {
     let identifier = Identifier::Dns(domain.clone());
     let mut order = account.new_order(&NewOrder {
@@ -210,7 +219,10 @@ fn finish_provision(
         }
     }
 
-    let (private_key_pem, csr_der) = generate_p256_key_and_csr(&domain)?;
+    let (private_key_pem, csr_der) = match existing_private_key_pem {
+        Some(pem) => csr_from_private_key_pem(&domain, &pem)?,
+        None => generate_p256_key_and_csr(&domain)?,
+    };
 
     order.finalize(&csr_der)?;
 
@@ -244,10 +256,22 @@ fn generate_p256_key_and_csr(domain: &str) -> Result<(String, Vec<u8>), Error> {
         .to_pkcs8_pem(LineEnding::LF)
         .map_err(|e| Error::CryptoKey(e.to_string()))?
         .to_string();
+    let csr_der = build_csr_der(domain, &signing_key)?;
+    Ok((private_key_pem, csr_der))
+}
 
+/// Build a CSR for an existing PKCS#8 P-256 private key PEM (stable-key renew).
+fn csr_from_private_key_pem(domain: &str, private_key_pem: &str) -> Result<(String, Vec<u8>), Error> {
+    let signing_key = SigningKey::from_pkcs8_pem(private_key_pem)
+        .map_err(|e| Error::CryptoKey(format!("decode existing leaf key: {e}")))?;
+    let csr_der = build_csr_der(domain, &signing_key)?;
+    Ok((private_key_pem.to_owned(), csr_der))
+}
+
+fn build_csr_der(domain: &str, signing_key: &SigningKey) -> Result<Vec<u8>, Error> {
     let subject = Name::from_str(&format!("CN={domain}"))
         .map_err(|e| Error::Http(format!("csr subject: {e}")))?;
-    let mut builder = RequestBuilder::new(subject, &signing_key)
+    let mut builder = RequestBuilder::new(subject, signing_key)
         .map_err(|e| Error::Http(format!("csr builder: {e}")))?;
     let dns = Ia5String::new(domain).map_err(|e| Error::Http(format!("csr san: {e}")))?;
     builder
@@ -256,8 +280,6 @@ fn generate_p256_key_and_csr(domain: &str) -> Result<(String, Vec<u8>), Error> {
     let csr = builder
         .build::<DerSignature>()
         .map_err(|e| Error::Http(format!("csr sign: {e}")))?;
-    let csr_der = csr
-        .to_der()
-        .map_err(|e| Error::Http(format!("csr der: {e}")))?;
-    Ok((private_key_pem, csr_der))
+    csr.to_der()
+        .map_err(|e| Error::Http(format!("csr der: {e}")))
 }

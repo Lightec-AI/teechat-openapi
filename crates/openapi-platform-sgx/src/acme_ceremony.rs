@@ -11,13 +11,13 @@ use openapi_acme_sync::{
     provision_http01, AcmeTransport, DnsResolver, Error as AcmeError, Http01ChallengeSink,
     HttpResponse, LetsEncrypt, ProvisionRequest,
 };
-use openapi_platform::{load_edge_profile, Sealer};
+use openapi_platform::{load_edge_profile, SealedTlsKeyBlob, Sealer};
 use tracing::info;
 use zeroize::Zeroize;
 
 use crate::ceremony_helper::CeremonyHelperClient;
 use crate::seal::SgxSealer;
-use crate::tls::TlsConfig;
+use crate::tls::{spki_sha256_hex_from_cert_bytes, TlsConfig};
 
 /// ACME ceremony mode (same binary as the edge server).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,11 +193,41 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
         }
     };
 
+    let sealer = SgxSealer::from_runtime().context("SgxSealer::from_runtime")?;
+    let prod = load_edge_profile().is_prod();
+    let seal_root = sealer
+        .resolve_seal_root(None, prod)
+        .context("resolve seal root")?;
+
+    // Renew: unseal the existing leaf key and CSR with it (stable SPKI across renewals).
+    // Issue: mint a new leaf key.
+    let (existing_private_key_pem, prior_spki) = match mode {
+        AcmeMode::Renew => {
+            let sealed = helper
+                .get_artifact("sealed-key.json")
+                .context("renew requires sealed-key.json (run issue first)")?;
+            let blob: SealedTlsKeyBlob = serde_json::from_slice(&sealed)
+                .context("parse sealed-key.json")?;
+            let pem_bytes = sealer
+                .unseal_tls_key(&blob, seal_root.as_ref())
+                .context("unseal existing leaf key for renew")?;
+            let pem = String::from_utf8(pem_bytes).context("sealed leaf key is not UTF-8 PEM")?;
+            let prior_cert = helper
+                .get_artifact("tls.crt")
+                .context("renew requires tls.crt (run issue first)")?;
+            let spki = spki_sha256_hex_from_cert_bytes(&prior_cert)
+                .map_err(|e| anyhow::anyhow!("prior tls.crt SPKI: {e}"))?;
+            (Some(pem), Some(spki))
+        }
+        AcmeMode::Issue => (None, None),
+    };
+
     info!(
         mode = mode.as_str(),
         %domain,
         staging,
         has_account = account_credentials_json.is_some(),
+        reuse_leaf = existing_private_key_pem.is_some(),
         "starting SGX Option A ACME ceremony"
     );
 
@@ -209,21 +239,28 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
         directory_url,
         email,
         account_credentials_json,
+        existing_private_key_pem,
     };
 
     let mut outcome = provision_http01(transport, &sink, req)
         .map_err(|e| anyhow::anyhow!("ACME provision: {e}"))?;
+
+    if let Some(expected) = prior_spki {
+        let got = spki_sha256_hex_from_cert_bytes(outcome.certificate_chain_pem.as_bytes())
+            .map_err(|e| anyhow::anyhow!("new cert SPKI: {e}"))?;
+        if got != expected {
+            outcome.private_key_pem.zeroize();
+            bail!(
+                "renew changed leaf SPKI ({expected} → {got}); refusing to overwrite sealed key"
+            );
+        }
+    }
 
     // Persist account for renew (contains ACME account key — not the TLS leaf key).
     helper
         .put_artifact(account_name, outcome.account_credentials_json.as_bytes())
         .context("store account credentials artifact")?;
 
-    let sealer = SgxSealer::from_runtime().context("SgxSealer::from_runtime")?;
-    let prod = load_edge_profile().is_prod();
-    let seal_root = sealer
-        .resolve_seal_root(None, prod)
-        .context("resolve seal root")?;
     let blob = sealer
         .seal_tls_key(outcome.private_key_pem.as_bytes(), seal_root.as_ref())
         .context("seal TLS private key (EGETKEY / host stub)")?;
@@ -240,11 +277,14 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
         .put_artifact("tls.crt", outcome.certificate_chain_pem.as_bytes())
         .context("store tls.crt")?;
 
+    let spki = spki_sha256_hex_from_cert_bytes(outcome.certificate_chain_pem.as_bytes())
+        .unwrap_or_else(|_| "unknown".into());
     info!(
         mode = mode.as_str(),
         %domain,
         mrenclave = %sealer.mrenclave(),
         seal_version = blob.seal_version,
+        spki_sha256 = %spki,
         "SGX ACME ceremony complete (sealed-key.json + tls.crt on helper)"
     );
     Ok(())
