@@ -1,9 +1,9 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-28T11:08:27Z",
-  "epoch": 26,
-  "not_after": "2027-07-28T11:08:27Z",
+  "published_at": "2026-07-29T02:35:30Z",
+  "epoch": 27,
+  "not_after": "2027-07-29T02:35:30Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
   "policy": {
@@ -18,6 +18,34 @@
         "openapi.teechat.ai"
       ],
       "active": [
+        {
+          "build_version": "0.7.11",
+          "code_hash": "6d0808764dbe1112e918bd2737fe34d79d139da7d4f246c5a761ad85a991f11f",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "6e1a7fa961fa5abea3adec96643f8843b856092911cad8140e3b99645ace0cb2",
+            "image_digest": "ea0d46da9e748aeac606e001def5d48f43d131c252f87de0b988a02ec068d99e"
+          },
+          "notes": "0.7.11 dm-verity ENABLED=1: R=c8a4c39a\u2026 composed LD on CONFIG_DM_VERITY=y OS golden. GitHub v0.7.11. Ceremony golden.",
+          "golden_version": "openapi-golden-20260729-6f84bc625867-key-ceremony"
+        },
+        {
+          "build_version": "0.7.11",
+          "code_hash": "6d0808764dbe1112e918bd2737fe34d79d139da7d4f246c5a761ad85a991f11f",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "523f55b488519ce946db64c0d6f779dc2a6759f256873d7801600c09eb98dec1",
+            "image_digest": "f2e2163c5bfef0c9681323b58dc266a08464c1a38bbe2f2ed74a5b505af8064e"
+          },
+          "notes": "0.7.11 dm-verity ENABLED=1: R=c8a4c39a\u2026 composed LD on CONFIG_DM_VERITY=y OS golden. GitHub v0.7.11. Seal_sync blue/green.",
+          "golden_version": "openapi-golden-20260729-6f84bc625867-seal-sync"
+        },
         {
           "build_version": "0.7.8",
           "code_hash": "d5bbebd2673a4e2276bdb260e4e379ed7bdc799b8adfc0555cacf41db34afb85",
