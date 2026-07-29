@@ -35,6 +35,7 @@ Production edge nodes seal the TLS private key inside the TEE. Operators set **`
 - **`OPENAPI_AMD_SP_DERIVED_KEY_HEX`** forbidden — CVM CI hook only; prod must call AMD-SP via `/dev/sev-guest` (OPS-003).
 - Host-side **`seal-tls-key`** / **`seal-tls-key-sgx`** forbidden — use in-TEE ceremony (OPS-002).
 - **CVM ACME:** use in-guest **`openapi-acme`** (instant-acme) + `issue-and-seal-tls.sh` — not host/guest **certbot** for openapi TLS keys.
+- **SGX ACME (Option A):** issue/renew inside **`openapi-enclave`** via `openapi-acme-sync` + host **`openapi-ceremony-helper`** (DNS, HTTP-01 webroot, artifacts). Seal with **EGETKEY** in the same MRENCLAVE binary; host stores only `sealed-key.json` + public `tls.crt` — **never** a private key PEM. See [`deploy/sgx/README.md`](deploy/sgx/README.md).
 - **`OPENAPI_CHALLENGE_BENCH_TOKEN`** forbidden — lab-only bypass of challenge RPM / in-flight caps (BENCH-001).
 - **`OPENAPI_PROXY_MODE=transparent`** forbidden — prod is **allowlist-only** for `/v1/*` (PROXY-001 / ROUTE-001).
 - **SGX:** runtime **MRENCLAVE** from enclave report must match the sealed blob (fail closed).

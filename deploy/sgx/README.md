@@ -62,30 +62,64 @@ cd /path/to/teechat-openapi
 | `OPENAPI_CATALOG_VERIFY_KEY_HEX` | yes | Ed25519 catalog verify key |
 | `OPENAPI_USAGE_SIGN_SEED_HEX` | yes | Ed25519 usage signing seed |
 | `OPENAPI_LISTEN_ADDR` | no | default `0.0.0.0:8443` |
-| `OPENAPI_TLS_CERT_PATH` | prod | Server cert PEM (public) |
-| `OPENAPI_TLS_SEALED_KEY_PATH` | prod | MRENCLAVE-bound sealed key JSON |
-| `OPENAPI_TLS_KEY_PATH` | dev | Plaintext key (**dev only**) |
+| `OPENAPI_TLS_CERT_PATH` | lab FS | Host-path cert PEM (unit tests / non-EDP only) |
+| `OPENAPI_TLS_SEALED_KEY_PATH` | lab FS | Host-path sealed JSON (unit tests / non-EDP only) |
+| `OPENAPI_CEREMONY_HELPER_URL` | prod SGX | Fetch `tls.crt` + `sealed-key.json` over TCP (default helper `http://127.0.0.1:18501`) |
+| `OPENAPI_TLS_KEY_PATH` | dev | Plaintext key (**dev only**; forbidden in prod) |
 | `OPENAPI_PROFILE` | prod | Set to **`prod`** on production units |
 | `OPENAPI_SEAL_ROOT_HEX` | dev | Dev HKDF input only — **forbidden in prod** (EGETKEY-derived in enclave) |
+| `OPENAPI_DCAP_HELPER_URL` | attest | Host AESM quote helper (default `http://127.0.0.1:18500`) |
 
 Sealing: [SECURITY.md](../../SECURITY.md).
 
-### Seal TLS key to MRENCLAVE
+### Seal TLS key to MRENCLAVE (lab import — not prod)
 
-After you know `OPENAPI_MRENCLAVE`:
+Host-side `seal-tls-key-sgx` is for **lab/CI** only (OPS-002). Production SGX uses **Option A** below so the private key is generated and sealed inside the enclave.
 
 ```bash
 export OPENAPI_MRENCLAVE=...
 ./scripts/seal-tls-key-sgx.sh tls-key.pem tls-key.sealed.json
-export OPENAPI_TLS_CERT_PATH=cert.pem
-export OPENAPI_TLS_SEALED_KEY_PATH=tls-key.sealed.json
+# Prefer ceremony helper artifacts on real EDP hardware (no std::fs).
 ```
 
-### ACME / Let's Encrypt (not implemented for EDP yet)
+### ACME / Let's Encrypt — Option A (in-enclave + host helper)
 
-CVM uses in-guest **`openapi-acme`** (instant-acme). For SGX, **do not** run host certbot and import PEM into the enclave.
+Fortanix EDP: **no `std::fs`**, DNS hangs, TCP to IP works. The TLS private key must be sealed with **EGETKEY** (`SgxSealer`) inside the **same** `openapi-enclave` binary that serves traffic (same `MRENCLAVE`). The host must **never** see a private key PEM.
 
-Documented options (TeeChat sealing threat model §10): sync Rust ACME in-enclave, or CSR-split (keygen in EPC, host ACME sees CSR only). Production CVM path does not require Tokio-inside-EPC.
+| Component | Role |
+|-----------|------|
+| `openapi-ceremony-helper` | Host loopback `:18501` — DNS resolve, ACME HTTP-01 webroot, artifact store |
+| `openapi-enclave` + `OPENAPI_MODE=acme-issue\|acme-renew` | In-enclave `openapi-acme-sync` HTTP-01 + seal → PUT `sealed-key.json` + `tls.crt` |
+| Host nginx | Serve `${OPENAPI_ACME_WEBROOT}/.well-known/acme-challenge/` publicly |
+
+**Lab (staging LE):**
+
+```bash
+./deploy/sgx/build-enclave.sh
+export OPENAPI_MRENCLAVE=...   # from deploy/sgx/last-build-inspect.txt
+export OPENAPI_PROFILE=dev
+export OPENAPI_ACME_WEBROOT=/var/www/acme
+export OPENAPI_ARTIFACT_DIR=/var/lib/teechat-openapi/sgx
+
+# Terminal A — helper (keep running)
+./deploy/sgx/run-ceremony-helper.sh
+
+# Terminal B — issue (staging)
+./deploy/sgx/issue-and-seal-tls.sh issue \
+  --domain openapi-lab.example.com \
+  --email ops@example.com \
+  --staging
+
+# Serve edge (helper still required for TLS bootstrap)
+export OPENAPI_CEREMONY_HELPER_URL=http://127.0.0.1:18501
+export OPENAPI_PROFILE=dev
+# … catalog / upstream / MRENCLAVE …
+./deploy/sgx/run-enclave.sh
+```
+
+**Prod (production LE):** `OPENAPI_PROFILE=prod`, omit `--staging`, unset `OPENAPI_TLS_KEY_PATH` / `OPENAPI_SEAL_ROOT_HEX`, then publish the serving SPKI on the TLS ceremony allowlist.
+
+Renew: `./deploy/sgx/issue-and-seal-tls.sh renew --domain …` (same binary / MRENCLAVE).
 
 ## 4. Run enclave
 
@@ -123,11 +157,14 @@ Inside the enclave, `/v1/attestation/challenge` returns a DCAP ECDSA quote (`quo
 ## 6. Workspace layout (SGX)
 
 ```
-bins/openapi-enclave          # EDP binary (fortanix target)
-bins/seal-tls-key-sgx         # Seal TLS key to MRENCLAVE
-crates/openapi-platform-sgx   # env, attest, tcp upstream, tls, run
-crates/openapi-edge           # shared HTTP server loop
-deploy/sgx/                   # build/run/preflight scripts
+bins/openapi-enclave            # EDP binary (edge + ACME ceremony modes)
+bins/openapi-ceremony-helper    # Host DNS / HTTP-01 / artifact helper
+bins/openapi-dcap-helper        # Host AESM ECDSA quote helper
+bins/seal-tls-key-sgx           # Lab-only seal import (not prod)
+crates/openapi-acme-sync        # Blocking ACME client (rustls/TcpStream)
+crates/openapi-platform-sgx     # env, attest, ACME ceremony, tls, run
+crates/openapi-edge             # shared HTTP server loop
+deploy/sgx/                     # build/run/ceremony scripts
 ```
 
 ## 7. Troubleshooting
@@ -138,4 +175,6 @@ deploy/sgx/                   # build/run/preflight scripts
 | `ftxsgx-runner` ENOENT | `cargo install fortanix-sgx-tools` |
 | Seal/unseal fails | `OPENAPI_MRENCLAVE` matches inspect output |
 | Upstream connect fail | Use `http://127.0.0.1:PORT`, not hostname |
-| TLS fails in enclave | Use sealed key; ensure cert PEM readable at launch |
+| TLS fails in enclave | Run ceremony helper; set `OPENAPI_CEREMONY_HELPER_URL`; artifacts `tls.crt` + `sealed-key.json` present |
+| ACME DNS hang | Enclave must use helper `/dns` (never enclave libc DNS) |
+| ACME challenge 404 | Host nginx must map `/.well-known/acme-challenge/` → `OPENAPI_ACME_WEBROOT` |
