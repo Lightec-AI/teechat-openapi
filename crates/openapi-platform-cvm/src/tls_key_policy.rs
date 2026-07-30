@@ -9,6 +9,10 @@ use std::path::Path;
 /// Canonical path covered by the golden image measurement.
 pub const TLS_KEY_POLICY_PATH: &str = "/etc/tls_key_policy";
 
+#[cfg(test)]
+static TEST_TLS_KEY_POLICY_PATH: std::sync::Mutex<Option<std::path::PathBuf>> =
+    std::sync::Mutex::new(None);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TlsKeyPolicy {
     /// Generate → ACME → seal; may export via seal-sync admin; must not import.
@@ -55,7 +59,14 @@ pub fn read_tls_key_policy_from(path: &Path) -> Result<TlsKeyPolicy, String> {
 /// `OPENAPI_TLS_KEY_POLICY_PATH` is a CI/test redirect — forbidden when `OPENAPI_PROFILE=prod`
 /// (enforced in `openapi_platform::validate_tls_key_policy`, POLICY-001).
 pub fn tls_key_policy_path() -> std::path::PathBuf {
-    if openapi_platform::load_edge_profile().is_prod() {
+    #[cfg(test)]
+    if let Some(path) = TEST_TLS_KEY_POLICY_PATH.lock().unwrap().clone() {
+        return path;
+    }
+    if !matches!(
+        openapi_platform::load_edge_profile(),
+        Ok(openapi_platform::EdgeProfile::Dev)
+    ) {
         return std::path::PathBuf::from(TLS_KEY_POLICY_PATH);
     }
     std::env::var("OPENAPI_TLS_KEY_POLICY_PATH")
@@ -63,6 +74,11 @@ pub fn tls_key_policy_path() -> std::path::PathBuf {
         .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(TLS_KEY_POLICY_PATH))
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_tls_key_policy_path(path: Option<std::path::PathBuf>) {
+    *TEST_TLS_KEY_POLICY_PATH.lock().unwrap() = path;
 }
 
 pub fn read_tls_key_policy() -> Result<TlsKeyPolicy, String> {

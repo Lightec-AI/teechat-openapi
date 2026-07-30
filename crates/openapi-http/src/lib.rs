@@ -4,7 +4,7 @@ mod server;
 mod sse;
 mod streaming;
 
-pub use request::{HttpRequest, ParsedRequest};
+pub use request::{HttpRequest, ParseError, ParsedRequest};
 pub use response::{
     build_challenge_cors_preflight, build_error_response, build_json_response, build_sse_response,
     is_attestation_challenge_path, with_challenge_cors,

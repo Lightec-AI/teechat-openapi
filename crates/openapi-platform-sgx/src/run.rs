@@ -9,12 +9,13 @@ use tracing::{info, warn};
 
 use crate::attest::SgxAttestationPlatform;
 use crate::ceremony_helper::CeremonyHelperClient;
+use crate::edge_upstream::EdgeUpstream;
 use crate::env::{load_sgx_edge_env, SgxEdgeEnv};
+use crate::gateway_ope_api::probe_gateway_ope_api_at_startup;
 use crate::seal::{local_mrenclave_hex, SgxSealer};
 use crate::seal_sync::{maybe_start_seal_sync, SealSyncConfig};
 use crate::tls::{spki_sha256_hex_from_cert_bytes, TlsAcceptor, TlsConfig};
 use crate::tls_key_policy::{resolve_tls_key_policy_optional, TlsKeyPolicy};
-use crate::upstream::TcpHttpUpstream;
 
 pub fn run() -> anyhow::Result<()> {
     TlsConfig::install_crypto_provider().context("tls crypto provider")?;
@@ -57,8 +58,10 @@ pub fn run() -> anyhow::Result<()> {
         Some(env.policy_hash_hex()),
     );
 
-    let upstream = TcpHttpUpstream::new(&env.upstream_base_url)
-        .map_err(|e| anyhow::anyhow!("upstream: {e}"))?;
+    // Hard OPE cutover: F′ dispatch by default; clear HTTP only as non-prod break-glass.
+    probe_gateway_ope_api_at_startup(env.profile());
+    let upstream = EdgeUpstream::from_env(env.profile(), &env.upstream_base_url)
+        .context("upstream (OPE / clear HTTP)")?;
 
     let authenticator = env.edge_authenticator().context("auth")?;
     if let Some(remote) = authenticator.remote_arc() {

@@ -117,7 +117,7 @@ impl Http01ChallengeSink for HelperChallengeSink {
 /// Staging Let's Encrypt is allowed under `OPENAPI_PROFILE=dev` (lab).
 /// Production Let's Encrypt requires `OPENAPI_PROFILE=prod`.
 pub fn assert_acme_ceremony_policy(staging: bool) -> anyhow::Result<()> {
-    let profile = load_edge_profile();
+    let profile = load_edge_profile()?;
     if staging {
         if profile.is_prod() {
             bail!("staging Let's Encrypt forbidden when OPENAPI_PROFILE=prod (use prod LE)");
@@ -205,7 +205,7 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
     };
 
     let sealer = SgxSealer::from_runtime().context("SgxSealer::from_runtime")?;
-    let prod = load_edge_profile().is_prod();
+    let prod = load_edge_profile()?.is_prod();
     let seal_root = sealer
         .resolve_seal_root(None, prod)
         .context("resolve seal root")?;
@@ -324,14 +324,14 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::PathBuf;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use std::thread;
-
-    static POLICY_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn policy_rejects_prod_staging() {
-        let _g = POLICY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OPENAPI_PROFILE", "prod");
         std::env::remove_var("OPENAPI_TLS_KEY_PATH");
         std::env::remove_var("OPENAPI_SEAL_ROOT_HEX");
@@ -342,7 +342,9 @@ mod tests {
 
     #[test]
     fn policy_rejects_prod_le_without_prod_profile() {
-        let _g = POLICY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OPENAPI_PROFILE", "dev");
         let err = assert_acme_ceremony_policy(false).unwrap_err().to_string();
         assert!(err.contains("OPENAPI_PROFILE=prod"));
@@ -351,7 +353,9 @@ mod tests {
 
     #[test]
     fn policy_rejects_host_seal_root_in_prod() {
-        let _g = POLICY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OPENAPI_PROFILE", "prod");
         std::env::set_var("OPENAPI_SEAL_ROOT_HEX", "aa".repeat(32));
         std::env::remove_var("OPENAPI_TLS_KEY_PATH");
@@ -363,7 +367,9 @@ mod tests {
 
     #[test]
     fn policy_allows_lab_staging() {
-        let _g = POLICY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OPENAPI_PROFILE", "dev");
         std::env::remove_var("OPENAPI_TLS_KEY_PATH");
         std::env::remove_var("OPENAPI_SEAL_ROOT_HEX");

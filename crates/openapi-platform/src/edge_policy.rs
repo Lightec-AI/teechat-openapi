@@ -23,11 +23,21 @@ pub struct EdgeRuntimePolicy {
     /// F′ gateway OPE API base (prod hard cutover).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gateway_ope_api_url: Option<String>,
+    /// Canonical SHA-256 of the engine-id → attested Ed25519 identity pin map.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine_identity_pins_sha256: Option<String>,
     /// Clear-HTTP upstream base (dev / break-glass only; still hashed when set).
     pub upstream_base_url: String,
 }
 
 impl EdgeRuntimePolicy {
+    pub fn with_engine_identity_pins_sha256(mut self, value: Option<&str>) -> Self {
+        self.engine_identity_pins_sha256 = value
+            .map(str::to_ascii_lowercase)
+            .filter(|s| !s.is_empty());
+        self
+    }
+
     /// Stable SHA-256 over compact JSON with sorted keys (serde field order).
     pub fn policy_hash_hex(&self) -> String {
         let bytes = serde_json::to_vec(self).expect("EdgeRuntimePolicy serializes");
@@ -56,6 +66,7 @@ pub fn edge_runtime_policy_from_parts(
         gateway_ope_api_url: gateway_ope_api_url
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty()),
+        engine_identity_pins_sha256: None,
         upstream_base_url: upstream_base_url.to_string(),
     }
 }
@@ -74,7 +85,8 @@ mod tests {
             Some("https://l0/revocations"),
             Some("https://gw:8791"),
             "http://unused",
-        );
+        )
+        .with_engine_identity_pins_sha256(Some("bb"));
         let b = edge_runtime_policy_from_parts(
             "remote",
             "global",
@@ -83,7 +95,8 @@ mod tests {
             Some("https://l0/revocations"),
             Some("https://gw:8791"),
             "http://unused",
-        );
+        )
+        .with_engine_identity_pins_sha256(Some("BB"));
         assert_eq!(a.policy_hash_hex(), b.policy_hash_hex());
         assert_eq!(a.policy_hash_hex().len(), 64);
     }

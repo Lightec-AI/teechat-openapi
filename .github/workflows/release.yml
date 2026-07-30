@@ -57,6 +57,21 @@ jobs:
           CODE_HASH="$(awk '/ openapi$/ {print $1}' dist/SHA256SUMS)"
           if [[ -f manifest/release/openapi-edge-attest.json ]]; then
             cp manifest/release/openapi-edge-attest.json dist/openapi-edge-attest.json
+            python3 - dist/openapi-edge-attest.json <<'PY'
+          import json, re, sys
+          path = sys.argv[1]
+          doc = json.load(open(path, encoding="utf-8"))
+          if doc.get("policy", {}).get("require_runtime_policy_pin") is not True:
+              raise SystemExit("release manifest must require runtime policy pins")
+          for region in doc.get("regions", []):
+              for release in region.get("active", []):
+                  value = release.get("policy_hash", "")
+                  if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+                      raise SystemExit(
+                          f"active release missing valid policy_hash: "
+                          f"{region.get('region')} {release.get('build_version')}"
+                      )
+          PY
             # Allowlist code_hashes are the *deployed* CVM edge binaries — one per active
             # row during an overlap window (old live edge + newly released edge). GHA
             # ubuntu builds are for the attest CLI + transparency and may differ. Clients
@@ -74,44 +89,8 @@ jobs:
               echo "::warning::CI openapi hash (${CODE_HASH}) not in allowlist active rows. Expected when the deployed edge is a CVM build — allowlist + SHA256SUMS remain the challenge trust root; update the allowlist from the guest binary before cutover."
             fi
           else
-            VERSION="${GITHUB_REF_NAME#v}"
-            PUBLISHED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            NOT_AFTER="$(date -u -d '+365 days' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+365d +%Y-%m-%dT%H:%M:%SZ)"
-            python3 - "$CODE_HASH" "$VERSION" "$PUBLISHED" "$NOT_AFTER" "$GITHUB_REF_NAME" <<'PY'
-          import json, sys
-          code_hash, version, published, not_after, tag = sys.argv[1:6]
-          doc = {
-            "schema": "teechat-openapi-edge-manifest/v1",
-            "key_id": "openapi-attestation-v1",
-            "published_at": published,
-            "epoch": 1,
-            "not_after": not_after,
-            "retired_grace_period_days": 30,
-            "manifest_url": f"https://github.com/Lightec-AI/teechat-openapi/releases/download/{tag}/openapi-edge-attest.json",
-            "policy": {
-              "reject_debug": True,
-              "max_quote_age_ms": 3600000,
-              "require_session_spki_bind": True,
-            },
-            "regions": [{
-              "region": "global",
-              "hostnames": ["openapi.teechat.ai"],
-              "active": [{
-                "build_version": version,
-                "code_hash": code_hash,
-                "quote_formats": ["snp_report", "sgx_dcap_ecdsa"],
-                "measurement": {
-                  "kind": "launch_digest",
-                  "launch_digest": "0" * 64,
-                  "image_digest": "0" * 64,
-                },
-                "notes": "CI stub — replace measurement digests before production cutover.",
-              }],
-              "retired": [],
-            }],
-          }
-          open("dist/openapi-edge-attest.json", "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
-          PY
+            echo "::error::manifest/release/openapi-edge-attest.json is required; CI stubs cannot be release trust roots"
+            exit 1
           fi
           echo "Artifacts:"
           ls -la dist

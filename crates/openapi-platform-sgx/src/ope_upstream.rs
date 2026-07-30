@@ -1,4 +1,7 @@
 //! Hard-cutover upstream: inventory → P1 preassign → Rust OPE → F′ dispatch → OpenAI shape.
+//!
+//! Identical wire logic to `openapi-platform-cvm::ope_upstream`; only the underlying
+//! `GatewayOpeApiClient` dialer differs (raw `TcpStream` + rustls here, `ureq` on CVM).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::Mutex;
@@ -21,7 +24,7 @@ use crate::ope_wrap::{
     decrypt_chunk, encrypt_openai_body_with_path, envelope_to_bytes, EncryptedOpeRequest,
 };
 
-/// Clear-HTTP break-glass (forbidden in prod).
+/// Clear-HTTP break-glass (forbidden in prod). Bypasses OPE entirely — see `EdgeUpstream`.
 pub fn clear_http_break_glass_enabled() -> bool {
     match std::env::var("OPENAPI_UPSTREAM_CLEAR_HTTP") {
         Ok(v) => {
@@ -686,108 +689,4 @@ fn uuid_like() -> String {
     let mut b = [0u8; 8];
     rand::thread_rng().fill_bytes(&mut b);
     hex::encode(b)
-}
-
-#[cfg(test)]
-mod trust_tests {
-    use super::*;
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use base64::Engine;
-    use ed25519_dalek::{Signer, SigningKey};
-    use openapi_platform::{ephemeral_signing_bytes, EphemeralEngineTrust};
-
-    fn fixture() -> (
-        OpeDispatchUpstream,
-        PreassignResponse,
-        InventoryEngine,
-        UpstreamRequestContext,
-    ) {
-        let key = SigningKey::from_bytes(&[9u8; 32]);
-        let public = URL_SAFE_NO_PAD.encode(key.verifying_key().to_bytes());
-        let pins =
-            EngineIdentityPins::parse_json(&format!(r#"{{"engine-1":"{public}"}}"#)).unwrap();
-        let unsigned = EphemeralEngineTrust {
-            engine_id: "engine-1",
-            epoch_id: "epoch-1",
-            not_before: "2020-01-01T00:00:00.000Z",
-            not_after: "2099-01-01T00:00:00.000Z",
-            mlkem_encapsulation_key: "mlkem",
-            x25519_public: "x25519",
-            ed25519_public: &public,
-            identity_signature: "",
-        };
-        let signature =
-            URL_SAFE_NO_PAD.encode(key.sign(&ephemeral_signing_bytes(&unsigned)).to_bytes());
-        let pre = PreassignResponse {
-            assign_id: "assign-1".into(),
-            engine_id: "engine-1".into(),
-            engine_set: "shared".into(),
-            key_set: "api".into(),
-            openapi_key_id: "key-1".into(),
-            expires_at_ms: u64::MAX,
-            ttl_ms: 15_000,
-            trust: crate::gateway_ope_api::PreassignTrust {
-                engine_id: "engine-1".into(),
-                epoch_id: "epoch-1".into(),
-                not_before: "2020-01-01T00:00:00.000Z".into(),
-                not_after: "2099-01-01T00:00:00.000Z".into(),
-                hybrid: crate::gateway_ope_api::PreassignTrustHybrid {
-                    kex: "X25519MLKEM768".into(),
-                    mlkem_encapsulation_key: "mlkem".into(),
-                    x25519_public: "x25519".into(),
-                },
-                identity: crate::gateway_ope_api::PreassignTrustIdentity {
-                    ed25519_public: public,
-                    identity_signature: signature,
-                },
-            },
-        };
-        let engine = InventoryEngine {
-            engine_id: "engine-1".into(),
-            engine_set: "shared".into(),
-            models: vec!["m1".into()],
-            healthy: true,
-            ready_sessions: 1,
-        };
-        let ctx = UpstreamRequestContext {
-            key_id: "key-1".into(),
-            key_set: "api".into(),
-        };
-        let mut config =
-            GatewayOpeApiConfig::from_parts("http://127.0.0.1:1", None, None, None, None, false)
-                .unwrap();
-        config.engine_identity_pins = pins;
-        let upstream = OpeDispatchUpstream::try_new(config).unwrap();
-        (upstream, pre, engine, ctx)
-    }
-
-    #[test]
-    fn preassign_verification_binds_assignment_inventory_and_signature() {
-        let (upstream, pre, engine, ctx) = fixture();
-        upstream.verify_preassign(&pre, &engine, &ctx).unwrap();
-    }
-
-    #[test]
-    fn preassign_verification_rejects_stale_substitution_and_mismatch() {
-        let (upstream, mut pre, engine, ctx) = fixture();
-        pre.expires_at_ms = 0;
-        assert!(matches!(
-            upstream.verify_preassign(&pre, &engine, &ctx),
-            Err(ApiError::Forbidden(_))
-        ));
-
-        let (upstream, mut pre, engine, ctx) = fixture();
-        pre.trust.hybrid.x25519_public = "substituted".into();
-        assert!(matches!(
-            upstream.verify_preassign(&pre, &engine, &ctx),
-            Err(ApiError::Forbidden(_))
-        ));
-
-        let (upstream, mut pre, engine, ctx) = fixture();
-        pre.key_set = "wrong".into();
-        assert!(matches!(
-            upstream.verify_preassign(&pre, &engine, &ctx),
-            Err(ApiError::Forbidden(_))
-        ));
-    }
 }

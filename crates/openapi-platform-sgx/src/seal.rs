@@ -447,6 +447,9 @@ mod tests {
 
     #[test]
     fn local_mrenclave_requires_env_on_host() {
+        let _g = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         std::env::remove_var("OPENAPI_MRENCLAVE");
         assert!(local_mrenclave_hex().is_err());
         std::env::set_var("OPENAPI_MRENCLAVE", "abc");

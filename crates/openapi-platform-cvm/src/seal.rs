@@ -1,7 +1,6 @@
 use openapi_platform::{
-    derive_cvm_seal_root, seal_tls_private_key_amd_sp, unseal_tls_private_key,
-    unseal_tls_private_key_amd_sp, AmdSpSealMeta, Measurement, PlatformError, SealedTlsKeyBlob,
-    Sealer, SEAL_VERSION, SEAL_VERSION_SNP_AMD_SP,
+    seal_tls_private_key_amd_sp, unseal_tls_private_key, unseal_tls_private_key_amd_sp,
+    AmdSpSealMeta, Measurement, PlatformError, SealedTlsKeyBlob, Sealer, SEAL_VERSION_SNP_AMD_SP,
 };
 
 use crate::amd_sp_key::derive_amd_sp_seal_key;
@@ -42,9 +41,9 @@ impl CvmSealer {
     /// Resolve host-supplied seal root (`OPENAPI_SEAL_ROOT_HEX`).
     ///
     /// Prod always returns `None`: `seal_tls_key` / `unseal_tls_key` derive AMD-SP (v3)
-    /// or measurement HKDF (legacy v1) internally. Passing a host root into those
-    /// methods is rejected — so this must not return `Some(amd_sp_key)` (that was a
-    /// startup footgun: main forwarded it and unseal failed closed).
+    /// internally. Passing a host root into those methods is rejected — so this must
+    /// not return `Some(amd_sp_key)` (that was a startup footgun: main forwarded it
+    /// and unseal failed closed).
     pub fn resolve_seal_root(
         &self,
         host_env_supplied: Option<&[u8; 32]>,
@@ -109,23 +108,17 @@ impl Sealer for CvmSealer {
                 ));
             }
             verify_launch_digest_attested(&self.launch_digest)?;
-            match blob.seal_version {
-                SEAL_VERSION_SNP_AMD_SP => {
-                    let meta = blob.amd_sp.as_ref().ok_or_else(|| {
-                        PlatformError::Seal("amd_sp metadata required for seal_version 3".into())
-                    })?;
-                    let amd_key = derive_amd_sp_seal_key(meta)?;
-                    unseal_tls_private_key_amd_sp(blob, &self.sealing_measurement(), &amd_key)
-                }
-                SEAL_VERSION => {
-                    // Legacy grace: v1 measurement-labeled blobs still unseal after digest gate.
-                    let root = derive_cvm_seal_root(&self.launch_digest, &self.image_digest);
-                    unseal_tls_private_key(blob, &self.sealing_measurement(), Some(&root))
-                }
-                other => Err(PlatformError::Seal(format!(
-                    "unsupported seal_version {other} for CVM prod unseal (expected {SEAL_VERSION_SNP_AMD_SP} or legacy {SEAL_VERSION})"
-                ))),
+            if blob.seal_version != SEAL_VERSION_SNP_AMD_SP {
+                return Err(PlatformError::Seal(format!(
+                    "legacy or unsupported seal_version {} forbidden for CVM prod unseal; expected {SEAL_VERSION_SNP_AMD_SP}",
+                    blob.seal_version
+                )));
             }
+            let meta = blob.amd_sp.as_ref().ok_or_else(|| {
+                PlatformError::Seal("amd_sp metadata required for seal_version 3".into())
+            })?;
+            let amd_key = derive_amd_sp_seal_key(meta)?;
+            unseal_tls_private_key_amd_sp(blob, &self.sealing_measurement(), &amd_key)
         } else {
             unseal_tls_private_key(blob, &self.sealing_measurement(), seal_root)
         }
@@ -135,7 +128,9 @@ impl Sealer for CvmSealer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openapi_platform::{seal_tls_private_key, unseal_tls_private_key};
+    use openapi_platform::{
+        derive_cvm_seal_root, seal_tls_private_key, unseal_tls_private_key, SEAL_VERSION,
+    };
 
     use crate::amd_sp_key::{set_test_amd_sp_derived_key, AMD_SP_KEY_TEST_LOCK};
     use crate::guest_digest::{set_test_attested_launch_digest, ATTESTED_ENV_TEST_LOCK};
@@ -147,11 +142,14 @@ mod tests {
     }
 
     fn with_prod_injects(f: impl FnOnce()) {
+        let _env = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _g1 = ATTESTED_ENV_TEST_LOCK.lock().unwrap();
         let _g2 = AMD_SP_KEY_TEST_LOCK.lock().unwrap();
         std::env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
         std::env::remove_var("OPENAPI_AMD_SP_DERIVED_KEY_HEX");
-        std::env::remove_var("OPENAPI_PROFILE");
+        std::env::set_var("OPENAPI_PROFILE", "prod");
         set_test_attested_launch_digest(None);
         set_test_amd_sp_derived_key(None);
         f();
@@ -273,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn prod_still_unseals_legacy_v1_blobs() {
+    fn prod_rejects_legacy_v1_blobs() {
         with_prod_injects(|| {
             let launch = launch_hex();
             set_test_attested_launch_digest(Some(launch.clone()));
@@ -286,7 +284,9 @@ mod tests {
             let legacy = seal_tls_private_key(&m, KEY, Some(&root)).unwrap();
             assert_eq!(legacy.seal_version, SEAL_VERSION);
             let sealer = CvmSealer::with_profile(&launch, "id-prod", true);
-            assert_eq!(sealer.unseal_tls_key(&legacy, None).unwrap(), KEY);
+            let err = sealer.unseal_tls_key(&legacy, None).unwrap_err();
+            assert!(err.to_string().contains("seal_version 1"), "got: {err}");
+            assert!(err.to_string().contains("forbidden"), "got: {err}");
         });
     }
 

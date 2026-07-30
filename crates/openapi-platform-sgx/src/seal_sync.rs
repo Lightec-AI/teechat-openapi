@@ -73,7 +73,7 @@ impl SealSyncConfig {
         if !self.enabled() {
             return Ok(());
         }
-        if load_edge_profile().is_prod() {
+        if load_edge_profile()?.is_prod() {
             if self.mock_psk.is_some() {
                 anyhow::bail!(
                     "OPENAPI_SEAL_SYNC_PSK is forbidden when OPENAPI_PROFILE=prod; \
@@ -474,13 +474,10 @@ pub fn maybe_start_seal_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn prod_forbids_psk() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("OPENAPI_PROFILE", "prod");
         let cfg = SealSyncConfig {
             listen: Some("127.0.0.1:9443".into()),
@@ -496,7 +493,7 @@ mod tests {
 
     #[test]
     fn from_env_reads_listen() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("OPENAPI_SEAL_SYNC_LISTEN", "0.0.0.0:9444");
         std::env::remove_var("OPENAPI_SEAL_SYNC_PEER");
         std::env::remove_var("OPENAPI_SEAL_SYNC_PSK");

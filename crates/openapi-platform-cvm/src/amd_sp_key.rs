@@ -17,7 +17,8 @@ pub(crate) static AMD_SP_KEY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex:
 
 /// Derive the 32-byte sealing key from the AMD Secure Processor.
 pub fn derive_amd_sp_seal_key(meta: &AmdSpSealMeta) -> Result<[u8; 32], PlatformError> {
-    let policy = if load_edge_profile().is_prod() {
+    let profile = load_edge_profile().map_err(|e| PlatformError::Seal(e.to_string()))?;
+    let policy = if profile.is_prod() {
         DerivePolicy::prod()
     } else {
         DerivePolicy::dev()
@@ -37,10 +38,13 @@ mod tests {
     use openapi_platform::AmdSpSealMeta;
 
     fn with_amd_sp_env(f: impl FnOnce()) {
+        let _env = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _guard = AMD_SP_KEY_TEST_LOCK.lock().unwrap();
         std::env::remove_var(AMD_SP_KEY_ENV);
         std::env::remove_var("TEECHAT_AMD_SP_DERIVED_KEY_HEX");
-        std::env::remove_var("OPENAPI_PROFILE");
+        std::env::set_var("OPENAPI_PROFILE", "dev");
         set_test_amd_sp_derived_key(None);
         f();
         std::env::remove_var(AMD_SP_KEY_ENV);

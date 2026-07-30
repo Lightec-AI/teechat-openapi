@@ -489,21 +489,21 @@ where
 
         // BENCH-001: never honor bench bypass when OPENAPI_PROFILE=prod (defense in depth;
         // load-time validate_tls_key_policy already refuses the env on prod units).
-        let bench_bypass = if openapi_platform::load_edge_profile().is_prod() {
+        let bench_bypass = if !matches!(
+            openapi_platform::load_edge_profile(),
+            Ok(openapi_platform::EdgeProfile::Dev)
+        ) {
             false
         } else {
-            match (
-                self.limits.challenge_bench_token.as_deref(),
-                challenge_bench_header,
-            ) {
+            matches!(
+                (
+                    self.limits.challenge_bench_token.as_deref(),
+                    challenge_bench_header,
+                ),
                 (Some(expected), Some(got))
                     if !expected.is_empty()
-                        && subtle_constant_time_eq(expected.as_bytes(), got.as_bytes()) =>
-                {
-                    true
-                }
-                _ => false,
-            }
+                        && subtle_constant_time_eq(expected.as_bytes(), got.as_bytes())
+            )
         };
 
         let _inflight = if bench_bypass {
@@ -988,7 +988,7 @@ mod tests {
     #[test]
     fn challenge_bench_token_bypasses_limits_in_dev() {
         let _g = PROFILE_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("OPENAPI_PROFILE");
+        std::env::set_var("OPENAPI_PROFILE", "dev");
         let mut limits = Limits::default();
         limits.challenge_requests_per_minute = 1;
         limits.challenge_bench_token = Some("lab-token".into());
@@ -1017,6 +1017,7 @@ mod tests {
             )
             .unwrap();
         }
+        std::env::remove_var("OPENAPI_PROFILE");
     }
 
     #[test]

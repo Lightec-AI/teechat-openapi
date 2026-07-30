@@ -37,7 +37,13 @@
       "properties": {
         "reject_debug": { "type": "boolean" },
         "max_quote_age_ms": { "type": "integer", "minimum": 1000 },
-        "require_session_spki_bind": { "type": "boolean", "default": true }
+        "require_session_spki_bind": { "type": "boolean", "default": true },
+        "require_runtime_policy_pin": {
+          "type": "boolean",
+          "const": true,
+          "default": true,
+          "description": "Production manifests require a policy_hash on every active release row."
+        }
       },
       "additionalProperties": false
     },

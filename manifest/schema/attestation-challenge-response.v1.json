@@ -32,6 +32,11 @@
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
         },
+        "policy_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the security-critical EdgeRuntimePolicy JSON."
+        },
         "measurement": {
           "oneOf": [
             {

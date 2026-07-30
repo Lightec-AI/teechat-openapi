@@ -2,6 +2,7 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{sync_channel, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -11,7 +12,9 @@ use std::time::Duration;
 use anyhow::Context;
 use openapi_core::error::ApiError;
 use openapi_core::handler::{App, UpstreamForwarder};
-use openapi_http::{build_error_response, dispatch_to_writer, handle_connection, ParsedRequest};
+use openapi_http::{
+    build_error_response, dispatch_to_writer, handle_connection, ParseError, ParsedRequest,
+};
 use openapi_platform::AttestationPlatform;
 use tracing::{info, warn};
 
@@ -268,7 +271,10 @@ where
                             Err(_) => return, // sender dropped
                         }
                     };
-                    handle_stream(stream, &app, &tls);
+                    if catch_unwind(AssertUnwindSafe(|| handle_stream(stream, &app, &tls))).is_err()
+                    {
+                        warn!(worker = i, "connection handler panicked; worker retained");
+                    }
                 }
             }) {
             Ok(_) => live += 1,
@@ -299,7 +305,9 @@ where
                     continue;
                 }
             };
-            handle_stream(stream, &app, &tls);
+            if catch_unwind(AssertUnwindSafe(|| handle_stream(stream, &app, &tls))).is_err() {
+                warn!("connection handler panicked; serial listener retained");
+            }
         }
     } else {
         info!(
@@ -368,7 +376,7 @@ pub fn serve_connection<U, P>(
             }
         };
         total += n;
-        match ParsedRequest::parse(&buffer[..total]) {
+        match ParsedRequest::parse(&buffer[..total], app.config().max_body_bytes) {
             Ok(Some(req)) => {
                 // Request complete — clear arrival idle (same as plain `handle_connection`).
                 // TLS `StreamOwned` does not expose set_*_timeout; use the pre-accept
@@ -403,7 +411,12 @@ pub fn serve_connection<U, P>(
                 }
                 continue;
             }
-            Err(_) => {
+            Err(ParseError::BodyTooLarge) => {
+                let _ = conn.write_all(&build_error_response(ApiError::PayloadTooLarge));
+                let _ = conn.flush();
+                return;
+            }
+            Err(ParseError::Incomplete | ParseError::Invalid(_)) => {
                 let _ = conn.write_all(&build_error_response(ApiError::BadRequest(
                     "malformed request".into(),
                 )));
@@ -524,6 +537,9 @@ mod tests {
         resp
     }
 
+    /// `run_edge_server` sizing is process-global; serialize tests that override it.
+    static SERVER_ENV_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn shed_slot_acquire_releases_on_drop() {
         let c = Arc::new(AtomicU32::new(0));
@@ -606,6 +622,9 @@ mod tests {
 
     #[test]
     fn saturated_queue_returns_http_429() {
+        let _env = SERVER_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         std::env::set_var("OPENAPI_ACCEPT_WORKERS", "1");
         std::env::set_var("OPENAPI_ACCEPT_QUEUE", "1");
         std::env::set_var("OPENAPI_CONN_IDLE_SECS", "30");
@@ -657,6 +676,9 @@ mod tests {
 
     #[test]
     fn per_ip_connection_limit_returns_429() {
+        let _env = SERVER_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         std::env::set_var("OPENAPI_ACCEPT_WORKERS", "4");
         std::env::set_var("OPENAPI_ACCEPT_QUEUE", "4");
         std::env::set_var("OPENAPI_CONN_IDLE_SECS", "30");
@@ -680,11 +702,26 @@ mod tests {
             .unwrap();
         wait_for_listen(addr);
 
-        let holder = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).unwrap();
-        // Give the worker time to accept and acquire the IP slot.
-        thread::sleep(Duration::from_millis(50));
+        // Flush the readiness probe before occupying the single per-IP slot.
+        let mut ready = false;
+        for _ in 0..20 {
+            if http_get(addr, "/healthz").contains("HTTP/1.1 200") {
+                ready = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(ready, "server did not become healthy");
 
-        let resp = http_get(addr, "/healthz");
+        let holder = TcpStream::connect_timeout(&addr, Duration::from_secs(1)).unwrap();
+        let mut resp = String::new();
+        for _ in 0..20 {
+            resp = http_get(addr, "/healthz");
+            if resp.contains("HTTP/1.1 429") {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
         drop(holder);
         std::env::remove_var("OPENAPI_ACCEPT_WORKERS");
         std::env::remove_var("OPENAPI_ACCEPT_QUEUE");
@@ -697,6 +734,9 @@ mod tests {
 
     #[test]
     fn saturated_queue_sheds_without_blocking_accept() {
+        let _env = SERVER_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         std::env::set_var("OPENAPI_ACCEPT_WORKERS", "1");
         std::env::set_var("OPENAPI_ACCEPT_QUEUE", "1");
         std::env::set_var("OPENAPI_CONN_IDLE_SECS", "2");

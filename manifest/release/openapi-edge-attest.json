@@ -1,15 +1,16 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-29T05:05:59Z",
-  "epoch": 28,
+  "published_at": "2026-07-30T09:15:08Z",
+  "epoch": 31,
   "not_after": "2027-07-29T02:35:30Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
   "policy": {
     "reject_debug": true,
     "max_quote_age_ms": 3600000,
-    "require_session_spki_bind": true
+    "require_session_spki_bind": true,
+    "require_runtime_policy_pin": true
   },
   "regions": [
     {
@@ -21,6 +22,7 @@
         {
           "build_version": "0.7.11",
           "code_hash": "6d0808764dbe1112e918bd2737fe34d79d139da7d4f246c5a761ad85a991f11f",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -35,6 +37,7 @@
         {
           "build_version": "0.7.11",
           "code_hash": "6d0808764dbe1112e918bd2737fe34d79d139da7d4f246c5a761ad85a991f11f",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -49,6 +52,7 @@
         {
           "build_version": "0.7.8",
           "code_hash": "d5bbebd2673a4e2276bdb260e4e379ed7bdc799b8adfc0555cacf41db34afb85",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -63,6 +67,7 @@
         {
           "build_version": "0.7.8",
           "code_hash": "d5bbebd2673a4e2276bdb260e4e379ed7bdc799b8adfc0555cacf41db34afb85",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -77,6 +82,7 @@
         {
           "build_version": "0.7.5",
           "code_hash": "f82a650785cbdbf472a590d7de7ccf5192c5269ebdb1d75afd95d73c837e0ad5",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -91,6 +97,7 @@
         {
           "build_version": "0.7.5",
           "code_hash": "f82a650785cbdbf472a590d7de7ccf5192c5269ebdb1d75afd95d73c837e0ad5",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -105,6 +112,7 @@
         {
           "build_version": "0.7.2",
           "code_hash": "af1b5ab4e69671a60f13a00f48132d3dc5440d82e421da4db8c2ae178b8593e9",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -119,6 +127,7 @@
         {
           "build_version": "0.7.2",
           "code_hash": "af1b5ab4e69671a60f13a00f48132d3dc5440d82e421da4db8c2ae178b8593e9",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -133,6 +142,7 @@
         {
           "build_version": "0.7.0",
           "code_hash": "eb845d67be2ec231b9ecbe6b76f82d209fda1a24652cf2ae65776df676ba1fdf",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -147,6 +157,7 @@
         {
           "build_version": "0.7.0",
           "code_hash": "eb845d67be2ec231b9ecbe6b76f82d209fda1a24652cf2ae65776df676ba1fdf",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -161,6 +172,7 @@
         {
           "build_version": "0.6.2",
           "code_hash": "3e9da80523da6a2f59e7f1c3fc681cdc02171cbfe2cb6a84702400458eaff86b",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -175,6 +187,7 @@
         {
           "build_version": "0.6.2",
           "code_hash": "3e9da80523da6a2f59e7f1c3fc681cdc02171cbfe2cb6a84702400458eaff86b",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -189,6 +202,7 @@
         {
           "build_version": "0.6.1",
           "code_hash": "344262c4c7950c7b6795b9c904acb29b50dd01db57787474acdbf55ebb74e8cf",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -203,6 +217,7 @@
         {
           "build_version": "0.6.1",
           "code_hash": "344262c4c7950c7b6795b9c904acb29b50dd01db57787474acdbf55ebb74e8cf",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -217,6 +232,7 @@
         {
           "build_version": "0.6.0",
           "code_hash": "b1ee9413d86f64456997bb71eb7921d9b16cea372029337b327503b08ba21a8b",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -231,6 +247,7 @@
         {
           "build_version": "0.6.0",
           "code_hash": "b1ee9413d86f64456997bb71eb7921d9b16cea372029337b327503b08ba21a8b",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -245,6 +262,7 @@
         {
           "build_version": "0.5.9",
           "code_hash": "45f8832808f2e9c2f419ce62114b8fd967873a16a11be7b21cf05373c0a14fd9",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -259,6 +277,7 @@
         {
           "build_version": "0.5.9",
           "code_hash": "45f8832808f2e9c2f419ce62114b8fd967873a16a11be7b21cf05373c0a14fd9",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -273,6 +292,7 @@
         {
           "build_version": "0.5.8",
           "code_hash": "2c27b3965030406ce87768bed34544e29da6e89d2c406401d62e4cf6eb8c04b1",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -287,6 +307,7 @@
         {
           "build_version": "0.5.8",
           "code_hash": "2c27b3965030406ce87768bed34544e29da6e89d2c406401d62e4cf6eb8c04b1",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -301,6 +322,7 @@
         {
           "build_version": "0.5.7",
           "code_hash": "2c27b3965030406ce87768bed34544e29da6e89d2c406401d62e4cf6eb8c04b1",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -315,6 +337,7 @@
         {
           "build_version": "0.5.4",
           "code_hash": "ad55a2bebee70b38b2b171c02081aeb1d87a4115709a1d5bb4e5b211489f4584",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -329,6 +352,7 @@
         {
           "build_version": "0.5.2",
           "code_hash": "39c687b89a420586fc5d5c95175f697293db05ca9abb8a1445b8066fd37f7c08",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],
@@ -343,6 +367,7 @@
         {
           "build_version": "0.4.5",
           "code_hash": "24ba616539d92c9bc84ae8bd2a55601d06746c5014b0547472887c78fb36213e",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
           "quote_formats": [
             "snp_report"
           ],

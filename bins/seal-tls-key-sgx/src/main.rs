@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
         .nth(2)
         .context("usage: seal-tls-key-sgx <plain-key.pem> <sealed-out.json>")?;
 
-    let profile = load_edge_profile();
+    let profile = load_edge_profile()?;
     assert_dev_host_seal_tool(profile).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let env = load_sgx_edge_env().context("load sgx edge env (need OPENAPI_MRENCLAVE)")?;

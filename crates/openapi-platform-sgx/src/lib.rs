@@ -4,7 +4,11 @@ mod acme_ceremony;
 mod attest;
 mod ceremony_helper;
 mod dcap;
+mod edge_upstream;
 mod env;
+mod gateway_ope_api;
+mod ope_upstream;
+mod ope_wrap;
 mod remote_client;
 mod report;
 mod run;
@@ -14,15 +18,25 @@ mod tls;
 mod tls_key_policy;
 mod upstream;
 
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub use acme_ceremony::{
     assert_acme_ceremony_policy, run_acme_ceremony, seal_from_acme_outcome, AcmeMode,
     HelperChallengeSink, HelperDnsResolver, HelperHttpsRelayTransport,
 };
 pub use attest::SgxAttestationPlatform;
 pub use ceremony_helper::{CeremonyHelperClient, DEFAULT_CEREMONY_HELPER_URL};
+pub use edge_upstream::EdgeUpstream;
 pub use env::{
     load_sgx_edge_env, parse_seal_root_hex, write_dev_catalog, OpenApiAuthMode, SgxEdgeEnv,
 };
+pub use gateway_ope_api::{
+    probe_gateway_ope_api_at_startup, require_gateway_ope_api_healthy, DispatchRequest,
+    DispatchResponse, GatewayOpeApiClient, GatewayOpeApiConfig, GatewayOpeApiError, HealthResponse,
+    InventoryEngine, InventoryResponse, PreassignRequest, PreassignResponse, PreassignTrust,
+};
+pub use ope_upstream::{clear_http_break_glass_enabled, OpeDispatchUpstream};
 pub use remote_client::{spawn_revocation_poller, TcpL0Client};
 pub use run::run;
 pub use seal::{local_mrenclave_hex, SgxSealer, SGX_SEAL_ROOT_LABEL, SGX_TLS_SEAL_LABEL};

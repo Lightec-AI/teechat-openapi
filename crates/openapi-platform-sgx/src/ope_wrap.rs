@@ -1,4 +1,6 @@
-//! Rust OPE encrypt/decrypt helpers for the OpenAPI edge (same crates.io pins as desktop).
+//! Rust OPE encrypt/decrypt helpers for the OpenAPI edge (same crates.io pins as
+//! desktop / `openapi-platform-cvm`). Pure computation — no TLS/network deps, so this
+//! file is portable to the Fortanix SGX target unchanged.
 
 use ope_e2e::{decrypt_response_chunk, encrypt_request, ClientSession, EngineIdentity};
 use ope_envelope::Envelope;

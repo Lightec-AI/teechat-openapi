@@ -12,6 +12,8 @@ anyhow = { workspace = true }
 aes-gcm = { workspace = true }
 # EDP: rustls-rustcrypto (not aws-lc-rs). Same wire as CVM seal-sync.
 attested-mtls-seal-sync = { workspace = true, features = ["rustcrypto"] }
+# PEM path-or-inline load + cert digest helpers (no TLS/crypto backend deps — safe on EDP).
+attested-mtls = { workspace = true }
 base64 = { workspace = true }
 hex = { workspace = true }
 hkdf = { workspace = true }
@@ -30,6 +32,11 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zeroize = { version = "1", features = ["derive"] }
+# F' OPE dispatch (hard cutover, same crates.io pins as CVM/desktop).
+ope-crypto = { workspace = true }
+ope-e2e = { workspace = true }
+ope-envelope = { workspace = true }
+webpki-roots = "0.26"
 
 [target.'cfg(not(target_env = "sgx"))'.dependencies]
 rustls = { workspace = true }

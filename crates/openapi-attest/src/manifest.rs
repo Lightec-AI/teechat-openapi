@@ -45,6 +45,9 @@ pub struct ManifestPolicy {
     pub max_quote_age_ms: u64,
     #[serde(default = "default_true")]
     pub require_session_spki_bind: bool,
+    /// Bind each production allowlist row to the security-critical runtime policy.
+    #[serde(default = "default_true")]
+    pub require_runtime_policy_pin: bool,
 }
 
 fn default_true() -> bool {
@@ -205,7 +208,36 @@ pub fn parse_and_validate_manifest(
             m.not_after
         )));
     }
+    if !m.policy.require_runtime_policy_pin {
+        return Err(AttestError::Manifest(
+            "policy.require_runtime_policy_pin must be true".into(),
+        ));
+    }
+    for region in &m.regions {
+        for rel in &region.active {
+            validate_policy_hash(rel.policy_hash.as_deref()).map_err(|e| {
+                AttestError::Manifest(format!(
+                    "active release {} in region {}: {e}",
+                    rel.build_version, region.region
+                ))
+            })?;
+        }
+    }
     Ok(m)
+}
+
+fn validate_policy_hash(policy_hash: Option<&str>) -> std::result::Result<(), &'static str> {
+    let Some(value) = policy_hash else {
+        return Err("policy_hash required by manifest policy");
+    };
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("policy_hash must be 64 lowercase hexadecimal characters");
+    }
+    Ok(())
 }
 
 pub fn verify_signed_manifest_bytes(bytes: &[u8], sig_hex: &str) -> Result<VerifiedManifest> {
@@ -306,13 +338,14 @@ pub fn find_matching_releases<'a>(
         if !rel.quote_formats.iter().any(|f| f == fmt) {
             continue;
         }
-        if let Some(want) = rel.policy_hash.as_deref() {
-            let Some(got) = policy_hash else {
-                continue;
-            };
-            if !want.eq_ignore_ascii_case(got) {
-                continue;
-            }
+        let Some(want) = rel.policy_hash.as_deref() else {
+            continue;
+        };
+        let Some(got) = policy_hash else {
+            continue;
+        };
+        if !want.eq_ignore_ascii_case(got) {
+            continue;
         }
         if let Some(retired_at) = &rel.retired_at {
             let retired = parse_rfc3339_secs(retired_at)?;
@@ -390,5 +423,17 @@ mod tests {
         let body = br#"{"schema":"teechat-openapi-edge-manifest/v1","key_id":"t","published_at":"2026-07-16T00:00:00Z","epoch":1,"not_after":"2099-01-01T00:00:00Z","policy":{"reject_debug":true,"max_quote_age_ms":3600000},"regions":[{"region":"global","hostnames":["openapi.teechat.ai"],"active":[],"retired":[]}]}"#;
         let sig = sk.sign(body);
         verify_manifest_signature(body, &hex::encode(sig.to_bytes()), &vk).unwrap();
+    }
+
+    #[test]
+    fn release_manifest_requires_policy_pin_on_every_active_row() {
+        let bytes = include_bytes!("../../../manifest/release/openapi-edge-attest.json");
+        let manifest = parse_and_validate_manifest(bytes, Some(PINNED_KEY_ID)).unwrap();
+        assert!(manifest.policy.require_runtime_policy_pin);
+        assert!(manifest
+            .regions
+            .iter()
+            .flat_map(|region| &region.active)
+            .all(|release| release.policy_hash.as_deref().is_some_and(|hash| hash.len() == 64)));
     }
 }

@@ -8,6 +8,8 @@ use openapi_attest::manifest::{
 use openapi_platform::{Measurement, QuoteFormat};
 use rand::rngs::OsRng;
 
+const POLICY_HASH: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+
 fn sample_manifest_json(not_after: &str, launch: &str) -> Vec<u8> {
     format!(
         r#"{{
@@ -19,7 +21,8 @@ fn sample_manifest_json(not_after: &str, launch: &str) -> Vec<u8> {
   "policy": {{
     "reject_debug": true,
     "max_quote_age_ms": 3600000,
-    "require_session_spki_bind": true
+    "require_session_spki_bind": true,
+    "require_runtime_policy_pin": true
   }},
   "regions": [{{
     "region": "global",
@@ -27,6 +30,7 @@ fn sample_manifest_json(not_after: &str, launch: &str) -> Vec<u8> {
     "active": [{{
       "build_version": "0.1.1",
       "code_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "policy_hash": "{POLICY_HASH}",
       "quote_formats": ["snp_report"],
       "measurement": {{
         "kind": "launch_digest",
@@ -69,7 +73,7 @@ fn rejects_unknown_measurement() {
             image_digest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
         },
         QuoteFormat::SnpReport,
-        None,
+        Some(POLICY_HASH),
     )
     .unwrap_err();
     assert!(err.to_string().contains("allowlist"), "{err}");
@@ -90,9 +94,62 @@ fn accepts_allowlisted_release() {
             image_digest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
         },
         QuoteFormat::SnpReport,
-        None,
+        Some(POLICY_HASH),
     )
     .unwrap();
+}
+
+#[test]
+fn rejects_active_release_without_required_policy_hash() {
+    let bytes = sample_manifest_json(
+        "2099-01-01T00:00:00Z",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["regions"][0]["active"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("policy_hash");
+    let bytes = serde_json::to_vec(&value).unwrap();
+    let err = parse_and_validate_manifest(&bytes, Some(PINNED_KEY_ID)).unwrap_err();
+    assert!(err.to_string().contains("policy_hash required"), "{err}");
+}
+
+#[test]
+fn rejects_manifest_policy_opt_out() {
+    let bytes = sample_manifest_json(
+        "2099-01-01T00:00:00Z",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["policy"]["require_runtime_policy_pin"] = serde_json::Value::Bool(false);
+    let bytes = serde_json::to_vec(&value).unwrap();
+    let err = parse_and_validate_manifest(&bytes, Some(PINNED_KEY_ID)).unwrap_err();
+    assert!(
+        err.to_string().contains("require_runtime_policy_pin must be true"),
+        "{err}"
+    );
+}
+
+#[test]
+fn rejects_runtime_policy_hash_mismatch() {
+    let launch = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let bytes = sample_manifest_json("2099-01-01T00:00:00Z", launch);
+    let m = parse_and_validate_manifest(&bytes, Some(PINNED_KEY_ID)).unwrap();
+    let err = find_matching_release(
+        &m,
+        "openapi.teechat.ai",
+        "0.1.1",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        &Measurement::LaunchDigest {
+            launch_digest: launch.into(),
+            image_digest: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".into(),
+        },
+        QuoteFormat::SnpReport,
+        Some("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("policy_hash"), "{err}");
 }
 
 #[test]

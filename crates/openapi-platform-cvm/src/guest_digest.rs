@@ -36,7 +36,10 @@ pub fn read_attested_launch_digest() -> Result<String, PlatformError> {
 
     if let Ok(v) = std::env::var(ATTESTED_DIGEST_ENV) {
         if !v.is_empty() && v != "unknown" {
-            if load_edge_profile().is_prod() {
+            if load_edge_profile()
+                .map_err(|e| PlatformError::Seal(e.to_string()))?
+                .is_prod()
+            {
                 return Err(PlatformError::Seal(
                     "OPENAPI_ATTESTED_LAUNCH_DIGEST is forbidden when OPENAPI_PROFILE=prod; \
                      use snpguest / /dev/sev-guest (OPS-001)"
@@ -173,9 +176,12 @@ mod tests {
     use super::*;
 
     fn with_attested_env(f: impl FnOnce()) {
+        let _env = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _guard = ATTESTED_ENV_TEST_LOCK.lock().unwrap();
         std::env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");
-        std::env::remove_var("OPENAPI_PROFILE");
+        std::env::set_var("OPENAPI_PROFILE", "dev");
         set_test_attested_launch_digest(None);
         f();
         std::env::remove_var("OPENAPI_ATTESTED_LAUNCH_DIGEST");

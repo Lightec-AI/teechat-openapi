@@ -1,24 +1,39 @@
-//! Dial client for TeeChat gateway **F′** privileged OPE API plane.
+//! Dial client for TeeChat gateway **F′** privileged OPE API plane — Fortanix SGX EDP.
 //!
-//! Private listener routes (`GET /v1/ope/api/health`, `POST /v1/ope/dispatch`)
-//! with `Authorization: Bearer` and optional pinned client mTLS (TLS 1.3).
-//! Successful admit stamps gateway-authored `traffic_class=api`.
+//! Private listener routes (`GET /v1/ope/api/health`, `GET /v1/ope/api/inventory`,
+//! `POST /v1/ope/api/preassign`, `POST /v1/ope/dispatch`) with `Authorization: Bearer`
+//! and optional pinned client mTLS (TLS 1.3). Same wire contract as
+//! `openapi-platform-cvm::gateway_ope_api`, but dialed with a raw `TcpStream` +
+//! `rustls` (SGX target: `rustls-rustcrypto` provider) instead of `ureq` — `ureq`'s
+//! TLS backends (`aws-lc-rs` / `ring`) hit `#UD` inside the Fortanix enclave.
+//!
+//! **SGX constraints baked in here:**
+//! - `OPENAPI_GATEWAY_OPE_API_URL` must be `https://IP:port` — no DNS resolver in the
+//!   enclave, and no clear-text fallback for the F′ plane itself (unlike CVM's dev-only
+//!   plain-http option). Use `OPENAPI_UPSTREAM_CLEAR_HTTP=1` to bypass OPE entirely
+//!   (see `edge_upstream::EdgeUpstream`) instead of trying to run F′ over http.
+//! - mTLS client cert/key/CA must be **inline PEM** (`-----BEGIN ...-----`). Path-based
+//!   PEM is rejected up front: `std::fs` is unsupported on Fortanix EDP, so a path would
+//!   otherwise fail confusingly deep inside `attested_mtls::read_pem_maybe`.
 
-use std::io::{Cursor, Read};
+use std::io::{Read, Write};
+use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
 
+use openapi_core::http1_body::{read_response_headers, BodyFraming};
 use openapi_platform::{EdgeProfile, EngineIdentityPins};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::version::TLS13;
 use rustls::{
-    ClientConfig, DigitallySignedStruct, Error as RustlsError, RootCertStore, SignatureScheme,
+    ClientConfig, ClientConnection, DigitallySignedStruct, Error as RustlsError, RootCertStore,
+    SignatureScheme, StreamOwned,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{info, warn};
-use ureq::OrAnyStatus;
 
 const HEALTH_PATH: &str = "/v1/ope/api/health";
 const INVENTORY_PATH: &str = "/v1/ope/api/inventory";
@@ -34,15 +49,15 @@ const HEADER_OPENAPI_KEY_ID: &str = "x-teechat-openapi-key-id";
 /// Env configuration for the edge → gateway OPE API dialer.
 #[derive(Debug, Clone)]
 pub struct GatewayOpeApiConfig {
-    /// Base URL, e.g. `https://10.0.0.2:8791` (no trailing slash required).
+    /// Base URL — `https://IP:port` (SGX: literal IP, no DNS; no trailing slash required).
     pub base_url: String,
     /// Bearer dispatch token (optional during mTLS-only harden).
     pub token: Option<String>,
-    /// Client certificate PEM (path or inline `-----BEGIN`).
+    /// Client certificate PEM — **inline only** on SGX (`-----BEGIN ...`).
     pub client_cert_pem: Option<String>,
-    /// Client private key PEM (path or inline).
+    /// Client private key PEM — **inline only** on SGX.
     pub client_key_pem: Option<String>,
-    /// Optional CA PEM to verify the gateway server cert.
+    /// Optional CA PEM to verify the gateway server cert — **inline only** on SGX.
     pub ca_pem: Option<String>,
     /// Dev-only: skip server certificate verification.
     pub insecure_skip_verify: bool,
@@ -93,7 +108,8 @@ impl GatewayOpeApiConfig {
         ca_pem: Option<String>,
         insecure_skip_verify: bool,
     ) -> Result<Self, GatewayOpeApiError> {
-        // Shared audited PEM/path load + cert/key pairing (attested-mtls TCB).
+        // Shared audited PEM/path load + cert/key pairing (attested-mtls TCB). On SGX we
+        // additionally reject path-based PEM below (std::fs is unsupported on Fortanix EDP).
         let loaded = attested_mtls::load_openapi_client_tls_from_parts(
             &base_url.into(),
             client_cert_pem.as_deref(),
@@ -102,6 +118,33 @@ impl GatewayOpeApiConfig {
             insecure_skip_verify,
         )
         .map_err(|e| GatewayOpeApiError::Config(e.to_string()))?;
+
+        require_ip_https_base_url(&loaded.base_url)?;
+        for (name, raw, loaded_pem) in [
+            (
+                "OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_CERT_PEM",
+                client_cert_pem.as_deref(),
+                loaded.client_cert_pem.as_deref(),
+            ),
+            (
+                "OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_KEY_PEM",
+                client_key_pem.as_deref(),
+                loaded.client_key_pem.as_deref(),
+            ),
+            (
+                "OPENAPI_GATEWAY_OPE_API_TLS_CA_PEM",
+                ca_pem.as_deref(),
+                loaded.ca_pem.as_deref(),
+            ),
+        ] {
+            if loaded_pem.is_some() && !raw.unwrap_or_default().trim().contains("-----BEGIN") {
+                return Err(GatewayOpeApiError::Config(format!(
+                    "{name} must be inline PEM (-----BEGIN...) on SGX; path-based PEM is \
+                     unsupported (std::fs disabled on Fortanix EDP)"
+                )));
+            }
+        }
+
         Ok(Self {
             base_url: loaded.base_url,
             token: token.filter(|s| !s.is_empty()),
@@ -111,16 +154,15 @@ impl GatewayOpeApiConfig {
             insecure_skip_verify: loaded.insecure_skip_verify,
             connect_timeout: Duration::from_secs(10),
             // Match gateway TEECHAT_OPE_UPSTREAM_TIMEOUT_MS default (5m). Override via
-            // OPENAPI_GATEWAY_OPE_API_READ_TIMEOUT_SECS. Short chats were fine at 120s;
-            // long/tool runs hung up as client 502 when the ureq read deadline fired or a
-            // half-closed keep-alive socket was reused (prod CLOSE-WAIT/FIN-WAIT-2).
+            // OPENAPI_GATEWAY_OPE_API_READ_TIMEOUT_SECS.
             read_timeout: duration_secs_from_env("OPENAPI_GATEWAY_OPE_API_READ_TIMEOUT_SECS", 300),
             engine_identity_pins: EngineIdentityPins::default(),
             epoch_clock_skew: Duration::from_secs(300),
         })
     }
 
-    /// Reject `INSECURE_SKIP_VERIFY` and cleartext F′ URL under prod (OPE-006).
+    /// Reject `INSECURE_SKIP_VERIFY` in prod (OPE-006) and enforce `https://IP:port` always
+    /// (SGX has no clear-text F′ path; use `OPENAPI_UPSTREAM_CLEAR_HTTP` to bypass OPE instead).
     pub fn validate_for_profile(&self, profile: EdgeProfile) -> Result<(), GatewayOpeApiError> {
         if self.insecure_skip_verify && profile.is_prod() {
             return Err(GatewayOpeApiError::Config(
@@ -128,75 +170,144 @@ impl GatewayOpeApiConfig {
                     .into(),
             ));
         }
-        if profile.is_prod() && !self.base_url.starts_with("https://") {
-            return Err(GatewayOpeApiError::Config(
-                "OPENAPI_GATEWAY_OPE_API_URL must use https:// when OPENAPI_PROFILE=prod".into(),
-            ));
-        }
         if profile.is_prod() && self.engine_identity_pins.is_empty() {
             return Err(GatewayOpeApiError::Config(
                 "OPENAPI_ENGINE_IDENTITY_PINS_JSON required in prod".into(),
             ));
         }
+        require_ip_https_base_url(&self.base_url)?;
         Ok(())
     }
 }
 
-/// Dialer for gateway F′ OPE API.
+/// Enforce `https://IP:port` — no DNS resolver in the enclave, no clear-text F′ dial.
+fn require_ip_https_base_url(base_url: &str) -> Result<(), GatewayOpeApiError> {
+    parse_https_ip_endpoint(base_url).map(|_| ())
+}
+
+fn parse_https_ip_endpoint(base_url: &str) -> Result<(String, u16), GatewayOpeApiError> {
+    let url = base_url.trim().trim_end_matches('/');
+    let rest = url.strip_prefix("https://").ok_or_else(|| {
+        GatewayOpeApiError::Config(
+            "OPENAPI_GATEWAY_OPE_API_URL must be https://IP:port (SGX: no DNS in enclave, \
+             no clear-text F' dial)"
+                .into(),
+        )
+    })?;
+    let (host, port_str) = rest.rsplit_once(':').ok_or_else(|| {
+        GatewayOpeApiError::Config("OPENAPI_GATEWAY_OPE_API_URL must include an explicit port".into())
+    })?;
+    let port: u16 = port_str
+        .parse()
+        .map_err(|_| GatewayOpeApiError::Config(format!("invalid port in OPENAPI_GATEWAY_OPE_API_URL: {port_str}")))?;
+    host.parse::<IpAddr>().map_err(|_| {
+        GatewayOpeApiError::Config(format!(
+            "OPENAPI_GATEWAY_OPE_API_URL host `{host}` must be a literal IP address (no DNS in SGX enclave)"
+        ))
+    })?;
+    if host.is_empty() {
+        return Err(GatewayOpeApiError::Config(
+            "OPENAPI_GATEWAY_OPE_API_URL host is empty".into(),
+        ));
+    }
+    Ok((host.to_string(), port))
+}
+
+/// Dialer for gateway F′ OPE API — raw `TcpStream` + rustls (no ureq, no aws-lc/ring on SGX).
 ///
-/// Idle keep-alive is **disabled** (`max_idle_connections=0`): reusing half-closed
-/// sockets after gateway VIP/TLS teardown surfaced as client `502 socket hang up`
-/// with edge CLOSE-WAIT and gateway FIN-WAIT-2 on `:8791`/`:8792`.
-#[derive(Debug, Clone)]
+/// Every call opens a fresh connection with `Connection: close` (no idle pooling): matches
+/// CVM's `max_idle_connections(0)` intent — half-closed sockets after gateway VIP/TLS teardown
+/// otherwise surface as client `502 socket hang up`.
+#[derive(Clone)]
 pub struct GatewayOpeApiClient {
-    base_url: String,
+    host: String,
+    port: u16,
     token: Option<String>,
-    agent: ureq::Agent,
+    tls_config: Arc<ClientConfig>,
+    connect_timeout: Duration,
+    read_timeout: Duration,
 }
 
 impl GatewayOpeApiClient {
     pub fn try_new(config: GatewayOpeApiConfig) -> Result<Self, GatewayOpeApiError> {
-        let mut builder = ureq::AgentBuilder::new()
-            .timeout_connect(config.connect_timeout)
-            .timeout_read(config.read_timeout)
-            .max_idle_connections(0)
-            .max_idle_connections_per_host(0);
-
-        if config.base_url.starts_with("https://") {
-            let tls = build_client_tls_config(&config)?;
-            builder = builder.tls_config(tls);
-        }
-
+        let (host, port) = parse_https_ip_endpoint(&config.base_url)?;
+        let tls_config = build_client_tls_config(&config)?;
         Ok(Self {
-            base_url: config.base_url,
+            host,
+            port,
             token: config.token,
-            agent: builder.build(),
+            tls_config,
+            connect_timeout: config.connect_timeout,
+            read_timeout: config.read_timeout,
         })
     }
 
-    fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base_url)
+    fn connect(&self) -> Result<StreamOwned<ClientConnection, TcpStream>, GatewayOpeApiError> {
+        let ip: IpAddr = self
+            .host
+            .parse()
+            .map_err(|_| GatewayOpeApiError::Config(format!("invalid host `{}`", self.host)))?;
+        let addr = SocketAddr::new(ip, self.port);
+        let tcp = TcpStream::connect_timeout(&addr, self.connect_timeout)
+            .map_err(|e| GatewayOpeApiError::Transport(format!("connect {addr}: {e}")))?;
+        let _ = tcp.set_read_timeout(Some(self.read_timeout));
+        let _ = tcp.set_write_timeout(Some(self.connect_timeout));
+        let _ = tcp.set_nodelay(true);
+        let server_name = ServerName::try_from(self.host.as_str())
+            .map_err(|e| GatewayOpeApiError::Tls(format!("server name: {e}")))?
+            .to_owned();
+        let conn = ClientConnection::new(self.tls_config.clone(), server_name)
+            .map_err(|e| GatewayOpeApiError::Tls(e.to_string()))?;
+        Ok(StreamOwned::new(conn, tcp))
     }
 
-    fn apply_auth(&self, req: ureq::Request) -> ureq::Request {
+    fn auth_headers(&self) -> Vec<(String, String)> {
         match &self.token {
-            Some(tok) => req.set("Authorization", &format!("Bearer {tok}")),
-            None => req,
+            Some(tok) => vec![("Authorization".into(), format!("Bearer {tok}"))],
+            None => Vec::new(),
         }
+    }
+
+    fn exec(
+        &self,
+        method: &str,
+        path: &str,
+        headers: Vec<(String, String)>,
+        body: Option<&[u8]>,
+    ) -> Result<
+        (
+            u16,
+            Vec<(String, String)>,
+            FramedBodyReader<StreamOwned<ClientConnection, TcpStream>>,
+        ),
+        GatewayOpeApiError,
+    > {
+        let mut stream = self.connect()?;
+        write_request(&mut stream, &self.host, method, path, &headers, body)?;
+        let (status, headers_text, framing) = read_response_headers(&mut stream)
+            .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
+        let header_pairs = parse_header_pairs(&headers_text);
+        Ok((status, header_pairs, FramedBodyReader::new(stream, framing)))
+    }
+
+    fn exec_buffered(
+        &self,
+        method: &str,
+        path: &str,
+        headers: Vec<(String, String)>,
+        body: Option<&[u8]>,
+    ) -> Result<(u16, String), GatewayOpeApiError> {
+        let (status, _headers, mut reader) = self.exec(method, path, headers, body)?;
+        let mut buf = Vec::new();
+        reader
+            .read_to_end(&mut buf)
+            .map_err(|e| GatewayOpeApiError::Transport(format!("read body: {e}")))?;
+        Ok((status, String::from_utf8_lossy(&buf).into_owned()))
     }
 
     /// `GET /v1/ope/api/health`
     pub fn health(&self) -> Result<HealthResponse, GatewayOpeApiError> {
-        let url = self.url(HEALTH_PATH);
-        let resp = self
-            .apply_auth(self.agent.get(&url))
-            .call()
-            .or_any_status()
-            .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
-        let status = resp.status();
-        let text = resp
-            .into_string()
-            .map_err(|e| GatewayOpeApiError::Transport(format!("read body: {e}")))?;
+        let (status, text) = self.exec_buffered("GET", HEALTH_PATH, self.auth_headers(), None)?;
         if status != 200 {
             return Err(GatewayOpeApiError::Http {
                 status,
@@ -209,19 +320,11 @@ impl GatewayOpeApiClient {
     /// `GET /v1/ope/api/inventory?key_set=`
     pub fn inventory(&self, key_set: &str) -> Result<InventoryResponse, GatewayOpeApiError> {
         let ks = key_set.trim();
-        let mut url = self.url(INVENTORY_PATH);
+        let mut path = INVENTORY_PATH.to_string();
         if !ks.is_empty() {
-            url.push_str(&format!("?key_set={}", urlencoding_minimal(ks)));
+            path.push_str(&format!("?key_set={}", urlencoding_minimal(ks)));
         }
-        let resp = self
-            .apply_auth(self.agent.get(&url))
-            .call()
-            .or_any_status()
-            .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
-        let status = resp.status();
-        let text = resp
-            .into_string()
-            .map_err(|e| GatewayOpeApiError::Transport(format!("read body: {e}")))?;
+        let (status, text) = self.exec_buffered("GET", &path, self.auth_headers(), None)?;
         if status != 200 {
             return Err(GatewayOpeApiError::Http {
                 status,
@@ -241,19 +344,11 @@ impl GatewayOpeApiClient {
                 "preassign requires non-empty engine_id".into(),
             ));
         }
-        let url = self.url(PREASSIGN_PATH);
         let body =
             serde_json::to_vec(req).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))?;
-        let resp = self
-            .apply_auth(self.agent.post(&url))
-            .set("Content-Type", "application/json")
-            .send_bytes(&body)
-            .or_any_status()
-            .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
-        let status = resp.status();
-        let text = resp
-            .into_string()
-            .map_err(|e| GatewayOpeApiError::Transport(format!("read body: {e}")))?;
+        let mut headers = self.auth_headers();
+        headers.push(("Content-Type".into(), "application/json".into()));
+        let (status, text) = self.exec_buffered("POST", PREASSIGN_PATH, headers, Some(&body))?;
         if status != 200 {
             return Err(GatewayOpeApiError::Http {
                 status,
@@ -288,18 +383,16 @@ impl GatewayOpeApiClient {
                 "dispatch requires non-empty engine_id".into(),
             ));
         }
-        let url = self.url(DISPATCH_PATH);
-        let mut ureq_req = self
-            .apply_auth(self.agent.post(&url))
-            .set("Content-Type", "application/json")
-            .set(HEADER_ENGINE_ID, req.engine_id.trim());
+        let mut headers = self.auth_headers();
+        headers.push(("Content-Type".into(), "application/json".into()));
+        headers.push((HEADER_ENGINE_ID.into(), req.engine_id.trim().to_string()));
         if let Some(cid) = req
             .conversation_id
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            ureq_req = ureq_req.set(HEADER_CONVERSATION_ID, cid);
+            headers.push((HEADER_CONVERSATION_ID.into(), cid.to_string()));
         }
         if let Some(epoch) = req
             .ephemeral_epoch
@@ -307,9 +400,9 @@ impl GatewayOpeApiClient {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            ureq_req = ureq_req.set(HEADER_EPHEMERAL_EPOCH, epoch);
+            headers.push((HEADER_EPHEMERAL_EPOCH.into(), epoch.to_string()));
         } else {
-            ureq_req = ureq_req.set(HEADER_EPHEMERAL_EPOCH, "0");
+            headers.push((HEADER_EPHEMERAL_EPOCH.into(), "0".into()));
         }
         if let Some(key_id) = req
             .openapi_key_id
@@ -317,7 +410,7 @@ impl GatewayOpeApiClient {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            ureq_req = ureq_req.set(HEADER_OPENAPI_KEY_ID, key_id);
+            headers.push((HEADER_OPENAPI_KEY_ID.into(), key_id.to_string()));
         }
         if let Some(assign_id) = req
             .assign_id
@@ -325,22 +418,169 @@ impl GatewayOpeApiClient {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            ureq_req = ureq_req.set(HEADER_ASSIGN_ID, assign_id);
+            headers.push((HEADER_ASSIGN_ID.into(), assign_id.to_string()));
         }
 
-        let resp = ureq_req
-            .send_bytes(&req.body)
-            .or_any_status()
-            .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
-        let status = resp.status();
-        let headers: Vec<(String, String)> = resp
-            .headers_names()
-            .into_iter()
-            .filter_map(|name| resp.header(&name).map(|v| (name, v.to_string())))
-            .collect();
-        let reader = resp.into_reader();
-        Ok((status, headers, Box::new(reader)))
+        let (status, headers_out, reader) =
+            self.exec("POST", DISPATCH_PATH, headers, Some(&req.body))?;
+        Ok((status, headers_out, Box::new(reader)))
     }
+}
+
+fn write_request(
+    stream: &mut StreamOwned<ClientConnection, TcpStream>,
+    host: &str,
+    method: &str,
+    path: &str,
+    headers: &[(String, String)],
+    body: Option<&[u8]>,
+) -> Result<(), GatewayOpeApiError> {
+    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n");
+    for (k, v) in headers {
+        req.push_str(k);
+        req.push_str(": ");
+        req.push_str(v);
+        req.push_str("\r\n");
+    }
+    if let Some(b) = body {
+        req.push_str(&format!("Content-Length: {}\r\n", b.len()));
+    }
+    req.push_str("Connection: close\r\n\r\n");
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
+    if let Some(b) = body {
+        stream
+            .write_all(b)
+            .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
+    }
+    stream
+        .flush()
+        .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))
+}
+
+fn parse_header_pairs(headers_text: &str) -> Vec<(String, String)> {
+    headers_text
+        .lines()
+        .skip(1) // status line
+        .filter_map(|l| {
+            let l = l.trim_end_matches('\r');
+            let (k, v) = l.split_once(':')?;
+            Some((k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect()
+}
+
+/// Incremental HTTP/1.1 body reader honoring `BodyFraming` over an arbitrary `Read`
+/// (self-contained: `openapi_core::http1_body`'s chunked/content-length copiers are
+/// one-shot `copy_body` helpers, not a streaming `Read` impl — this crate needs the
+/// latter for `dispatch_reader`'s SSE/ndjson bridging).
+struct FramedBodyReader<R: Read> {
+    inner: R,
+    state: FramedState,
+}
+
+enum FramedState {
+    ContentLength(usize),
+    UntilClose,
+    Chunked { remaining: usize, done: bool },
+}
+
+impl<R: Read> FramedBodyReader<R> {
+    fn new(inner: R, framing: BodyFraming) -> Self {
+        let state = match framing {
+            BodyFraming::ContentLength(n) => FramedState::ContentLength(n),
+            BodyFraming::UntilClose => FramedState::UntilClose,
+            BodyFraming::Chunked => FramedState::Chunked {
+                remaining: 0,
+                done: false,
+            },
+        };
+        Self { inner, state }
+    }
+}
+
+impl<R: Read> Read for FramedBodyReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        match &mut self.state {
+            FramedState::ContentLength(remaining) => {
+                if *remaining == 0 {
+                    return Ok(0);
+                }
+                let cap = buf.len().min(*remaining);
+                let n = self.inner.read(&mut buf[..cap])?;
+                *remaining -= n;
+                Ok(n)
+            }
+            FramedState::UntilClose => self.inner.read(buf),
+            FramedState::Chunked { remaining, done } => {
+                if *done {
+                    return Ok(0);
+                }
+                if *remaining == 0 {
+                    let size = read_chunk_size(&mut self.inner)?;
+                    if size == 0 {
+                        consume_line(&mut self.inner)?; // trailing CRLF after "0"
+                        *done = true;
+                        return Ok(0);
+                    }
+                    *remaining = size;
+                }
+                let cap = buf.len().min(*remaining);
+                let n = self.inner.read(&mut buf[..cap])?;
+                if n == 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "upstream closed mid-chunk",
+                    ));
+                }
+                *remaining -= n;
+                if *remaining == 0 {
+                    consume_line(&mut self.inner)?; // CRLF terminating this chunk's data
+                }
+                Ok(n)
+            }
+        }
+    }
+}
+
+fn read_line_bytes<R: Read>(r: &mut R) -> std::io::Result<Vec<u8>> {
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        let n = r.read(&mut byte)?;
+        if n == 0 {
+            break;
+        }
+        line.push(byte[0]);
+        if line.len() >= 2 && line[line.len() - 2..] == *b"\r\n" {
+            line.truncate(line.len() - 2);
+            break;
+        }
+        if line.len() > 8192 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "chunk header line too long",
+            ));
+        }
+    }
+    Ok(line)
+}
+
+fn read_chunk_size<R: Read>(r: &mut R) -> std::io::Result<usize> {
+    let line = read_line_bytes(r)?;
+    let s = String::from_utf8_lossy(&line);
+    let size_str = s.split(';').next().unwrap_or("").trim();
+    usize::from_str_radix(size_str, 16)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("invalid chunk size: {e}")))
+}
+
+fn consume_line<R: Read>(r: &mut R) -> std::io::Result<()> {
+    let _ = read_line_bytes(r)?;
+    Ok(())
 }
 
 /// Gateway `GET /v1/ope/api/health` JSON body.
@@ -555,15 +795,31 @@ fn urlencoding_minimal(s: &str) -> String {
     out
 }
 
+/// EDP: `rustls-rustcrypto` (never ring/aws-lc-rs — `#UD` inside Fortanix enclaves).
+/// Host (`cargo check` on non-sgx targets): `aws-lc-rs`, matching `TlsConfig::install_crypto_provider`.
+#[cfg(target_env = "sgx")]
+fn client_crypto_provider() -> Arc<CryptoProvider> {
+    Arc::new(rustls_rustcrypto::provider())
+}
+
+#[cfg(not(target_env = "sgx"))]
+fn client_crypto_provider() -> Arc<CryptoProvider> {
+    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+}
+
 fn build_client_tls_config(
     config: &GatewayOpeApiConfig,
 ) -> Result<Arc<ClientConfig>, GatewayOpeApiError> {
-    let builder = ClientConfig::builder_with_protocol_versions(&[&TLS13]);
+    let provider = client_crypto_provider();
+    let algorithms = provider.signature_verification_algorithms;
+    let builder = ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&TLS13])
+        .map_err(|e| GatewayOpeApiError::Tls(e.to_string()))?;
 
     let builder = if config.insecure_skip_verify {
         builder
             .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipServerVerify))
+            .with_custom_certificate_verifier(Arc::new(SkipServerVerify { algorithms }))
     } else {
         let mut roots = RootCertStore::empty();
         if let Some(ca) = &config.ca_pem {
@@ -599,13 +855,13 @@ fn build_client_tls_config(
 }
 
 fn load_certs_pem(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, GatewayOpeApiError> {
-    rustls_pemfile::certs(&mut Cursor::new(pem))
+    rustls_pemfile::certs(&mut std::io::Cursor::new(pem))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| GatewayOpeApiError::Tls(format!("parse cert PEM: {e}")))
 }
 
 fn load_private_key_pem(pem: &[u8]) -> Result<PrivateKeyDer<'static>, GatewayOpeApiError> {
-    rustls_pemfile::private_key(&mut Cursor::new(pem))
+    rustls_pemfile::private_key(&mut std::io::Cursor::new(pem))
         .map_err(|e| GatewayOpeApiError::Tls(format!("parse key PEM: {e}")))?
         .ok_or_else(|| GatewayOpeApiError::Tls("missing private key in PEM".into()))
 }
@@ -642,7 +898,9 @@ fn truncate_body(s: &str) -> String {
 }
 
 #[derive(Debug)]
-struct SkipServerVerify;
+struct SkipServerVerify {
+    algorithms: WebPkiSupportedAlgorithms,
+}
 
 impl ServerCertVerifier for SkipServerVerify {
     fn verify_server_cert(
@@ -662,12 +920,7 @@ impl ServerCertVerifier for SkipServerVerify {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, RustlsError> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
-        )
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.algorithms)
     }
 
     fn verify_tls13_signature(
@@ -676,27 +929,18 @@ impl ServerCertVerifier for SkipServerVerify {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, RustlsError> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &rustls::crypto::aws_lc_rs::default_provider().signature_verification_algorithms,
-        )
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.algorithms)
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        rustls::crypto::aws_lc_rs::default_provider()
-            .signature_verification_algorithms
-            .supported_schemes()
+        self.algorithms.supported_schemes()
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_env = "sgx")))]
 mod tests {
     use super::*;
     use std::fs;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
     use std::thread;
 
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -706,6 +950,11 @@ mod tests {
     }
 
     fn ensure_crypto() {
+        // Owned `CryptoProvider` (not the `Arc` from `client_crypto_provider()`) — `install_default`
+        // takes `self` by value. Mirrors `TlsConfig::install_crypto_provider`'s target split.
+        #[cfg(target_env = "sgx")]
+        let _ = rustls_rustcrypto::provider().install_default();
+        #[cfg(not(target_env = "sgx"))]
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     }
 
@@ -730,90 +979,6 @@ mod tests {
         );
     }
 
-    fn serve_http_once(status_line: &'static str, body: &'static str) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
-            let mut buf = [0u8; 8192];
-            let n = stream.read(&mut buf).unwrap_or(0);
-            let req = String::from_utf8_lossy(&buf[..n]);
-            assert!(
-                req.contains("Authorization: Bearer test-token"),
-                "missing bearer: {req}"
-            );
-            let resp = format!(
-                "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.write_all(resp.as_bytes());
-        });
-        format!("http://{addr}")
-    }
-
-    fn serve_dispatch_once() -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
-            let req = read_http_request(&mut stream);
-            assert!(req.starts_with("POST /v1/ope/dispatch"));
-            assert!(req.to_ascii_lowercase().contains("x-ope-engine-id: eng-1"));
-            assert!(
-                req.to_ascii_lowercase()
-                    .contains("x-teechat-openapi-key-id: tcak_bill01"),
-                "missing openapi key_id header: {req}"
-            );
-            assert!(
-                req.to_ascii_lowercase()
-                    .contains("x-ope-assign-id: assign-abc"),
-                "missing assign_id header: {req}"
-            );
-            assert!(req.contains("Authorization: Bearer test-token"));
-            let body = br#"{"ok":true}"#;
-            let resp = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-OPE-Traffic-Class: api\r\nX-OPE-Request-Id: req-1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                std::str::from_utf8(body).unwrap()
-            );
-            let _ = stream.write_all(resp.as_bytes());
-            let _ = stream.flush();
-        });
-        format!("http://{addr}")
-    }
-
-    /// Read one HTTP/1.1 request including body (Content-Length).
-    fn read_http_request(stream: &mut impl Read) -> String {
-        let mut buf = Vec::new();
-        let mut tmp = [0u8; 4096];
-        loop {
-            let n = stream.read(&mut tmp).expect("read");
-            if n == 0 {
-                break;
-            }
-            buf.extend_from_slice(&tmp[..n]);
-            if let Some(header_end) = find_header_end(&buf) {
-                let headers = std::str::from_utf8(&buf[..header_end]).unwrap_or("");
-                let content_len = headers
-                    .lines()
-                    .find_map(|l| {
-                        let l = l.to_ascii_lowercase();
-                        l.strip_prefix("content-length:")
-                            .map(|v| v.trim().parse::<usize>().unwrap_or(0))
-                    })
-                    .unwrap_or(0);
-                if buf.len() >= header_end + content_len {
-                    break;
-                }
-            }
-        }
-        String::from_utf8_lossy(&buf).into_owned()
-    }
-
-    fn find_header_end(buf: &[u8]) -> Option<usize> {
-        buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4)
-    }
-
     #[test]
     fn from_env_none_when_url_unset() {
         let _g = env_lock();
@@ -835,17 +1000,37 @@ mod tests {
     }
 
     #[test]
-    fn from_env_reads_pem_from_path() {
+    fn rejects_dns_name_host() {
         let _g = env_lock();
         clear_ope_env();
-        ensure_crypto();
-        let dir = std::env::temp_dir().join(format!("ope-api-pem-{}", std::process::id()));
+        std::env::set_var("OPENAPI_GATEWAY_OPE_API_URL", "https://gateway.example.com:8791");
+        let err = GatewayOpeApiConfig::from_env().unwrap_err();
+        assert!(matches!(err, GatewayOpeApiError::Config(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("literal IP"), "{msg}");
+        clear_ope_env();
+    }
+
+    #[test]
+    fn rejects_clear_http_url() {
+        let _g = env_lock();
+        clear_ope_env();
+        std::env::set_var("OPENAPI_GATEWAY_OPE_API_URL", "http://10.0.0.2:8791");
+        let err = GatewayOpeApiConfig::from_env().unwrap_err();
+        assert!(matches!(err, GatewayOpeApiError::Config(_)));
+        clear_ope_env();
+    }
+
+    #[test]
+    fn rejects_path_based_pem_on_sgx() {
+        let _g = env_lock();
+        clear_ope_env();
+        let dir = std::env::temp_dir().join(format!("ope-api-sgx-pem-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let cert_path = dir.join("client.crt");
         let key_path = dir.join("client.key");
-        let (cert_pem, key_pem) = self_signed_client_pem();
-        fs::write(&cert_path, &cert_pem).unwrap();
-        fs::write(&key_path, &key_pem).unwrap();
+        fs::write(&cert_path, "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n").unwrap();
+        fs::write(&key_path, "-----BEGIN PRIVATE KEY-----\nAA==\n-----END PRIVATE KEY-----\n").unwrap();
 
         std::env::set_var("OPENAPI_GATEWAY_OPE_API_URL", "https://127.0.0.1:8791");
         std::env::set_var(
@@ -856,20 +1041,9 @@ mod tests {
             "OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_KEY_PEM",
             key_path.to_str().unwrap(),
         );
-        // Self-signed: pin the same cert as CA so we do not need skip-verify.
-        std::env::set_var(
-            "OPENAPI_GATEWAY_OPE_API_TLS_CA_PEM",
-            cert_path.to_str().unwrap(),
-        );
-
-        let cfg = GatewayOpeApiConfig::from_env().unwrap().unwrap();
-        assert!(cfg
-            .client_cert_pem
-            .as_ref()
-            .unwrap()
-            .contains("BEGIN CERTIFICATE"));
-        assert!(cfg.client_key_pem.as_ref().unwrap().contains("BEGIN"));
-        GatewayOpeApiClient::try_new(cfg).expect("client builds with path PEMs");
+        let err = GatewayOpeApiConfig::from_env().unwrap_err();
+        assert!(matches!(err, GatewayOpeApiError::Config(_)));
+        assert!(err.to_string().contains("inline PEM"), "{err}");
 
         clear_ope_env();
         let _ = fs::remove_dir_all(dir);
@@ -894,26 +1068,6 @@ mod tests {
     }
 
     #[test]
-    fn prod_rejects_http_f_prime_url() {
-        let cfg = GatewayOpeApiConfig::from_parts(
-            "http://10.0.0.2:8791",
-            Some("tok".into()),
-            None,
-            None,
-            None,
-            false,
-        )
-        .unwrap();
-        let err = cfg
-            .validate_for_profile(EdgeProfile::Prod)
-            .expect_err("must reject http in prod");
-        assert!(matches!(err, GatewayOpeApiError::Config(_)));
-        let msg = err.to_string();
-        assert!(msg.contains("https://"), "{msg}");
-        assert!(cfg.validate_for_profile(EdgeProfile::Dev).is_ok());
-    }
-
-    #[test]
     fn cert_without_key_rejected() {
         let err = GatewayOpeApiConfig::from_parts(
             "https://10.0.0.2:8791",
@@ -927,61 +1081,93 @@ mod tests {
         assert!(matches!(err, GatewayOpeApiError::Config(_)));
     }
 
-    #[test]
-    fn health_parses_gateway_shape() {
-        ensure_crypto();
-        let base = serve_http_once(
-            "200 OK",
-            r#"{"ok":true,"plane":"ope_api","traffic_class_author":"api","auth":"bearer"}"#,
-        );
-        let cfg = GatewayOpeApiConfig::from_parts(
-            base,
-            Some("test-token".into()),
-            None,
-            None,
-            None,
-            false,
-        )
-        .unwrap();
-        let client = GatewayOpeApiClient::try_new(cfg).unwrap();
-        let h = client.health().unwrap();
-        assert!(h.ok);
-        assert_eq!(h.plane, "ope_api");
-        assert_eq!(h.traffic_class_author, "api");
-        assert_eq!(h.auth.as_deref(), Some("bearer"));
+    fn serve_dispatch_once(fixtures: &MtlsFixtures) -> String {
+        let (server_certs, server_key, client_ca) = fixtures.server_material();
+        let mut root = RootCertStore::empty();
+        root.add(client_ca).unwrap();
+        let client_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root))
+            .build()
+            .expect("client verifier");
+        let server_config = rustls::ServerConfig::builder_with_provider(client_crypto_provider())
+            .with_protocol_versions(&[&TLS13])
+            .expect("protocol versions")
+            .with_client_cert_verifier(client_verifier)
+            .with_single_cert(server_certs, server_key)
+            .expect("server config");
+        let server_config = Arc::new(server_config);
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        thread::spawn(move || {
+            let (tcp, _) = listener.accept().expect("accept");
+            tcp.set_read_timeout(Some(Duration::from_secs(5))).ok();
+            tcp.set_write_timeout(Some(Duration::from_secs(5))).ok();
+            let conn = rustls::ServerConnection::new(server_config).expect("conn");
+            let mut tls = StreamOwned::new(conn, tcp);
+            let req = read_full_request(&mut tls);
+            assert!(req.starts_with("POST /v1/ope/dispatch"));
+            assert!(req.to_ascii_lowercase().contains("x-ope-engine-id: eng-1"));
+            assert!(
+                req.to_ascii_lowercase()
+                    .contains("x-teechat-openapi-key-id: tcak_bill01"),
+                "missing openapi key_id header: {req}"
+            );
+            assert!(
+                req.to_ascii_lowercase()
+                    .contains("x-ope-assign-id: assign-abc"),
+                "missing assign_id header: {req}"
+            );
+            assert!(req.contains("Authorization: Bearer test-token"));
+            let body = br#"{"ok":true}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-OPE-Traffic-Class: api\r\nX-OPE-Request-Id: req-1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                std::str::from_utf8(body).unwrap()
+            );
+            let _ = tls.write_all(resp.as_bytes());
+            let _ = tls.flush();
+        });
+        format!("https://{addr}")
+    }
+
+    fn read_full_request(stream: &mut impl Read) -> String {
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 4096];
+        loop {
+            let n = stream.read(&mut tmp).expect("read");
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(header_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let headers = std::str::from_utf8(&buf[..header_end]).unwrap_or("");
+                let content_len = headers
+                    .lines()
+                    .find_map(|l| {
+                        let l = l.to_ascii_lowercase();
+                        l.strip_prefix("content-length:")
+                            .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                    })
+                    .unwrap_or(0);
+                if buf.len() >= header_end + 4 + content_len {
+                    break;
+                }
+            }
+        }
+        String::from_utf8_lossy(&buf).into_owned()
     }
 
     #[test]
-    fn health_maps_unauthorized() {
+    fn mtls_dispatch_against_local_rustls_server() {
         ensure_crypto();
-        let base = serve_http_once(
-            "401 Unauthorized",
-            r#"{"error":{"message":"Unauthorized","code":"missing_bearer"}}"#,
-        );
+        let fixtures = MtlsFixtures::generate();
+        let base = serve_dispatch_once(&fixtures);
         let cfg = GatewayOpeApiConfig::from_parts(
             base,
             Some("test-token".into()),
-            None,
-            None,
-            None,
-            false,
-        )
-        .unwrap();
-        let client = GatewayOpeApiClient::try_new(cfg).unwrap();
-        let err = client.health().expect_err("must fail");
-        assert!(matches!(err, GatewayOpeApiError::Http { status: 401, .. }));
-    }
-
-    #[test]
-    fn dispatch_returns_status_headers_body() {
-        ensure_crypto();
-        let base = serve_dispatch_once();
-        let cfg = GatewayOpeApiConfig::from_parts(
-            base,
-            Some("test-token".into()),
-            None,
-            None,
-            None,
+            Some(fixtures.client_cert_pem.clone()),
+            Some(fixtures.client_key_pem.clone()),
+            Some(fixtures.ca_pem.clone()),
             false,
         )
         .unwrap();
@@ -1002,130 +1188,6 @@ mod tests {
         assert_eq!(resp.body, br#"{"ok":true}"#);
     }
 
-    #[test]
-    fn inventory_and_preassign_roundtrip() {
-        ensure_crypto();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        thread::spawn(move || {
-            for _ in 0..2 {
-                let (mut stream, _) = listener.accept().unwrap();
-                let req = read_http_request(&mut stream);
-                let (status_line, body): (&str, &str) = if req
-                    .starts_with("GET /v1/ope/api/inventory")
-                {
-                    assert!(req.contains("key_set=api"));
-                    assert!(req.contains("Authorization: Bearer test-token"));
-                    (
-                        "200 OK",
-                        r#"{"matrix_default":"*-*","key_set":"api","engines":[{"engine_id":"eng-1","engine_set":"shared","models":["m1"],"healthy":true,"ready_sessions":2}]}"#,
-                    )
-                } else if req.starts_with("POST /v1/ope/api/preassign") {
-                    assert!(req.contains("Authorization: Bearer test-token"));
-                    assert!(req.contains("eng-1"));
-                    (
-                        "200 OK",
-                        r#"{"assign_id":"a1","engine_id":"eng-1","engine_set":"shared","key_set":"api","openapi_key_id":"tcak_test","expires_at_ms":4102444800000,"ttl_ms":15000,"trust":{"engine_id":"eng-1","epoch_id":"ep1","not_before":"2026-07-30T08:00:00.000Z","not_after":"2026-07-30T10:00:00.000Z","hybrid":{"kex":"X25519MLKEM768","mlkem_encapsulation_key":"aa","x25519_public":"bb"},"identity":{"ed25519_public":"cc","identity_signature":"dd"}}}"#,
-                    )
-                } else {
-                    panic!("unexpected req: {req}");
-                };
-                let resp = format!(
-                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(resp.as_bytes());
-            }
-        });
-        let base = format!("http://{addr}");
-        let cfg = GatewayOpeApiConfig::from_parts(
-            base,
-            Some("test-token".into()),
-            None,
-            None,
-            None,
-            false,
-        )
-        .unwrap();
-        let client = GatewayOpeApiClient::try_new(cfg).unwrap();
-        let inv = client.inventory("api").unwrap();
-        assert_eq!(inv.engines.len(), 1);
-        assert_eq!(inv.engines[0].engine_id, "eng-1");
-        assert_eq!(inv.engines[0].ready_sessions, 2);
-        let pre = client
-            .preassign(&PreassignRequest {
-                engine_id: "eng-1".into(),
-                key_set: Some("api".into()),
-                model: Some("m1".into()),
-                openapi_key_id: Some("tcak_test".into()),
-            })
-            .unwrap();
-        assert_eq!(pre.assign_id, "a1");
-        assert_eq!(pre.trust.epoch_id, "ep1");
-    }
-
-    #[test]
-    fn tls_client_config_with_self_signed_pair() {
-        ensure_crypto();
-        let (cert_pem, key_pem) = self_signed_client_pem();
-        let ca_pem = cert_pem.clone(); // self-signed: use same as trust anchor for smoke build
-        let cfg = GatewayOpeApiConfig::from_parts(
-            "https://127.0.0.1:8791",
-            Some("tok".into()),
-            Some(cert_pem),
-            Some(key_pem),
-            Some(ca_pem),
-            false,
-        )
-        .unwrap();
-        let tls = build_client_tls_config(&cfg).expect("tls config");
-        assert!(Arc::strong_count(&tls) >= 1);
-    }
-
-    #[test]
-    fn tls_insecure_skip_verify_builds() {
-        ensure_crypto();
-        let (cert_pem, key_pem) = self_signed_client_pem();
-        let cfg = GatewayOpeApiConfig::from_parts(
-            "https://127.0.0.1:8791",
-            None,
-            Some(cert_pem),
-            Some(key_pem),
-            None,
-            true,
-        )
-        .unwrap();
-        build_client_tls_config(&cfg).expect("skip-verify tls");
-    }
-
-    #[test]
-    fn mtls_health_against_local_rustls_server() {
-        ensure_crypto();
-        let fixtures = MtlsFixtures::generate();
-        let base = fixtures.spawn_health_server();
-        let cfg = GatewayOpeApiConfig::from_parts(
-            base,
-            Some("test-token".into()),
-            Some(fixtures.client_cert_pem.clone()),
-            Some(fixtures.client_key_pem.clone()),
-            Some(fixtures.ca_pem.clone()),
-            false,
-        )
-        .unwrap();
-        let client = GatewayOpeApiClient::try_new(cfg).unwrap();
-        let h = client.health().unwrap();
-        assert!(h.ok);
-        assert_eq!(h.plane, "ope_api");
-        assert_eq!(h.traffic_class_author, "api");
-    }
-
-    fn self_signed_client_pem() -> (String, String) {
-        let key_pair = rcgen::KeyPair::generate().unwrap();
-        let params = rcgen::CertificateParams::new(vec!["edge-client".into()]).unwrap();
-        let cert = params.self_signed(&key_pair).unwrap();
-        (cert.pem(), key_pair.serialize_pem())
-    }
-
     struct MtlsFixtures {
         ca_pem: String,
         client_cert_pem: String,
@@ -1138,7 +1200,7 @@ mod tests {
     impl MtlsFixtures {
         fn generate() -> Self {
             use rcgen::{BasicConstraints, IsCa, KeyUsagePurpose, SanType};
-            use std::net::{IpAddr, Ipv4Addr};
+            use std::net::{IpAddr as StdIpAddr, Ipv4Addr};
 
             let ca_key = rcgen::KeyPair::generate().unwrap();
             let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
@@ -1150,7 +1212,7 @@ mod tests {
             let server_key = rcgen::KeyPair::generate().unwrap();
             let mut server_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
             server_params.subject_alt_names = vec![
-                SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+                SanType::IpAddress(StdIpAddr::V4(Ipv4Addr::LOCALHOST)),
                 SanType::DnsName("localhost".try_into().unwrap()),
             ];
             server_params
@@ -1186,42 +1248,16 @@ mod tests {
             }
         }
 
-        fn spawn_health_server(&self) -> String {
-            let server_certs = load_certs_pem(self.server_cert_pem.as_bytes()).unwrap();
-            let server_key = load_private_key_pem(self.server_key_pem.as_bytes()).unwrap();
-            let mut root = RootCertStore::empty();
-            root.add(self.client_ca_der.clone()).unwrap();
-            let client_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root))
-                .build()
-                .expect("client verifier");
-            let server_config = rustls::ServerConfig::builder_with_protocol_versions(&[&TLS13])
-                .with_client_cert_verifier(client_verifier)
-                .with_single_cert(server_certs, server_key)
-                .expect("server config");
-            let server_config = Arc::new(server_config);
-
-            let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-            let addr = listener.local_addr().expect("addr");
-            thread::spawn(move || {
-                let (tcp, _) = listener.accept().expect("accept");
-                tcp.set_read_timeout(Some(Duration::from_secs(5))).ok();
-                tcp.set_write_timeout(Some(Duration::from_secs(5))).ok();
-                let conn = rustls::ServerConnection::new(server_config).expect("conn");
-                let mut tls = rustls::StreamOwned::new(conn, tcp);
-                let mut buf = [0u8; 8192];
-                let n = tls.read(&mut buf).unwrap_or(0);
-                let req = String::from_utf8_lossy(&buf[..n]);
-                assert!(req.contains("GET /v1/ope/api/health"));
-                assert!(req.contains("Authorization: Bearer test-token"));
-                let body = r#"{"ok":true,"plane":"ope_api","traffic_class_author":"api","auth":"mtls+bearer"}"#;
-                let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = tls.write_all(resp.as_bytes());
-                let _ = tls.flush();
-            });
-            format!("https://{addr}")
+        fn server_material(
+            &self,
+        ) -> (
+            Vec<CertificateDer<'static>>,
+            PrivateKeyDer<'static>,
+            CertificateDer<'static>,
+        ) {
+            let certs = load_certs_pem(self.server_cert_pem.as_bytes()).unwrap();
+            let key = load_private_key_pem(self.server_key_pem.as_bytes()).unwrap();
+            (certs, key, self.client_ca_der.clone())
         }
     }
 }

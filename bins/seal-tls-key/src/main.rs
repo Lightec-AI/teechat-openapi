@@ -12,7 +12,7 @@ fn main() -> anyhow::Result<()> {
         .nth(2)
         .context("usage: seal-tls-key <plain-key.pem> <sealed-out.json>")?;
 
-    let profile = load_edge_profile();
+    let profile = load_edge_profile()?;
     // OPS-002: host-side seal is lab-only (same gate as seal-tls-key-sgx).
     assert_dev_host_seal_tool(profile).map_err(|e| anyhow::anyhow!("{e}"))?;
 

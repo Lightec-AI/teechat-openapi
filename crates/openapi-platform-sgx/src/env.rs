@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use openapi_platform::{
     edge_runtime_policy_from_parts, load_edge_profile, validate_tls_key_policy, EdgeProfile,
-    EdgeRuntimePolicy, ProfileError,
+    EdgeRuntimePolicy, EngineIdentityPins, ProfileError,
 };
 
 use crate::seal::{local_mrenclave_hex, SgxSealer};
@@ -35,6 +35,7 @@ impl OpenApiAuthMode {
 
 #[derive(Debug, Clone)]
 pub struct SgxEdgeEnv {
+    profile: EdgeProfile,
     pub listen_addr: String,
     pub region: String,
     pub upstream_base_url: String,
@@ -46,6 +47,7 @@ pub struct SgxEdgeEnv {
     pub l0_authorize_url: Option<String>,
     pub l0_revocations_url: Option<String>,
     pub l0_internal_token: Option<String>,
+    pub engine_identity_pins_sha256: Option<String>,
     pub revoke_poll_secs: u64,
     pub usage_sign_seed_hex: String,
     pub build_version: String,
@@ -129,6 +131,7 @@ impl SgxEdgeEnv {
             gateway_ope.as_deref(),
             &self.upstream_base_url,
         )
+        .with_engine_identity_pins_sha256(self.engine_identity_pins_sha256.as_deref())
     }
 
     pub fn policy_hash_hex(&self) -> String {
@@ -195,7 +198,7 @@ impl SgxEdgeEnv {
     }
 
     pub fn profile(&self) -> EdgeProfile {
-        load_edge_profile()
+        self.profile
     }
 
     pub fn validate_profile(&self) -> Result<(), EnvError> {
@@ -241,10 +244,19 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
         std::env::var(name).ok().filter(|s| !s.is_empty())
     }
 
+    let profile = load_edge_profile()?;
+    let engine_identity_pins_sha256 = opt("OPENAPI_ENGINE_IDENTITY_PINS_JSON")
+        .map(|raw| {
+            EngineIdentityPins::parse_json(&raw)
+                .map(|pins| pins.policy_hash_hex())
+                .map_err(|e| EnvError::Invalid("OPENAPI_ENGINE_IDENTITY_PINS_JSON", e.to_string()))
+        })
+        .transpose()?;
+
     // Prefer remote; catalog remains for SGX lab until CVM-style `catalog-auth` feature lands.
     let auth_mode =
         OpenApiAuthMode::parse(&opt("OPENAPI_AUTH_MODE").unwrap_or_else(|| "remote".into()));
-    if load_edge_profile().is_prod() && auth_mode == OpenApiAuthMode::Catalog {
+    if profile.is_prod() && auth_mode == OpenApiAuthMode::Catalog {
         return Err(EnvError::Invalid(
             "OPENAPI_AUTH_MODE",
             "catalog forbidden when OPENAPI_PROFILE=prod".into(),
@@ -259,6 +271,7 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
     }
 
     Ok(SgxEdgeEnv {
+        profile,
         listen_addr: opt("OPENAPI_LISTEN_ADDR").unwrap_or_else(|| "0.0.0.0:8443".into()),
         region: opt("OPENAPI_REGION").unwrap_or_else(|| "global".into()),
         upstream_base_url: req("OPENAPI_UPSTREAM_BASE_URL")?,
@@ -269,6 +282,7 @@ pub fn load_sgx_edge_env() -> Result<SgxEdgeEnv, EnvError> {
         l0_authorize_url: opt("OPENAPI_L0_AUTHORIZE_URL"),
         l0_revocations_url: opt("OPENAPI_L0_REVOCATIONS_URL"),
         l0_internal_token: opt("OPENAPI_L0_INTERNAL_TOKEN"),
+        engine_identity_pins_sha256,
         revoke_poll_secs: opt("OPENAPI_REVOKE_POLL_SECS")
             .and_then(|v| v.parse().ok())
             .unwrap_or(15),
@@ -367,8 +381,27 @@ mod tests {
     static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn sgx_env_requires_mrenclave() {
+    fn sgx_env_rejects_missing_or_unknown_profile() {
+        let _env = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _g = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        env::remove_var("OPENAPI_PROFILE");
+        let missing = load_sgx_edge_env().unwrap_err().to_string();
+        assert!(missing.contains("OPENAPI_PROFILE is required"), "{missing}");
+        env::set_var("OPENAPI_PROFILE", "prd");
+        let unknown = load_sgx_edge_env().unwrap_err().to_string();
+        assert!(unknown.contains("invalid OPENAPI_PROFILE"), "{unknown}");
+        env::remove_var("OPENAPI_PROFILE");
+    }
+
+    #[test]
+    fn sgx_env_requires_mrenclave() {
+        let _env = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _g = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        env::set_var("OPENAPI_PROFILE", "dev");
         env::remove_var("OPENAPI_MRENCLAVE");
         env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:8000");
         env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
@@ -385,11 +418,16 @@ mod tests {
         env::remove_var("OPENAPI_USAGE_SIGN_SEED_HEX");
         env::remove_var("OPENAPI_MRENCLAVE");
         env::remove_var("OPENAPI_AUTH_MODE");
+        env::remove_var("OPENAPI_PROFILE");
     }
 
     #[test]
     fn sgx_env_loads_per_ip_limits() {
+        let _env = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _g = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        env::set_var("OPENAPI_PROFILE", "dev");
         env::set_var("OPENAPI_UPSTREAM_BASE_URL", "http://127.0.0.1:8000");
         env::set_var("OPENAPI_CATALOG_PATH", "/tmp/unused");
         env::set_var("OPENAPI_CATALOG_VERIFY_KEY_HEX", hex::encode([1u8; 32]));
@@ -419,5 +457,6 @@ mod tests {
         env::remove_var("OPENAPI_AUTH_MODE");
         env::remove_var("OPENAPI_IP_MAX_CONNS");
         env::remove_var("OPENAPI_IP_REQUESTS_PER_MINUTE");
+        env::remove_var("OPENAPI_PROFILE");
     }
 }

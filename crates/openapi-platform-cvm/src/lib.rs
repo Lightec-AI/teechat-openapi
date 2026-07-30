@@ -17,6 +17,9 @@ mod tls_ceremony;
 mod tls_key_policy;
 mod upstream;
 
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub use attest::CvmAttestationPlatform;
 pub use edge_upstream::EdgeUpstream;
 pub use compile_features::log_compile_time_features;

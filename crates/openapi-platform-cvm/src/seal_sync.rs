@@ -83,7 +83,7 @@ impl SealSyncConfig {
         if !self.enabled() {
             return Ok(());
         }
-        if load_edge_profile().is_prod() {
+        if load_edge_profile()?.is_prod() {
             if self.mock_psk.is_some() {
                 anyhow::bail!(
                     "OPENAPI_SEAL_SYNC_PSK is forbidden when OPENAPI_PROFILE=prod; \
@@ -495,7 +495,7 @@ pub fn maybe_start_seal_sync(
     }
     cfg.validate_for_profile()?;
 
-    let prod = openapi_platform::load_edge_profile().is_prod();
+    let prod = openapi_platform::load_edge_profile()?.is_prod();
     let key_policy = crate::tls_key_policy::resolve_tls_key_policy_for_profile(prod)
         .map_err(anyhow::Error::msg)?;
     match key_policy {
@@ -587,13 +587,10 @@ pub fn maybe_start_seal_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn prod_forbids_psk_alone() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("OPENAPI_PROFILE", "prod");
         let cfg = SealSyncConfig {
             listen: Some("127.0.0.1:9443".into()),
@@ -609,7 +606,7 @@ mod tests {
 
     #[test]
     fn prod_requires_challenge_url() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("OPENAPI_PROFILE", "prod");
         let cfg = SealSyncConfig {
             listen: Some("127.0.0.1:9443".into()),
@@ -625,7 +622,7 @@ mod tests {
 
     #[test]
     fn prod_ok_with_challenge_url() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("OPENAPI_PROFILE", "prod");
         let cfg = SealSyncConfig {
             listen: Some("127.0.0.1:9443".into()),
@@ -669,7 +666,7 @@ mod tests {
 
     #[test]
     fn from_env_reads_challenge_base_url() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var(
             "OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL",
             "https://127.0.0.1:8443",

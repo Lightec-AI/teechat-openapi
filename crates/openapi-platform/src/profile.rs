@@ -16,6 +16,10 @@ impl EdgeProfile {
 
 #[derive(Debug, Error)]
 pub enum ProfileError {
+    #[error("OPENAPI_PROFILE is required (expected dev|prod|production)")]
+    MissingProfile,
+    #[error("invalid OPENAPI_PROFILE {0:?} (expected dev|prod|production)")]
+    UnknownProfile(String),
     #[error("prod forbids plaintext TLS key (OPENAPI_TLS_KEY_PATH)")]
     ProdPlaintextTlsKey,
     #[error("prod requires sealed TLS key (OPENAPI_TLS_SEALED_KEY_PATH)")]
@@ -54,16 +58,20 @@ pub enum ProfileError {
     ProdMissingAppVerity,
 }
 
-/// Load profile from `OPENAPI_PROFILE` (`dev` default, `prod` / `production` → prod).
-pub fn load_edge_profile() -> EdgeProfile {
-    match std::env::var("OPENAPI_PROFILE")
-        .ok()
-        .map(|s| s.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("prod") | Some("production") => EdgeProfile::Prod,
-        _ => EdgeProfile::Dev,
+pub fn parse_edge_profile(raw: Option<&str>) -> Result<EdgeProfile, ProfileError> {
+    let raw = raw.map(str::trim).filter(|s| !s.is_empty());
+    match raw.map(str::to_ascii_lowercase).as_deref() {
+        Some("dev") => Ok(EdgeProfile::Dev),
+        Some("prod") | Some("production") => Ok(EdgeProfile::Prod),
+        Some(other) => Err(ProfileError::UnknownProfile(other.to_string())),
+        None => Err(ProfileError::MissingProfile),
     }
+}
+
+/// Load the explicit runtime profile. Missing or unknown values fail closed.
+pub fn load_edge_profile() -> Result<EdgeProfile, ProfileError> {
+    let raw = std::env::var("OPENAPI_PROFILE").ok();
+    parse_edge_profile(raw.as_deref())
 }
 
 /// Validate TLS key env against profile. Call at startup before unseal.
@@ -234,10 +242,34 @@ mod tests {
     }
 
     #[test]
-    fn default_profile_is_dev() {
+    fn missing_profile_is_rejected() {
         let _lock = ENV_TEST_LOCK.lock().unwrap();
         clear_tls_env();
-        assert_eq!(load_edge_profile(), EdgeProfile::Dev);
+        assert!(matches!(
+            load_edge_profile(),
+            Err(ProfileError::MissingProfile)
+        ));
+    }
+
+    #[test]
+    fn unknown_profile_is_rejected() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        clear_tls_env();
+        env::set_var("OPENAPI_PROFILE", "prd");
+        assert!(matches!(
+            load_edge_profile(),
+            Err(ProfileError::UnknownProfile(v)) if v == "prd"
+        ));
+        env::remove_var("OPENAPI_PROFILE");
+    }
+
+    #[test]
+    fn explicit_dev_profile() {
+        let _lock = ENV_TEST_LOCK.lock().unwrap();
+        clear_tls_env();
+        env::set_var("OPENAPI_PROFILE", "dev");
+        assert_eq!(load_edge_profile().unwrap(), EdgeProfile::Dev);
+        env::remove_var("OPENAPI_PROFILE");
     }
 
     #[test]
@@ -245,7 +277,7 @@ mod tests {
         let _lock = ENV_TEST_LOCK.lock().unwrap();
         clear_tls_env();
         env::set_var("OPENAPI_PROFILE", "prod");
-        assert_eq!(load_edge_profile(), EdgeProfile::Prod);
+        assert_eq!(load_edge_profile().unwrap(), EdgeProfile::Prod);
         env::remove_var("OPENAPI_PROFILE");
     }
 

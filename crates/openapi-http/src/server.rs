@@ -8,7 +8,7 @@ use openapi_core::ApiError;
 use openapi_platform::AttestationPlatform;
 use thiserror::Error;
 
-use crate::request::ParsedRequest;
+use crate::request::{ParseError, ParsedRequest};
 use crate::response::{
     build_challenge_cors_preflight, build_error_response, build_json_response, build_sse_response,
     is_attestation_challenge_path, with_challenge_cors,
@@ -99,7 +99,7 @@ where
             return Ok(());
         }
         total += n;
-        match ParsedRequest::parse(&buffer[..total]) {
+        match ParsedRequest::parse(&buffer[..total], app.config().max_body_bytes) {
             Ok(Some(req)) => {
                 // Long / streaming responses must not hit header idle timeouts.
                 let _ = stream.set_read_timeout(None);
@@ -127,7 +127,12 @@ where
                 }
                 continue;
             }
-            Err(_) => {
+            Err(ParseError::BodyTooLarge) => {
+                let err = build_error_response(ApiError::PayloadTooLarge);
+                stream.write_all(&err)?;
+                return Ok(());
+            }
+            Err(ParseError::Incomplete | ParseError::Invalid(_)) => {
                 let err = build_error_response(ApiError::BadRequest("malformed request".into()));
                 stream.write_all(&err)?;
                 return Ok(());

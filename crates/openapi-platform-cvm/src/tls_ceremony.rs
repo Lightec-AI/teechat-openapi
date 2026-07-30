@@ -74,7 +74,7 @@ pub enum CeremonyError {
 
 /// Refuse ceremony outside prod profile or when host-supplied secrets are configured.
 pub fn assert_prod_ceremony_policy() -> Result<(), CeremonyError> {
-    let profile = load_edge_profile();
+    let profile = load_edge_profile().map_err(|e| CeremonyError::Profile(e.to_string()))?;
     if !profile.is_prod() {
         return Err(CeremonyError::Policy(
             "TLS ceremony requires OPENAPI_PROFILE=prod".into(),
@@ -293,10 +293,13 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn with_env(f: impl FnOnce()) {
+        let _global = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _g = ENV_LOCK.lock().unwrap();
         let _a = ATTESTED_ENV_TEST_LOCK.lock().unwrap();
         let _k = AMD_SP_KEY_TEST_LOCK.lock().unwrap();
-        env::remove_var("OPENAPI_PROFILE");
+        env::set_var("OPENAPI_PROFILE", "dev");
         env::remove_var("OPENAPI_TLS_SEALED_KEY_PATH");
         env::remove_var("OPENAPI_TLS_KEY_PATH");
         env::remove_var("OPENAPI_SEAL_ROOT_HEX");
@@ -304,6 +307,7 @@ mod tests {
         env::remove_var("OPENAPI_AMD_SP_DERIVED_KEY_HEX");
         env::remove_var("OPENAPI_TLS_KEY_POLICY_PATH");
         env::remove_var("OPENAPI_TLS_KEY_POLICY");
+        crate::tls_key_policy::set_test_tls_key_policy_path(None);
         set_test_attested_launch_digest(None);
         set_test_amd_sp_derived_key(None);
         f();
@@ -315,6 +319,7 @@ mod tests {
         env::remove_var("OPENAPI_AMD_SP_DERIVED_KEY_HEX");
         env::remove_var("OPENAPI_TLS_KEY_POLICY_PATH");
         env::remove_var("OPENAPI_TLS_KEY_POLICY");
+        crate::tls_key_policy::set_test_tls_key_policy_path(None);
         set_test_attested_launch_digest(None);
         set_test_amd_sp_derived_key(None);
     }
@@ -387,7 +392,7 @@ mod tests {
             std::process::id()
         ));
         fs::write(&p, "key_ceremony\n").unwrap();
-        env::set_var("OPENAPI_TLS_KEY_POLICY_PATH", &p);
+        crate::tls_key_policy::set_test_tls_key_policy_path(Some(p.clone()));
         p
     }
 
@@ -433,7 +438,7 @@ mod tests {
                 std::process::id()
             ));
             fs::write(&p, "seal_sync\n").unwrap();
-            env::set_var("OPENAPI_TLS_KEY_POLICY_PATH", &p);
+            crate::tls_key_policy::set_test_tls_key_policy_path(Some(p.clone()));
             env::set_var("OPENAPI_PROFILE", "prod");
             let err = assert_prod_ceremony_policy().unwrap_err();
             assert!(err.to_string().contains("key_ceremony"), "got: {err}");
@@ -481,7 +486,7 @@ mod tests {
             // Prod requires measured /etc/tls_key_policy=key_ceremony (CI redirects path).
             let policy = dir.join("tls_key_policy");
             fs::write(&policy, "key_ceremony\n").unwrap();
-            env::set_var("OPENAPI_TLS_KEY_POLICY_PATH", policy.to_str().unwrap());
+            crate::tls_key_policy::set_test_tls_key_policy_path(Some(policy));
             let live = setup_acme_tree(&le, "openapi.teechat.ai");
 
             let paths = TlsCeremonyPaths {

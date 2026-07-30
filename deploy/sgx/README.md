@@ -69,6 +69,24 @@ cd /path/to/teechat-openapi
 | `OPENAPI_PROFILE` | prod | Set to **`prod`** on production units |
 | `OPENAPI_SEAL_ROOT_HEX` | dev | Dev HKDF input only — **forbidden in prod** (EGETKEY-derived in enclave) |
 | `OPENAPI_DCAP_HELPER_URL` | attest | Host AESM quote helper (default `http://127.0.0.1:18500`) |
+| `OPENAPI_GATEWAY_OPE_API_URL` | prod | F′ OPE API plane base URL — **`https://IP:port`** only (no DNS, no clear-text F′ dial). Unset ⇒ clear HTTP fallback in non-prod; **required in prod** (hard cutover). |
+| `OPENAPI_UPSTREAM_CLEAR_HTTP` | no | Set `1` to bypass F′ entirely and use `OPENAPI_UPSTREAM_BASE_URL` (`http://IP:port`) instead. Break-glass only — **forbidden when `OPENAPI_PROFILE=prod`**. |
+
+### F′ OPE dispatch (hard cutover) — `OPENAPI_GATEWAY_OPE_API_*`
+
+Same wire contract and hard-cutover semantics as `openapi-platform-cvm`, dialed with a raw `TcpStream` + `rustls-rustcrypto` instead of `ureq` (`ureq`'s `aws-lc-rs`/`ring` backends hit `#UD` inside the Fortanix enclave). See `crates/openapi-platform-sgx/src/{gateway_ope_api,ope_upstream,ope_wrap,edge_upstream}.rs`.
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `OPENAPI_GATEWAY_OPE_API_URL` | prod | `https://IP:port` — literal IP (no DNS resolver in enclave); rejects `http://` |
+| `OPENAPI_GATEWAY_OPE_API_TOKEN` | no | Bearer dispatch token (optional during mTLS-only harden) |
+| `OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_CERT_PEM` | mTLS | **Inline PEM only** (`-----BEGIN CERTIFICATE-----…`) — a filesystem path is rejected up front (`std::fs` unsupported on Fortanix EDP) |
+| `OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_KEY_PEM` | mTLS | **Inline PEM only**; must be set together with the client cert |
+| `OPENAPI_GATEWAY_OPE_API_TLS_CA_PEM` | no | **Inline PEM only**; verifies the gateway server cert. Omit to use the bundled `webpki-roots` trust store |
+| `OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY` | no | Dev-only skip-verify — **forbidden when `OPENAPI_PROFILE=prod`** |
+| `OPENAPI_GATEWAY_OPE_API_READ_TIMEOUT_SECS` | no | Default `300` (matches gateway `TEECHAT_OPE_UPSTREAM_TIMEOUT_MS`) |
+
+Startup probes `GET /v1/ope/api/health` and logs the result; in prod, an unreachable/misconfigured F′ plane fails closed (`EdgeUpstream::from_env` returns `Err`) unless `OPENAPI_UPSTREAM_CLEAR_HTTP=1` is set (also forbidden in prod). In dev, a failed probe or unset URL falls back to `OPENAPI_UPSTREAM_BASE_URL` clear HTTP with a warning.
 
 ### CFG-001 — measured runtime policy (`policy_hash`)
 
@@ -185,6 +203,9 @@ deploy/sgx/                     # build/run/ceremony scripts
 | `ftxsgx-runner` ENOENT | `cargo install fortanix-sgx-tools` |
 | Seal/unseal fails | `OPENAPI_MRENCLAVE` matches inspect output |
 | Upstream connect fail | Use `http://127.0.0.1:PORT`, not hostname |
+| F′ config error `must be inline PEM` | `OPENAPI_GATEWAY_OPE_API_TLS_*_PEM` was set to a filesystem path — use inline `-----BEGIN ...-----` PEM (no `std::fs` on EDP) |
+| F′ config error `must be a literal IP address` | `OPENAPI_GATEWAY_OPE_API_URL` used a DNS name — enclave has no resolver; use `https://IP:port` |
+| Boot fails `OPENAPI_GATEWAY_OPE_API_URL required in prod` | Hard OPE cutover: set the URL, or (non-prod only) `OPENAPI_UPSTREAM_CLEAR_HTTP=1` |
 | TLS fails in enclave | Run ceremony helper; set `OPENAPI_CEREMONY_HELPER_URL`; artifacts `tls.crt` + `sealed-key.json` present |
 | ACME DNS hang | Enclave must use helper `/dns` (never enclave libc DNS) |
 | ACME JSON truncated / `expected value at line …` | EDP path must use helper `/https-relay` (not direct enclave HTTPS to LE) |

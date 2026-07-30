@@ -320,7 +320,9 @@ mod tests {
 
     #[test]
     fn sealed_tls_roundtrip() {
-        TlsConfig::install_crypto_provider().unwrap();
+        // Ignore "already installed": other tests in this crate (e.g. gateway_ope_api's
+        // mTLS fixtures) may install the process-global crypto provider first.
+        let _ = TlsConfig::install_crypto_provider();
         let dir = std::env::temp_dir().join(format!("sgx-tls-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let (cert_path, key_pem) = write_test_cert_and_key(&dir);

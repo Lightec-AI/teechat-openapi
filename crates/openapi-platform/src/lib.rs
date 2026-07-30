@@ -5,6 +5,7 @@
 
 mod challenge;
 mod edge_policy;
+mod engine_trust;
 mod profile;
 mod seal;
 pub mod tls;
@@ -19,11 +20,13 @@ pub use challenge::{
     REPORT_DATA_VERSION, SCHEMA_VERSION, SGX_DCAP_QUOTE3_HEADER_LEN, SGX_DCAP_REPORT_DATA_OFFSET,
     SGX_REPORT_DATA_OFFSET, SNP_REPORT_DATA_OFFSET,
 };
-pub use edge_policy::{
-    edge_runtime_policy_from_parts, EdgeRuntimePolicy,
+pub use edge_policy::{edge_runtime_policy_from_parts, EdgeRuntimePolicy};
+pub use engine_trust::{
+    ephemeral_signing_bytes, verify_ephemeral_engine_trust, EngineIdentityPins, EngineTrustError,
+    EphemeralEngineTrust,
 };
 pub use profile::{
-    assert_dev_host_seal_tool, is_unmeasured_guest_path, load_edge_profile,
+    assert_dev_host_seal_tool, is_unmeasured_guest_path, load_edge_profile, parse_edge_profile,
     validate_measured_app_path, validate_tls_key_policy, EdgeProfile, ProfileError,
 };
 pub use seal::{

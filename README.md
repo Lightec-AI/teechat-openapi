@@ -90,6 +90,8 @@ Optional dialer for the gateway private OPE API listener (`GET /v1/ope/api/healt
 | `OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_KEY_PEM` | Client key PEM path or inline |
 | `OPENAPI_GATEWAY_OPE_API_TLS_CA_PEM` | Optional CA PEM to verify gateway server cert |
 | `OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY` | `0` default; `1` skips server verify (**dev only**, forbidden in `OPENAPI_PROFILE=prod`) |
+| `OPENAPI_ENGINE_IDENTITY_PINS_JSON` | Required with OPE dispatch: JSON map of engine id to attestation-approved Ed25519 identity key; its canonical SHA-256 is included in `policy_hash` |
+| `OPENAPI_OPE_EPOCH_CLOCK_SKEW_SEC` | Engine epoch validity skew; default `300` |
 
 TLS to this plane is **TLS 1.3 only** (ureq + rustls). See [SECURITY.md](SECURITY.md) § Gateway OPE API dialer.
 
@@ -99,7 +101,7 @@ TLS to this plane is **TLS 1.3 only** (ureq + rustls). See [SECURITY.md](SECURIT
 |----------|-------------|
 | `OPENAPI_TLS_CERT_PATH` | Server certificate PEM (public) |
 | `OPENAPI_TLS_SEALED_KEY_PATH` | Measurement-bound sealed private key JSON (**production**) |
-| `OPENAPI_PROFILE` | `dev` (default) or **`prod`** — see [SECURITY.md](SECURITY.md) |
+| `OPENAPI_PROFILE` | Required: explicit `dev` or **`prod`**; missing/unknown values abort startup |
 | `OPENAPI_SEAL_ROOT_HEX` | Dev-only optional 32-byte HKDF input; **forbidden in prod** (derived in TEE) |
 | `OPENAPI_TLS_KEY_PATH` | Plaintext private key PEM (**dev only**) |
 
