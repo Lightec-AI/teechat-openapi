@@ -13,17 +13,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.88
+      # Fortanix EDP needs nightly for #![feature(sgx_platform)] in sgx-isa, so
+      # the enclave target cannot build on the pinned stable channel — this is
+      # the same RUSTUP_TOOLCHAIN=nightly that deploy/sgx/build-enclave.sh uses.
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: x86_64-fortanix-unknown-sgx
       - uses: Swatinem/rust-cache@v2
-      # The action installs toolchain "1.88.0", but rust-toolchain.toml pins
-      # channel "1.88" — rustup keeps those as separate toolchain directories,
-      # so cargo resolves to the one that never received the target above and
-      # fails with E0463 (can't find crate for `core`). Adding it here targets
-      # whichever toolchain rust-toolchain.toml actually selects.
-      - name: ensure enclave target on the pinned toolchain
-        run: rustup target add x86_64-fortanix-unknown-sgx
+      # rustup keys toolchain directories by the name they were installed under,
+      # so ask for the target again against the name the check below selects.
+      - name: ensure enclave target on nightly
+        run: rustup target add x86_64-fortanix-unknown-sgx --toolchain nightly
       - name: check enclave target
         run: cargo check --target x86_64-fortanix-unknown-sgx -p openapi-enclave
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+      # Host tests stay on the pinned stable toolchain from rust-toolchain.toml.
       - name: host tests (sgx platform + ACME)
         run: cargo test -p openapi-acme-sync -p openapi-platform-sgx -p openapi-ceremony-helper -p openapi-edge
