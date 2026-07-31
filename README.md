@@ -90,8 +90,17 @@ Optional dialer for the gateway private OPE API listener (`GET /v1/ope/api/healt
 | `OPENAPI_GATEWAY_OPE_API_TLS_CLIENT_KEY_PEM` | Client key PEM path or inline |
 | `OPENAPI_GATEWAY_OPE_API_TLS_CA_PEM` | Optional CA PEM to verify gateway server cert |
 | `OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY` | `0` default; `1` skips server verify (**dev only**, forbidden in `OPENAPI_PROFILE=prod`) |
-| `OPENAPI_ENGINE_IDENTITY_PINS_JSON` | Required with OPE dispatch: JSON map of engine id to attestation-approved Ed25519 identity key; its canonical SHA-256 is included in `policy_hash` |
+| `OPENAPI_ENGINE_IDENTITY_PINS_JSON` | Legacy anchor, required with OPE dispatch **unless** `OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1`: JSON map of engine id to attestation-approved Ed25519 identity key; its canonical SHA-256 is included in `policy_hash` |
 | `OPENAPI_OPE_EPOCH_CLOCK_SKEW_SEC` | Engine epoch validity skew; default `300` |
+
+**Engine recipient policy.** These decide which epoch key a customer request is encrypted to, so they replace the identity pin rather than supplementing it. Generate them from the signed golden manifest with `pnpm ops:openapi-engine-recipient-env` in the TeaChat repo instead of writing them by hand.
+
+| Variable | Description |
+|----------|-------------|
+| `OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE` | `1` requires an attestation binding the epoch's own ML-KEM, X25519, and usage keys (bind v2) and refuses to fall back to the pin; `0` default during fleet cutover |
+| `OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST` | Comma-separated composed launch digests, derived from `MEASUREMENT` inside the report rather than from any claim the engine sends |
+| `OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST` | `1` refuses an engine whose measurement is absent from the allowlist |
+| `OPENAPI_OPE_VERIFY_ENGINE_SNP_CHAIN` | `1` verifies the AMD ARK/ASK/VCEK chain over the engine report, cached per report so KDS stays off the request path. CVM only — the SGX build has no route to KDS under Fortanix EDP |
 
 TLS to this plane is **TLS 1.3 only** (ureq + rustls). See [SECURITY.md](SECURITY.md) § Gateway OPE API dialer.
 
