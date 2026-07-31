@@ -25,17 +25,16 @@ use sha2::{Digest, Sha256};
 type HmacSha256 = Hmac<Sha256>;
 
 mod https;
-mod provision;
 #[cfg(test)]
 mod mock_acme;
+mod provision;
 
 pub use https::{
     AcmeTransport, DnsResolver, FnAcmeTransport, FnDnsResolver, HttpResponse, HttpsTransport,
     StdDnsResolver,
 };
 pub use provision::{
-    provision_http01, Http01ChallengeSink, MemoryChallengeSink, ProvisionOutcome,
-    ProvisionRequest,
+    provision_http01, Http01ChallengeSink, MemoryChallengeSink, ProvisionOutcome, ProvisionRequest,
 };
 
 mod types;
@@ -120,10 +119,9 @@ impl Order {
 
         self.nonce = nonce_from_response(&rsp);
         let body = Problem::from_response(rsp)?;
-        Ok(Some(
-            String::from_utf8(body.to_vec())
-                .map_err(|_| Error::Str("unable to decode certificate as UTF-8"))?,
-        ))
+        Ok(Some(String::from_utf8(body.to_vec()).map_err(|_| {
+            Error::Str("unable to decode certificate as UTF-8")
+        })?))
     }
 
     /// Notify the server that the given challenge is ready to be completed
@@ -348,10 +346,7 @@ pub(crate) struct Client {
 }
 
 impl Client {
-    pub(crate) fn new(
-        server_url: &str,
-        transport: Arc<dyn AcmeTransport>,
-    ) -> Result<Self, Error> {
+    pub(crate) fn new(server_url: &str, transport: Arc<dyn AcmeTransport>) -> Result<Self, Error> {
         Self::connect(server_url, transport)
     }
 
@@ -364,7 +359,10 @@ impl Client {
         }
         let rsp = transport.request("GET", server_url, None, None)?;
         if !(200..300).contains(&rsp.status) {
-            let preview: String = String::from_utf8_lossy(&rsp.body).chars().take(200).collect();
+            let preview: String = String::from_utf8_lossy(&rsp.body)
+                .chars()
+                .take(200)
+                .collect();
             return Err(Error::Http(format!(
                 "ACME directory HTTP {}: {preview}",
                 rsp.status
@@ -373,8 +371,10 @@ impl Client {
         let urls: DirectoryUrls = match serde_json::from_slice(&rsp.body) {
             Ok(u) => u,
             Err(e) => {
-                let preview: String =
-                    String::from_utf8_lossy(&rsp.body).chars().take(240).collect();
+                let preview: String = String::from_utf8_lossy(&rsp.body)
+                    .chars()
+                    .take(240)
+                    .collect();
                 return Err(Error::Http(format!(
                     "ACME directory JSON ({e}); len={} prefix={preview:?}",
                     rsp.body.len()
@@ -451,8 +451,8 @@ impl Key {
     }
 
     fn from_pkcs8_der(pkcs8_der: &[u8]) -> Result<Self, Error> {
-        let key = SigningKey::from_pkcs8_der(pkcs8_der)
-            .map_err(|e| Error::CryptoKey(e.to_string()))?;
+        let key =
+            SigningKey::from_pkcs8_der(pkcs8_der).map_err(|e| Error::CryptoKey(e.to_string()))?;
         let thumb = URL_SAFE_NO_PAD.encode(Jwk::thumb_sha256(&key)?);
 
         Ok(Self {
@@ -542,8 +542,7 @@ impl Signer for ExternalAccountKey {
     }
 
     fn sign(&self, payload: &[u8]) -> Result<Self::Signature, Error> {
-        let mut mac =
-            HmacSha256::new_from_slice(&self.key).map_err(|_| Error::Crypto)?;
+        let mut mac = HmacSha256::new_from_slice(&self.key).map_err(|_| Error::Crypto)?;
         mac.update(payload);
         Ok(mac.finalize().into_bytes().to_vec())
     }

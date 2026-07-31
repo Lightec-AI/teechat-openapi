@@ -43,11 +43,11 @@ pub fn resolve_tls_key_policy() -> Result<TlsKeyPolicy, String> {
 /// Optional resolve — `None` when unset (legacy single-slot lab without seal-sync).
 pub fn resolve_tls_key_policy_optional() -> Result<Option<TlsKeyPolicy>, String> {
     match std::env::var("OPENAPI_TLS_KEY_POLICY") {
-        Ok(raw) if !raw.trim().is_empty() => Ok(Some(
-            TlsKeyPolicy::parse(&raw).ok_or_else(|| {
+        Ok(raw) if !raw.trim().is_empty() => {
+            Ok(Some(TlsKeyPolicy::parse(&raw).ok_or_else(|| {
                 format!("invalid OPENAPI_TLS_KEY_POLICY {raw:?} (want key_ceremony|seal_sync)")
-            })?,
-        )),
+            })?))
+        }
         _ => Ok(None),
     }
 }
@@ -65,7 +65,10 @@ mod tests {
             TlsKeyPolicy::parse("key_ceremony"),
             Some(TlsKeyPolicy::KeyCeremony)
         );
-        assert_eq!(TlsKeyPolicy::parse("seal_sync"), Some(TlsKeyPolicy::SealSync));
+        assert_eq!(
+            TlsKeyPolicy::parse("seal_sync"),
+            Some(TlsKeyPolicy::SealSync)
+        );
         assert!(TlsKeyPolicy::parse("other").is_none());
     }
 

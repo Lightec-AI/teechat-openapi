@@ -179,7 +179,9 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
     let domain = std::env::var("OPENAPI_ACME_DOMAIN")
         .or_else(|_| std::env::var("OPENAPI_ACME_CERT_NAME"))
         .context("OPENAPI_ACME_DOMAIN or OPENAPI_ACME_CERT_NAME required")?;
-    let email = std::env::var("OPENAPI_ACME_EMAIL").ok().filter(|s| !s.is_empty());
+    let email = std::env::var("OPENAPI_ACME_EMAIL")
+        .ok()
+        .filter(|s| !s.is_empty());
 
     let helper = CeremonyHelperClient::from_env().context("ceremony helper client")?;
     let directory_url = if staging {
@@ -191,9 +193,9 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
 
     let account_name = account_artifact_name(staging);
     let account_credentials_json = match helper.get_artifact(account_name) {
-        Ok(bytes) => Some(
-            String::from_utf8(bytes).context("account credentials artifact is not UTF-8")?,
-        ),
+        Ok(bytes) => {
+            Some(String::from_utf8(bytes).context("account credentials artifact is not UTF-8")?)
+        }
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("404") || msg.contains("not found") || msg.contains("No such file") {
@@ -217,8 +219,8 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
             let sealed = helper
                 .get_artifact("sealed-key.json")
                 .context("renew requires sealed-key.json (run issue first)")?;
-            let blob: SealedTlsKeyBlob = serde_json::from_slice(&sealed)
-                .context("parse sealed-key.json")?;
+            let blob: SealedTlsKeyBlob =
+                serde_json::from_slice(&sealed).context("parse sealed-key.json")?;
             let pem_bytes = sealer
                 .unseal_tls_key(&blob, seal_root.as_ref())
                 .context("unseal existing leaf key for renew")?;
@@ -261,9 +263,7 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("new cert SPKI: {e}"))?;
         if got != expected {
             outcome.private_key_pem.zeroize();
-            bail!(
-                "renew changed leaf SPKI ({expected} → {got}); refusing to overwrite sealed key"
-            );
+            bail!("renew changed leaf SPKI ({expected} → {got}); refusing to overwrite sealed key");
         }
     }
 
@@ -279,8 +279,7 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
     // Wipe plaintext key before any further helper I/O.
     outcome.private_key_pem.zeroize();
 
-    let sealed_json =
-        serde_json::to_vec_pretty(&blob).context("encode sealed-key.json")?;
+    let sealed_json = serde_json::to_vec_pretty(&blob).context("encode sealed-key.json")?;
     helper
         .put_artifact("sealed-key.json", &sealed_json)
         .context("store sealed-key.json")?;
@@ -383,12 +382,10 @@ mod tests {
         let mut key =
             String::from("-----BEGIN PRIVATE KEY-----\nacme\n-----END PRIVATE KEY-----\n");
         let cert = "-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n";
-        let (sealed, cert_out) =
-            seal_from_acme_outcome(&sealer, &mut key, cert, None).unwrap();
+        let (sealed, cert_out) = seal_from_acme_outcome(&sealer, &mut key, cert, None).unwrap();
         assert!(key.is_empty() || key.as_bytes().iter().all(|&b| b == 0));
         assert_eq!(cert_out, cert);
-        let blob: openapi_platform::SealedTlsKeyBlob =
-            serde_json::from_slice(&sealed).unwrap();
+        let blob: openapi_platform::SealedTlsKeyBlob = serde_json::from_slice(&sealed).unwrap();
         // Host stub uses seal_version 1; must unseal with same sealer.
         let pem = sealer.unseal_tls_key(&blob, None).unwrap();
         assert!(std::str::from_utf8(&pem).unwrap().contains("PRIVATE KEY"));
@@ -396,10 +393,8 @@ mod tests {
 
     #[test]
     fn helper_dns_and_challenge_against_fixture() {
-        let tmp = std::env::temp_dir().join(format!(
-            "sgx-acme-helper-fixture-{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("sgx-acme-helper-fixture-{}", std::process::id()));
         let webroot = tmp.join("www");
         let artifact_dir = tmp.join("art");
         std::fs::create_dir_all(webroot.join(".well-known/acme-challenge")).unwrap();
@@ -421,8 +416,7 @@ mod tests {
             }
         });
 
-        let client =
-            CeremonyHelperClient::from_url(&format!("http://{}", addr)).unwrap();
+        let client = CeremonyHelperClient::from_url(&format!("http://{}", addr)).unwrap();
 
         // DNS: fixture returns 127.0.0.1:443
         let resolved = client.resolve_dns("example.test", 443).unwrap();
@@ -507,10 +501,7 @@ mod tests {
         let path = parts.next().unwrap_or("").split('?').next().unwrap_or("");
 
         let (status, body) = if method == "GET" && path == "/dns" {
-            (
-                200u16,
-                br#"{"addrs":["127.0.0.1:443"]}"#.to_vec(),
-            )
+            (200u16, br#"{"addrs":["127.0.0.1:443"]}"#.to_vec())
         } else if method == "POST" && path == "/https-relay" {
             // Fixture does not call the public internet; echo a tiny ACME-like body.
             let resp = serde_json::json!({
@@ -527,18 +518,12 @@ mod tests {
             (200, serde_json::to_vec(&resp).unwrap())
         } else if method == "PUT" && path.starts_with("/acme-challenge/") {
             let token = &path["/acme-challenge/".len()..];
-            let p = state
-                .webroot
-                .join(".well-known/acme-challenge")
-                .join(token);
+            let p = state.webroot.join(".well-known/acme-challenge").join(token);
             std::fs::write(&p, &buf[header_end..])?;
             (200, b"ok".to_vec())
         } else if method == "DELETE" && path.starts_with("/acme-challenge/") {
             let token = &path["/acme-challenge/".len()..];
-            let p = state
-                .webroot
-                .join(".well-known/acme-challenge")
-                .join(token);
+            let p = state.webroot.join(".well-known/acme-challenge").join(token);
             let _ = std::fs::remove_file(&p);
             (200, b"ok".to_vec())
         } else if method == "PUT" && path.starts_with("/artifacts/") {

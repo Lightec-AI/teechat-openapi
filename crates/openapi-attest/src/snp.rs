@@ -193,6 +193,9 @@ mod tests {
             "cb0216e7ae909ac5f758bc9bc9de34a36e93432ae178dea5a43fcdbf67202c76"
         );
         // Uppercase input normalizes to the same digest.
-        assert_eq!(challenge_canonical_launch_digest(&raw.to_ascii_uppercase()), got);
+        assert_eq!(
+            challenge_canonical_launch_digest(&raw.to_ascii_uppercase()),
+            got
+        );
     }
 }

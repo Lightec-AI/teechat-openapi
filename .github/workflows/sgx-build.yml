@@ -16,6 +16,13 @@ jobs:
         with:
           targets: x86_64-fortanix-unknown-sgx
       - uses: Swatinem/rust-cache@v2
+      # The action installs toolchain "1.88.0", but rust-toolchain.toml pins
+      # channel "1.88" — rustup keeps those as separate toolchain directories,
+      # so cargo resolves to the one that never received the target above and
+      # fails with E0463 (can't find crate for `core`). Adding it here targets
+      # whichever toolchain rust-toolchain.toml actually selects.
+      - name: ensure enclave target on the pinned toolchain
+        run: rustup target add x86_64-fortanix-unknown-sgx
       - name: check enclave target
         run: cargo check --target x86_64-fortanix-unknown-sgx -p openapi-enclave
       - name: host tests (sgx platform + ACME)

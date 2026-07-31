@@ -48,7 +48,5 @@ pub use tls::{
     load_server_config_from_pem_bytes, seal_tls_key_file, spki_sha256_hex_from_cert_bytes,
     spki_sha256_hex_from_cert_path, TlsAcceptor, TlsConfig,
 };
-pub use tls_key_policy::{
-    resolve_tls_key_policy, resolve_tls_key_policy_optional, TlsKeyPolicy,
-};
+pub use tls_key_policy::{resolve_tls_key_policy, resolve_tls_key_policy_optional, TlsKeyPolicy};
 pub use upstream::{parse_http_base_url, HttpEndpoint, TcpHttpUpstream};

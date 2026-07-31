@@ -197,7 +197,10 @@ pub fn validate_measured_app_path(profile: EdgeProfile) -> Result<(), ProfileErr
         return Ok(());
     }
     let cmdline = read_kernel_cmdline().unwrap_or_default();
-    if !cmdline.split_whitespace().any(|t| t.starts_with("teechat.app_verity_root=")) {
+    if !cmdline
+        .split_whitespace()
+        .any(|t| t.starts_with("teechat.app_verity_root="))
+    {
         return Err(ProfileError::ProdMissingAppVerity);
     }
     if let Ok(exe) = std::env::current_exe() {
@@ -452,7 +455,9 @@ mod tests {
     #[test]
     fn unmeasured_guest_path_detects_data_mounts() {
         assert!(is_unmeasured_guest_path("/data/bin/snpguest"));
-        assert!(is_unmeasured_guest_path("/var/mnt/teechat-openapi/bin/snpguest"));
+        assert!(is_unmeasured_guest_path(
+            "/var/mnt/teechat-openapi/bin/snpguest"
+        ));
         assert!(!is_unmeasured_guest_path(
             "/var/mnt/teechat-openapi/app/usr/local/teechat/bin/openapi"
         ));

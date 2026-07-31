@@ -81,7 +81,8 @@ pub fn run() -> anyhow::Result<()> {
         env.usage_signer().context("usage signer")?,
     ));
 
-    let tls_acceptor = build_tls_acceptor_from_material(&env, cert_pem.as_deref(), key_pem.as_deref())?;
+    let tls_acceptor =
+        build_tls_acceptor_from_material(&env, cert_pem.as_deref(), key_pem.as_deref())?;
     let tls_hook = tls_acceptor.map(|acceptor| {
         move |stream: std::net::TcpStream| -> Option<Box<dyn ReadWriteConn>> {
             acceptor
@@ -115,9 +116,7 @@ fn helper_client(env: &SgxEdgeEnv) -> anyhow::Result<CeremonyHelperClient> {
     CeremonyHelperClient::from_url(url).context("ceremony helper")
 }
 
-fn fetch_tls_artifacts(
-    helper: &CeremonyHelperClient,
-) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
+fn fetch_tls_artifacts(helper: &CeremonyHelperClient) -> anyhow::Result<(Vec<u8>, Vec<u8>)> {
     let cert = helper
         .get_artifact("tls.crt")
         .context("fetch tls.crt from ceremony helper")?;

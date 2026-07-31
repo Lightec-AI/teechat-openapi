@@ -266,7 +266,10 @@ fn generate_p256_key_and_csr(domain: &str) -> Result<(String, Vec<u8>), Error> {
 }
 
 /// Build a CSR for an existing PKCS#8 P-256 private key PEM (stable-key renew).
-fn csr_from_private_key_pem(domain: &str, private_key_pem: &str) -> Result<(String, Vec<u8>), Error> {
+fn csr_from_private_key_pem(
+    domain: &str,
+    private_key_pem: &str,
+) -> Result<(String, Vec<u8>), Error> {
     let signing_key = SigningKey::from_pkcs8_pem(private_key_pem)
         .map_err(|e| Error::CryptoKey(format!("decode existing leaf key: {e}")))?;
     let csr_der = build_csr_der(domain, &signing_key)?;

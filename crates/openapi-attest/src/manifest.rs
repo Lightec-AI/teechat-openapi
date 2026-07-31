@@ -434,6 +434,9 @@ mod tests {
             .regions
             .iter()
             .flat_map(|region| &region.active)
-            .all(|release| release.policy_hash.as_deref().is_some_and(|hash| hash.len() == 64)));
+            .all(|release| release
+                .policy_hash
+                .as_deref()
+                .is_some_and(|hash| hash.len() == 64)));
     }
 }

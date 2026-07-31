@@ -141,8 +141,8 @@ fn dispatch(
         }
         ("POST", "/https-relay") => {
             let raw_body = extract_body(raw)?;
-            let req: HttpsRelayRequest = serde_json::from_slice(&raw_body)
-                .context("invalid https-relay JSON")?;
+            let req: HttpsRelayRequest =
+                serde_json::from_slice(&raw_body).context("invalid https-relay JSON")?;
             let resp = perform_https_relay(&req)?;
             let body = serde_json::to_vec(&resp)?;
             Ok((200, body, "application/json"))
@@ -236,7 +236,9 @@ pub(crate) fn allowlist_https_relay_url(url: &str) -> Result<()> {
     let authority = rest.split('/').next().unwrap_or("");
     // Strip optional :port (IPv6 not used for CA ACME hosts).
     let host = match authority.rsplit_once(':') {
-        Some((h, p)) if !h.is_empty() && !h.contains('[') && p.chars().all(|c| c.is_ascii_digit()) => {
+        Some((h, p))
+            if !h.is_empty() && !h.contains('[') && p.chars().all(|c| c.is_ascii_digit()) =>
+        {
             h
         }
         _ => authority,
@@ -483,10 +485,9 @@ mod tests {
 
     #[test]
     fn https_relay_allowlist_accepts_acme_hosts() {
-        assert!(allowlist_https_relay_url(
-            "https://acme-v02.api.letsencrypt.org/directory"
-        )
-        .is_ok());
+        assert!(
+            allowlist_https_relay_url("https://acme-v02.api.letsencrypt.org/directory").is_ok()
+        );
         assert!(allowlist_https_relay_url(
             "https://acme-staging-v02.api.letsencrypt.org/new-nonce"
         )
@@ -497,7 +498,9 @@ mod tests {
 
     #[test]
     fn https_relay_allowlist_rejects_others() {
-        assert!(allowlist_https_relay_url("http://acme-v02.api.letsencrypt.org/directory").is_err());
+        assert!(
+            allowlist_https_relay_url("http://acme-v02.api.letsencrypt.org/directory").is_err()
+        );
         assert!(allowlist_https_relay_url("https://evil.example.com/").is_err());
         assert!(allowlist_https_relay_url("https://letsencrypt.org.evil.com/").is_err());
         assert!(allowlist_https_relay_url("https://notletsencrypt.org/").is_err());
@@ -539,7 +542,10 @@ mod tests {
         assert!(sanitize_challenge_token("a/b").is_err());
         assert!(sanitize_challenge_token(r"a\b").is_err());
         assert!(sanitize_challenge_token("").is_err());
-        assert_eq!(sanitize_challenge_token("abc123_OK-token").unwrap(), "abc123_OK-token");
+        assert_eq!(
+            sanitize_challenge_token("abc123_OK-token").unwrap(),
+            "abc123_OK-token"
+        );
     }
 
     #[test]

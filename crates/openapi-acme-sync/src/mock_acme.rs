@@ -12,7 +12,9 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{RootCertStore, ServerConfig, ServerConnection, StreamOwned};
 
 use crate::https::{ensure_crypto_provider, AcmeTransport, FnDnsResolver, HttpsTransport};
-use crate::provision::{provision_http01, Http01ChallengeSink, MemoryChallengeSink, ProvisionRequest};
+use crate::provision::{
+    provision_http01, Http01ChallengeSink, MemoryChallengeSink, ProvisionRequest,
+};
 use crate::{Account, AccountCredentials, Error, NewAccount};
 
 static NONCE: AtomicU64 = AtomicU64::new(1);
@@ -37,11 +39,11 @@ impl MockAcmeServer {
         let mut params = CertificateParams::new(vec!["localhost".into()])
             .map_err(|e| Error::Http(e.to_string()))?;
         params.distinguished_name = DistinguishedName::new();
-        params
-            .subject_alt_names
-            .push(SanType::DnsName("localhost".try_into().map_err(|e| {
-                Error::Http(format!("san: {e}"))
-            })?));
+        params.subject_alt_names.push(SanType::DnsName(
+            "localhost"
+                .try_into()
+                .map_err(|e| Error::Http(format!("san: {e}")))?,
+        ));
         let cert = params
             .self_signed(&key_pair)
             .map_err(|e| Error::Http(e.to_string()))?;
@@ -100,9 +102,7 @@ impl MockAcmeServer {
 
     pub(crate) fn roots(&self) -> RootCertStore {
         let mut roots = RootCertStore::empty();
-        roots
-            .add(self.cert_der.clone())
-            .expect("add mock root");
+        roots.add(self.cert_der.clone()).expect("add mock root");
         roots
     }
 
@@ -268,8 +268,7 @@ fn pem_response(status: u16, body: &str) -> String {
 }
 
 fn empty_response(status: u16, nonce: Option<&str>, location: Option<&str>) -> String {
-    let mut headers =
-        format!("HTTP/1.1 {status} OK\r\nContent-Length: 0\r\nConnection: close\r\n");
+    let mut headers = format!("HTTP/1.1 {status} OK\r\nContent-Length: 0\r\nConnection: close\r\n");
     if let Some(n) = nonce {
         headers.push_str(&format!("Replay-Nonce: {n}\r\n"));
     }

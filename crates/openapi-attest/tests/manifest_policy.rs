@@ -126,7 +126,8 @@ fn rejects_manifest_policy_opt_out() {
     let bytes = serde_json::to_vec(&value).unwrap();
     let err = parse_and_validate_manifest(&bytes, Some(PINNED_KEY_ID)).unwrap_err();
     assert!(
-        err.to_string().contains("require_runtime_policy_pin must be true"),
+        err.to_string()
+            .contains("require_runtime_policy_pin must be true"),
         "{err}"
     );
 }

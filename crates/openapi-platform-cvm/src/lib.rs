@@ -21,8 +21,8 @@ mod upstream;
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub use attest::CvmAttestationPlatform;
-pub use edge_upstream::EdgeUpstream;
 pub use compile_features::log_compile_time_features;
+pub use edge_upstream::EdgeUpstream;
 pub use env::{load_edge_env, EdgeEnv};
 #[cfg(feature = "catalog-auth")]
 pub use env::{write_dev_catalog, OpenApiAuthMode};

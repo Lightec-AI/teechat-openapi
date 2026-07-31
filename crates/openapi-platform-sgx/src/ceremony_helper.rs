@@ -39,9 +39,8 @@ struct HttpsRelayResponse {
 
 impl CeremonyHelperClient {
     pub fn from_url(url: &str) -> Result<Self, PlatformError> {
-        let endpoint = crate::upstream::parse_http_base_url(url).map_err(|e| {
-            PlatformError::Attestation(format!("OPENAPI_CEREMONY_HELPER_URL: {e}"))
-        })?;
+        let endpoint = crate::upstream::parse_http_base_url(url)
+            .map_err(|e| PlatformError::Attestation(format!("OPENAPI_CEREMONY_HELPER_URL: {e}")))?;
         Ok(Self {
             endpoint,
             artifact_slot: None,
@@ -125,9 +124,8 @@ impl CeremonyHelperClient {
     pub fn resolve_dns(&self, host: &str, port: u16) -> Result<SocketAddr, PlatformError> {
         let path = format!("/dns?host={host}");
         let body = self.http_exchange("GET", &path, None, "application/octet-stream")?;
-        let parsed: DnsResponse = serde_json::from_slice(&body).map_err(|e| {
-            PlatformError::Attestation(format!("ceremony helper dns json: {e}"))
-        })?;
+        let parsed: DnsResponse = serde_json::from_slice(&body)
+            .map_err(|e| PlatformError::Attestation(format!("ceremony helper dns json: {e}")))?;
         let first = parsed
             .addrs
             .first()
@@ -158,27 +156,25 @@ impl CeremonyHelperClient {
         let req_bytes = serde_json::to_vec(&req).map_err(|e| {
             PlatformError::Attestation(format!("ceremony helper https-relay encode: {e}"))
         })?;
-        let resp_body = self.http_exchange(
-            "POST",
-            "/https-relay",
-            Some(&req_bytes),
-            "application/json",
-        )?;
+        let resp_body =
+            self.http_exchange("POST", "/https-relay", Some(&req_bytes), "application/json")?;
         let parsed: HttpsRelayResponse = serde_json::from_slice(&resp_body).map_err(|e| {
             PlatformError::Attestation(format!("ceremony helper https-relay json: {e}"))
         })?;
         let body = base64::engine::general_purpose::STANDARD
             .decode(&parsed.body_b64)
-            .or_else(|_| {
-                base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&parsed.body_b64)
-            })
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&parsed.body_b64))
             .map_err(|e| {
                 PlatformError::Attestation(format!("ceremony helper https-relay body_b64: {e}"))
             })?;
         Ok((parsed.status, parsed.headers, body))
     }
 
-    pub fn place_challenge(&self, token: &str, key_authorization: &str) -> Result<(), PlatformError> {
+    pub fn place_challenge(
+        &self,
+        token: &str,
+        key_authorization: &str,
+    ) -> Result<(), PlatformError> {
         let path = format!("/acme-challenge/{token}");
         let _ = self.http_exchange(
             "PUT",

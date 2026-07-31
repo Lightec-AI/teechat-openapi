@@ -32,9 +32,8 @@ pub struct EdgeRuntimePolicy {
 
 impl EdgeRuntimePolicy {
     pub fn with_engine_identity_pins_sha256(mut self, value: Option<&str>) -> Self {
-        self.engine_identity_pins_sha256 = value
-            .map(str::to_ascii_lowercase)
-            .filter(|s| !s.is_empty());
+        self.engine_identity_pins_sha256 =
+            value.map(str::to_ascii_lowercase).filter(|s| !s.is_empty());
         self
     }
 

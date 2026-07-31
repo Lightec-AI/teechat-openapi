@@ -134,7 +134,10 @@ pub fn canonicalize_edge_identity(edge: &EdgeIdentity) -> Result<EdgeIdentity, C
             image_digest: canonicalize_digest_field(image_digest),
         },
     };
-    let policy_hash = edge.policy_hash.as_ref().map(|h| canonicalize_digest_field(h));
+    let policy_hash = edge
+        .policy_hash
+        .as_ref()
+        .map(|h| canonicalize_digest_field(h));
     Ok(EdgeIdentity {
         build_version: edge.build_version.clone(),
         code_hash,

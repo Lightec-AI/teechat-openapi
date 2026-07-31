@@ -37,15 +37,9 @@ fn main() -> anyhow::Result<()> {
     let seal_root = env.seal_root().context("seal root")?;
 
     let seal_sync_cfg = SealSyncConfig::from_env();
-    let sealed_path = env
-        .tls_sealed_key_path
-        .as_ref()
-        .map(PathBuf::from);
+    let sealed_path = env.tls_sealed_key_path.as_ref().map(PathBuf::from);
     let cert_path = env.tls_cert_path.as_ref().map(PathBuf::from);
-    let sealed_missing = sealed_path
-        .as_ref()
-        .map(|p| !p.exists())
-        .unwrap_or(false);
+    let sealed_missing = sealed_path.as_ref().map(|p| !p.exists()).unwrap_or(false);
 
     let prod = env.profile().is_prod();
     let key_policy = resolve_tls_key_policy_for_profile(prod)
@@ -53,10 +47,7 @@ fn main() -> anyhow::Result<()> {
         .context("tls_key_policy")?;
 
     // Fleet cold start: sealed key absent — run seal-sync import before any unseal.
-    if sealed_missing
-        && seal_sync_cfg.peer.is_some()
-        && key_policy == TlsKeyPolicy::SealSync
-    {
+    if sealed_missing && seal_sync_cfg.peer.is_some() && key_policy == TlsKeyPolicy::SealSync {
         let cert_path = cert_path
             .clone()
             .context("OPENAPI_TLS_CERT_PATH required for seal-sync cold start")?;

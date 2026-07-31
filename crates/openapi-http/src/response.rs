@@ -15,8 +15,10 @@ pub fn is_attestation_challenge_path(path: &str) -> bool {
 }
 
 pub fn build_challenge_cors_preflight() -> Vec<u8> {
-    format!("HTTP/1.1 204 No Content\r\n{CHALLENGE_CORS}Content-Length: 0\r\nConnection: close\r\n\r\n")
-        .into_bytes()
+    format!(
+        "HTTP/1.1 204 No Content\r\n{CHALLENGE_CORS}Content-Length: 0\r\nConnection: close\r\n\r\n"
+    )
+    .into_bytes()
 }
 
 /// Insert challenge CORS headers before the header/body separator.
@@ -162,7 +164,9 @@ mod tests {
     #[test]
     fn challenge_path_matcher() {
         assert!(is_attestation_challenge_path("/v1/attestation/challenge"));
-        assert!(is_attestation_challenge_path("/v1/attestation/challenge?x=1"));
+        assert!(is_attestation_challenge_path(
+            "/v1/attestation/challenge?x=1"
+        ));
         assert!(!is_attestation_challenge_path("/v1/chat/completions"));
     }
 }

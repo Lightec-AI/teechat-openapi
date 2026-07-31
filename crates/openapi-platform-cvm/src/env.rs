@@ -287,9 +287,9 @@ pub fn load_edge_env() -> Result<EdgeEnv, EnvError> {
     #[cfg(feature = "catalog-auth")]
     let auth_mode = {
         if profile.is_prod() {
-            if opt("OPENAPI_AUTH_MODE").is_some_and(|m| {
-                !matches!(m.trim().to_ascii_lowercase().as_str(), "remote" | "d6")
-            }) {
+            if opt("OPENAPI_AUTH_MODE")
+                .is_some_and(|m| !matches!(m.trim().to_ascii_lowercase().as_str(), "remote" | "d6"))
+            {
                 return Err(EnvError::Invalid(
                     "OPENAPI_AUTH_MODE",
                     "prod allows only remote (or unset)".into(),
@@ -422,9 +422,9 @@ mod tests {
     use ed25519_dalek::SigningKey;
     #[cfg(feature = "catalog-auth")]
     use rand::rngs::OsRng;
+    use std::env;
     #[cfg(feature = "catalog-auth")]
     use std::fs;
-    use std::env;
     use std::sync::Mutex;
 
     /// Serialize tests that mutate process-global env (avoid parallel races).

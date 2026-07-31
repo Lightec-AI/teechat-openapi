@@ -323,7 +323,7 @@ where
                 if method == HttpMethod::Post && !body.is_empty() {
                     self.enforce_model_policy(&auth, body)?;
                     enforce_token_quota(&auth.policy, body)?;
-                enforce_max_context(&auth.policy, body)?;
+                    enforce_max_context(&auth.policy, body)?;
                 }
                 let ctx = UpstreamRequestContext::from_auth(&auth.key_id, &auth.policy.key_set);
                 if method == HttpMethod::Post && body_wants_stream(body) {

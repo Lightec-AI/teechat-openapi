@@ -221,8 +221,8 @@ impl AcmeTransport for HttpsTransport {
         let addr = self.resolver.resolve(&host, port)?;
 
         let stream = TcpStream::connect(addr).map_err(Error::HttpIo)?;
-        let server_name = ServerName::try_from(host.clone())
-            .map_err(|_| Error::Str("invalid server name"))?;
+        let server_name =
+            ServerName::try_from(host.clone()).map_err(|_| Error::Str("invalid server name"))?;
         let conn = ClientConnection::new(Arc::clone(&self.config), server_name)
             .map_err(|e| Error::Http(e.to_string()))?;
         let mut tls = StreamOwned::new(conn, stream);
@@ -339,9 +339,7 @@ fn read_http_response<R: Read>(reader: &mut R, head_only: bool) -> Result<HttpRe
     if !parsed.is_complete() {
         return Err(Error::Str("incomplete HTTP response headers"));
     }
-    let status = resp
-        .code
-        .ok_or(Error::Str("missing HTTP status"))?;
+    let status = resp.code.ok_or(Error::Str("missing HTTP status"))?;
 
     let mut header_map = HashMap::new();
     for h in resp.headers.iter() {

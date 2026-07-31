@@ -97,7 +97,11 @@ pub struct SgxLocalSealer {
 }
 
 impl SgxLocalSealer {
-    pub fn new(sealer: SgxSealer, helper: CeremonyHelperClient, seal_root: Option<[u8; 32]>) -> Self {
+    pub fn new(
+        sealer: SgxSealer,
+        helper: CeremonyHelperClient,
+        seal_root: Option<[u8; 32]>,
+    ) -> Self {
         Self {
             sealer,
             helper,
@@ -278,7 +282,10 @@ fn serving_identity_from_cert(
 ) -> anyhow::Result<ServingIdentity> {
     if let Some(pem) = cert_pem {
         let pem_str = std::str::from_utf8(pem).context("cert utf8")?;
-        Ok(ServingIdentity::from_cert_pem(pem_str, measurement.to_owned())?)
+        Ok(ServingIdentity::from_cert_pem(
+            pem_str,
+            measurement.to_owned(),
+        )?)
     } else {
         warn!("seal-sync cold start: no local cert; using placeholder SPKI identity");
         Ok(ServingIdentity {
@@ -366,15 +373,8 @@ pub fn run_seal_sync_client(
 ) -> attested_mtls_seal_sync::Result<SyncOutcome> {
     let audit = StderrAudit;
     info!(%peer, local_spki = %local.spki_sha256, "seal-sync staging → active");
-    let outcome = sync_from_active_tcp_with_gate(
-        peer,
-        local,
-        attestor,
-        sealer,
-        &audit,
-        None,
-        None,
-    )?;
+    let outcome =
+        sync_from_active_tcp_with_gate(peer, local, attestor, sealer, &audit, None, None)?;
     match &outcome {
         SyncOutcome::AlreadyAligned { peer } => {
             info!(peer_spki = %peer.spki_sha256, "seal-sync already_aligned");
