@@ -1,5 +1,6 @@
 //! Hard-cutover upstream: inventory → P1 preassign → Rust OPE → F′ dispatch → OpenAI shape.
 
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::Mutex;
 
@@ -10,8 +11,12 @@ use openapi_core::handler::{
 };
 use openapi_core::models::{ModelObject, ModelsListResponse};
 use openapi_core::upstream::{body_wants_stream, model_from_body};
-use openapi_platform::{verify_ephemeral_engine_trust, EngineIdentityPins, EphemeralEngineTrust};
+use openapi_platform::{
+    accept_engine_recipient, EngineRecipientPolicy, EphemeralEngineTrust, RecipientTrustVia,
+};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tracing::warn;
 
 use crate::gateway_ope_api::{
     DispatchRequest, GatewayOpeApiClient, GatewayOpeApiConfig, GatewayOpeApiError, InventoryEngine,
@@ -34,21 +39,25 @@ pub fn clear_http_break_glass_enabled() -> bool {
 
 pub struct OpeDispatchUpstream {
     client: GatewayOpeApiClient,
-    engine_identity_pins: EngineIdentityPins,
-    epoch_clock_skew_ms: u64,
+    recipient_policy: EngineRecipientPolicy,
+    verify_engine_snp_chain: bool,
+    /// Reports whose AMD chain already verified, keyed by report hash. Epochs
+    /// live for weeks, so this keeps the KDS fetch off the request path without
+    /// ever reusing a verdict for a different report.
+    verified_reports: Mutex<HashSet<String>>,
     /// Serializes inventory+preassign+dispatch per process (v1 pool size often 1).
     lock: Mutex<()>,
 }
 
 impl OpeDispatchUpstream {
     pub fn try_new(config: GatewayOpeApiConfig) -> Result<Self, GatewayOpeApiError> {
-        let engine_identity_pins = config.engine_identity_pins.clone();
-        let epoch_clock_skew_ms =
-            u64::try_from(config.epoch_clock_skew.as_millis()).unwrap_or(u64::MAX);
+        let recipient_policy = config.recipient_policy.clone();
+        let verify_engine_snp_chain = config.verify_engine_snp_chain;
         Ok(Self {
             client: GatewayOpeApiClient::try_new(config)?,
-            engine_identity_pins,
-            epoch_clock_skew_ms,
+            recipient_policy,
+            verify_engine_snp_chain,
+            verified_reports: Mutex::new(HashSet::new()),
             lock: Mutex::new(()),
         })
     }
@@ -146,13 +155,55 @@ impl OpeDispatchUpstream {
             ed25519_public: &pre.trust.identity.ed25519_public,
             identity_signature: &pre.trust.identity.identity_signature,
         };
-        verify_ephemeral_engine_trust(
-            &self.engine_identity_pins,
+        // The gateway chose this engine; the edge decides whether its keys may
+        // receive customer plaintext (RB-46).
+        let accepted = accept_engine_recipient(
+            &self.recipient_policy,
             &trust,
+            pre.trust.cpu_quote(),
+            None,
             now_ms,
-            self.epoch_clock_skew_ms,
         )
-        .map_err(|e| ApiError::Forbidden(format!("untrusted OPE engine identity: {e}")))
+        .map_err(|e| ApiError::Forbidden(format!("untrusted OPE engine recipient: {e}")))?;
+        if let Some(report_b64) = accepted.report_b64.as_deref() {
+            self.verify_report_chain(report_b64)?;
+        }
+        if accepted.via == RecipientTrustVia::IdentitySignature {
+            warn!(
+                engine_id = %pre.trust.engine_id,
+                epoch_id = %pre.trust.epoch_id,
+                "OPE recipient accepted on the legacy identity pin; engine predates per-epoch evidence (RB-45)"
+            );
+        }
+        Ok(())
+    }
+
+    /// AMD chain verification over the report the epoch keys were found in.
+    ///
+    /// Optional because it needs egress to the AMD KDS, which the SGX lab and
+    /// some closed deployments do not have. When it is on, an unverifiable
+    /// report is a refusal, not a warning.
+    fn verify_report_chain(&self, report_b64: &str) -> Result<(), ApiError> {
+        if !self.verify_engine_snp_chain {
+            return Ok(());
+        }
+        let key = hex::encode(Sha256::digest(report_b64.as_bytes()));
+        if self
+            .verified_reports
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(&key)
+        {
+            return Ok(());
+        }
+        openapi_attest::snp::verify_snp_report(report_b64, true).map_err(|e| {
+            ApiError::Forbidden(format!("engine SNP report failed chain verification: {e}"))
+        })?;
+        self.verified_reports
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(key);
+        Ok(())
     }
 
     fn prepare(
@@ -268,9 +319,8 @@ impl UpstreamForwarder for OpeDispatchUpstream {
 
         let text = decrypt_ope_body_to_text(&enc, &raw, ct)?;
         if path.contains("embeddings") {
-            let embeddings: Value = serde_json::from_str(&text).map_err(|e| {
-                ApiError::Upstream(format!("embeddings response is not JSON: {e}"))
-            })?;
+            let embeddings: Value = serde_json::from_str(&text)
+                .map_err(|e| ApiError::Upstream(format!("embeddings response is not JSON: {e}")))?;
             if embeddings.get("object").and_then(|v| v.as_str()) == Some("chat.completion") {
                 return Err(ApiError::Upstream(
                     "embeddings path returned chat.completion".into(),
@@ -691,34 +741,85 @@ fn uuid_like() -> String {
 #[cfg(test)]
 mod trust_tests {
     use super::*;
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
     use base64::Engine;
     use ed25519_dalek::{Signer, SigningKey};
-    use openapi_platform::{ephemeral_signing_bytes, EphemeralEngineTrust};
+    use openapi_platform::{
+        bind_epoch_report_data_64, compose_launch_digest, ephemeral_signing_bytes,
+        EngineIdentityPins, EphemeralEngineTrust, QuoteEpochClaims,
+    };
 
-    fn fixture() -> (
-        OpeDispatchUpstream,
-        PreassignResponse,
-        InventoryEngine,
-        UpstreamRequestContext,
-    ) {
-        let key = SigningKey::from_bytes(&[9u8; 32]);
-        let public = URL_SAFE_NO_PAD.encode(key.verifying_key().to_bytes());
-        let pins =
-            EngineIdentityPins::parse_json(&format!(r#"{{"engine-1":"{public}"}}"#)).unwrap();
+    const MLKEM: &str = "bWxrZW0";
+    const X25519: &str = "eDI1NTE5";
+    const NOT_BEFORE: &str = "2020-01-01T00:00:00.000Z";
+    const NOT_AFTER: &str = "2099-01-01T00:00:00.000Z";
+    const ISSUED_AT: &str = "2026-07-31T00:00:00.000Z";
+    const TLS_HASH: &str = "cc";
+    const REPORT_DATA_OFFSET: usize = 0x50;
+    const MEASUREMENT_OFFSET: usize = 0x90;
+
+    fn epoch_claims() -> QuoteEpochClaims {
+        QuoteEpochClaims {
+            engine_id: "engine-1".into(),
+            epoch_id: "epoch-1".into(),
+            not_before: NOT_BEFORE.into(),
+            not_after: NOT_AFTER.into(),
+            mlkem_encapsulation_key: MLKEM.into(),
+            x25519_public: X25519.into(),
+            usage_signing_public: "dXNhZ2U".into(),
+        }
+    }
+
+    fn golden_launch_digest() -> String {
+        compose_launch_digest(&"ab".repeat(48))
+    }
+
+    /// A wrapper shaped like the one the engine emits, minus the AMD signature.
+    fn epoch_quote(claims: &QuoteEpochClaims) -> String {
+        let mut report = vec![0u8; 1184];
+        report[MEASUREMENT_OFFSET..MEASUREMENT_OFFSET + 48].copy_from_slice(&[0xab; 48]);
+        let report_data =
+            bind_epoch_report_data_64(claims, TLS_HASH, "", "", ISSUED_AT, None).to_vec();
+        report[REPORT_DATA_OFFSET..REPORT_DATA_OFFSET + 64].copy_from_slice(&report_data);
+        URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&json!({
+                "v": 2,
+                "kind": "sev-snp",
+                "report_b64": STANDARD.encode(&report),
+                "report_data_b64": STANDARD.encode(&report_data),
+                "claims": {
+                    "v": 1,
+                    "kind": "sev-snp",
+                    "ed25519_public": "aWQ",
+                    "tls_client_cert_sha256": TLS_HASH,
+                    "engine": { "version": "0.12.1", "binary_sha256": "" },
+                    "vllm": { "version": "v1", "binary_sha256": "" },
+                    "issued_at": ISSUED_AT,
+                    "epoch": claims,
+                },
+            }))
+            .unwrap(),
+        )
+    }
+
+    fn preassign(quote: Option<String>, signing_key: &SigningKey) -> PreassignResponse {
+        let public = URL_SAFE_NO_PAD.encode(signing_key.verifying_key().to_bytes());
         let unsigned = EphemeralEngineTrust {
             engine_id: "engine-1",
             epoch_id: "epoch-1",
-            not_before: "2020-01-01T00:00:00.000Z",
-            not_after: "2099-01-01T00:00:00.000Z",
-            mlkem_encapsulation_key: "mlkem",
-            x25519_public: "x25519",
+            not_before: NOT_BEFORE,
+            not_after: NOT_AFTER,
+            mlkem_encapsulation_key: MLKEM,
+            x25519_public: X25519,
             ed25519_public: &public,
             identity_signature: "",
         };
-        let signature =
-            URL_SAFE_NO_PAD.encode(key.sign(&ephemeral_signing_bytes(&unsigned)).to_bytes());
-        let pre = PreassignResponse {
+        let signature = URL_SAFE_NO_PAD.encode(
+            signing_key
+                .sign(&ephemeral_signing_bytes(&unsigned))
+                .to_bytes(),
+        );
+        PreassignResponse {
             assign_id: "assign-1".into(),
             engine_id: "engine-1".into(),
             engine_set: "shared".into(),
@@ -729,36 +830,88 @@ mod trust_tests {
             trust: crate::gateway_ope_api::PreassignTrust {
                 engine_id: "engine-1".into(),
                 epoch_id: "epoch-1".into(),
-                not_before: "2020-01-01T00:00:00.000Z".into(),
-                not_after: "2099-01-01T00:00:00.000Z".into(),
+                not_before: NOT_BEFORE.into(),
+                not_after: NOT_AFTER.into(),
                 hybrid: crate::gateway_ope_api::PreassignTrustHybrid {
                     kex: "X25519MLKEM768".into(),
-                    mlkem_encapsulation_key: "mlkem".into(),
-                    x25519_public: "x25519".into(),
+                    mlkem_encapsulation_key: MLKEM.into(),
+                    x25519_public: X25519.into(),
                 },
                 identity: crate::gateway_ope_api::PreassignTrustIdentity {
                     ed25519_public: public,
                     identity_signature: signature,
                 },
+                attestation: quote.map(|q| crate::gateway_ope_api::PreassignTrustAttestation {
+                    cpu_tee: Some(crate::gateway_ope_api::PreassignTrustCpuTee {
+                        kind: "sev-snp".into(),
+                        quote: q,
+                    }),
+                }),
             },
-        };
-        let engine = InventoryEngine {
+        }
+    }
+
+    fn upstream_with(policy: EngineRecipientPolicy) -> OpeDispatchUpstream {
+        let mut config =
+            GatewayOpeApiConfig::from_parts("http://127.0.0.1:1", None, None, None, None, false)
+                .unwrap();
+        config.engine_identity_pins = policy.identity_pins.clone();
+        config.recipient_policy = policy;
+        OpeDispatchUpstream::try_new(config).unwrap()
+    }
+
+    fn inventory_engine() -> InventoryEngine {
+        InventoryEngine {
             engine_id: "engine-1".into(),
             engine_set: "shared".into(),
             models: vec!["m1".into()],
             healthy: true,
             ready_sessions: 1,
-        };
-        let ctx = UpstreamRequestContext {
+        }
+    }
+
+    fn ctx() -> UpstreamRequestContext {
+        UpstreamRequestContext {
             key_id: "key-1".into(),
             key_set: "api".into(),
-        };
-        let mut config =
-            GatewayOpeApiConfig::from_parts("http://127.0.0.1:1", None, None, None, None, false)
-                .unwrap();
-        config.engine_identity_pins = pins;
-        let upstream = OpeDispatchUpstream::try_new(config).unwrap();
-        (upstream, pre, engine, ctx)
+        }
+    }
+
+    fn legacy_policy(key: &SigningKey) -> EngineRecipientPolicy {
+        let public = URL_SAFE_NO_PAD.encode(key.verifying_key().to_bytes());
+        EngineRecipientPolicy {
+            identity_pins: EngineIdentityPins::parse_json(&format!(r#"{{"engine-1":"{public}"}}"#))
+                .unwrap(),
+            epoch_clock_skew_ms: 300_000,
+            ..Default::default()
+        }
+    }
+
+    fn strict_policy() -> EngineRecipientPolicy {
+        EngineRecipientPolicy {
+            require_epoch_evidence: true,
+            require_launch_digest: true,
+            launch_digest_allowlist: [golden_launch_digest()].into_iter().collect(),
+            epoch_clock_skew_ms: 300_000,
+            ..Default::default()
+        }
+    }
+
+    /// Legacy fixture: pinned identity, no epoch evidence. Kept until the fleet
+    /// is cut over so a regression in the compatibility path is visible.
+    fn fixture() -> (
+        OpeDispatchUpstream,
+        PreassignResponse,
+        InventoryEngine,
+        UpstreamRequestContext,
+    ) {
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        (
+            upstream_with(legacy_policy(&key)),
+            preassign(None, &key),
+            inventory_engine(),
+            ctx(),
+        )
     }
 
     #[test]
@@ -787,6 +940,92 @@ mod trust_tests {
         pre.key_set = "wrong".into();
         assert!(matches!(
             upstream.verify_preassign(&pre, &engine, &ctx),
+            Err(ApiError::Forbidden(_))
+        ));
+    }
+
+    #[test]
+    fn accepts_a_preassignment_backed_by_per_epoch_evidence() {
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        let claims = epoch_claims();
+        let upstream = upstream_with(strict_policy());
+        upstream
+            .verify_preassign(
+                &preassign(Some(epoch_quote(&claims)), &key),
+                &inventory_engine(),
+                &ctx(),
+            )
+            .expect("accepted");
+    }
+
+    #[test]
+    fn refuses_recipient_keys_the_report_does_not_name() {
+        // A relay that keeps the engine's real report but swaps the keys the
+        // edge would encrypt to is the whole reason the edge re-derives this.
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        let claims = epoch_claims();
+        let mut pre = preassign(Some(epoch_quote(&claims)), &key);
+        pre.trust.hybrid.x25519_public = "relay-key".into();
+        let err = upstream_with(strict_policy())
+            .verify_preassign(&pre, &inventory_engine(), &ctx())
+            .unwrap_err();
+        assert!(
+            matches!(&err, ApiError::Forbidden(m) if m.contains("X25519")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn refuses_an_engine_image_outside_the_allowlist() {
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        let claims = epoch_claims();
+        let mut policy = strict_policy();
+        policy.launch_digest_allowlist = [compose_launch_digest(&"00".repeat(48))]
+            .into_iter()
+            .collect();
+        let err = upstream_with(policy)
+            .verify_preassign(
+                &preassign(Some(epoch_quote(&claims)), &key),
+                &inventory_engine(),
+                &ctx(),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&err, ApiError::Forbidden(m) if m.contains("not allowlisted")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn refuses_a_pin_only_preassignment_once_epoch_evidence_is_required() {
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        let mut policy = strict_policy();
+        policy.identity_pins = legacy_policy(&key).identity_pins;
+        let err = upstream_with(policy)
+            .verify_preassign(&preassign(None, &key), &inventory_engine(), &ctx())
+            .unwrap_err();
+        assert!(
+            matches!(&err, ApiError::Forbidden(m) if m.contains("launch measurement")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn chain_verification_is_skipped_when_disabled_and_cached_once_verified() {
+        let upstream = upstream_with(strict_policy());
+        assert!(upstream.verify_report_chain("not-a-real-report").is_ok());
+    }
+
+    #[test]
+    fn chain_verification_refuses_an_unverifiable_report_when_enabled() {
+        let mut config =
+            GatewayOpeApiConfig::from_parts("http://127.0.0.1:1", None, None, None, None, false)
+                .unwrap();
+        config.recipient_policy = strict_policy();
+        config.verify_engine_snp_chain = true;
+        let upstream = OpeDispatchUpstream::try_new(config).unwrap();
+        assert!(matches!(
+            upstream.verify_report_chain(&STANDARD.encode([0u8; 1184])),
             Err(ApiError::Forbidden(_))
         ));
     }

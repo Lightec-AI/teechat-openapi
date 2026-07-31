@@ -148,7 +148,7 @@ fn decode_public_key(value: &str) -> Result<[u8; 32], EngineTrustError> {
         .map_err(|_| EngineTrustError::InvalidPublicKey)
 }
 
-fn parse_rfc3339_ms(value: &str) -> Result<u64, EngineTrustError> {
+pub(crate) fn parse_rfc3339_ms(value: &str) -> Result<u64, EngineTrustError> {
     let (date, time) = value
         .trim()
         .strip_suffix('Z')

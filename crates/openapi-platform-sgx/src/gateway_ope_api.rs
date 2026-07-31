@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use openapi_core::http1_body::{read_response_headers, BodyFraming};
-use openapi_platform::{EdgeProfile, EngineIdentityPins};
+use openapi_platform::{EdgeProfile, EngineIdentityPins, EngineRecipientPolicy};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{CryptoProvider, WebPkiSupportedAlgorithms};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
@@ -65,6 +65,11 @@ pub struct GatewayOpeApiConfig {
     pub read_timeout: Duration,
     pub engine_identity_pins: EngineIdentityPins,
     pub epoch_clock_skew: Duration,
+    /// Which engine keys customer plaintext may be encrypted to (RB-46/47).
+    ///
+    /// The lab enclave verifies the epoch binding and the launch-digest pin but
+    /// not the AMD chain: `openapi-attest` does not link under Fortanix EDP.
+    pub recipient_policy: EngineRecipientPolicy,
 }
 
 impl GatewayOpeApiConfig {
@@ -81,19 +86,36 @@ impl GatewayOpeApiConfig {
             opt_env("OPENAPI_GATEWAY_OPE_API_TLS_CA_PEM"),
             truthy_env("OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY"),
         )?;
-        let pins_json = opt_env("OPENAPI_ENGINE_IDENTITY_PINS_JSON").ok_or_else(|| {
-            GatewayOpeApiError::Config(
-                "OPENAPI_ENGINE_IDENTITY_PINS_JSON required when OPE dispatch is enabled".into(),
-            )
-        })?;
-        cfg.engine_identity_pins = EngineIdentityPins::parse_json(&pins_json)
-            .map_err(|e| GatewayOpeApiError::Config(e.to_string()))?;
-        if cfg.engine_identity_pins.is_empty() {
-            return Err(GatewayOpeApiError::Config(
-                "OPENAPI_ENGINE_IDENTITY_PINS_JSON must contain at least one engine".into(),
-            ));
+        let require_epoch_evidence = truthy_env("OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE");
+        match opt_env("OPENAPI_ENGINE_IDENTITY_PINS_JSON") {
+            Some(pins_json) => {
+                cfg.engine_identity_pins = EngineIdentityPins::parse_json(&pins_json)
+                    .map_err(|e| GatewayOpeApiError::Config(e.to_string()))?;
+                if cfg.engine_identity_pins.is_empty() && !require_epoch_evidence {
+                    return Err(GatewayOpeApiError::Config(
+                        "OPENAPI_ENGINE_IDENTITY_PINS_JSON must contain at least one engine".into(),
+                    ));
+                }
+            }
+            None if require_epoch_evidence => {}
+            None => {
+                return Err(GatewayOpeApiError::Config(
+                    "OPENAPI_ENGINE_IDENTITY_PINS_JSON required unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1"
+                        .into(),
+                ));
+            }
         }
         cfg.epoch_clock_skew = duration_secs_from_env("OPENAPI_OPE_EPOCH_CLOCK_SKEW_SEC", 300);
+        cfg.recipient_policy = EngineRecipientPolicy {
+            identity_pins: cfg.engine_identity_pins.clone(),
+            launch_digest_allowlist: EngineRecipientPolicy::parse_launch_digest_allowlist(
+                &opt_env("OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST").unwrap_or_default(),
+            ),
+            require_epoch_evidence,
+            require_launch_digest: truthy_env("OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST"),
+            epoch_clock_skew_ms: u64::try_from(cfg.epoch_clock_skew.as_millis())
+                .unwrap_or(u64::MAX),
+        };
         let profile = openapi_platform::load_edge_profile()
             .map_err(|e| GatewayOpeApiError::Config(e.to_string()))?;
         cfg.validate_for_profile(profile)?;
@@ -158,6 +180,10 @@ impl GatewayOpeApiConfig {
             read_timeout: duration_secs_from_env("OPENAPI_GATEWAY_OPE_API_READ_TIMEOUT_SECS", 300),
             engine_identity_pins: EngineIdentityPins::default(),
             epoch_clock_skew: Duration::from_secs(300),
+            recipient_policy: EngineRecipientPolicy {
+                epoch_clock_skew_ms: 300_000,
+                ..Default::default()
+            },
         })
     }
 
@@ -170,9 +196,21 @@ impl GatewayOpeApiConfig {
                     .into(),
             ));
         }
-        if profile.is_prod() && self.engine_identity_pins.is_empty() {
+        if profile.is_prod()
+            && self.engine_identity_pins.is_empty()
+            && !self.recipient_policy.require_epoch_evidence
+        {
             return Err(GatewayOpeApiError::Config(
-                "OPENAPI_ENGINE_IDENTITY_PINS_JSON required in prod".into(),
+                "OPENAPI_ENGINE_IDENTITY_PINS_JSON required in prod unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1"
+                    .into(),
+            ));
+        }
+        if self.recipient_policy.require_launch_digest
+            && self.recipient_policy.launch_digest_allowlist.is_empty()
+        {
+            return Err(GatewayOpeApiError::Config(
+                "OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST required when OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST=1"
+                    .into(),
             ));
         }
         require_ip_https_base_url(&self.base_url)?;
@@ -195,11 +233,15 @@ fn parse_https_ip_endpoint(base_url: &str) -> Result<(String, u16), GatewayOpeAp
         )
     })?;
     let (host, port_str) = rest.rsplit_once(':').ok_or_else(|| {
-        GatewayOpeApiError::Config("OPENAPI_GATEWAY_OPE_API_URL must include an explicit port".into())
+        GatewayOpeApiError::Config(
+            "OPENAPI_GATEWAY_OPE_API_URL must include an explicit port".into(),
+        )
     })?;
-    let port: u16 = port_str
-        .parse()
-        .map_err(|_| GatewayOpeApiError::Config(format!("invalid port in OPENAPI_GATEWAY_OPE_API_URL: {port_str}")))?;
+    let port: u16 = port_str.parse().map_err(|_| {
+        GatewayOpeApiError::Config(format!(
+            "invalid port in OPENAPI_GATEWAY_OPE_API_URL: {port_str}"
+        ))
+    })?;
     host.parse::<IpAddr>().map_err(|_| {
         GatewayOpeApiError::Config(format!(
             "OPENAPI_GATEWAY_OPE_API_URL host `{host}` must be a literal IP address (no DNS in SGX enclave)"
@@ -574,8 +616,12 @@ fn read_chunk_size<R: Read>(r: &mut R) -> std::io::Result<usize> {
     let line = read_line_bytes(r)?;
     let s = String::from_utf8_lossy(&line);
     let size_str = s.split(';').next().unwrap_or("").trim();
-    usize::from_str_radix(size_str, 16)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("invalid chunk size: {e}")))
+    usize::from_str_radix(size_str, 16).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("invalid chunk size: {e}"),
+        )
+    })
 }
 
 fn consume_line<R: Read>(r: &mut R) -> std::io::Result<()> {
@@ -647,6 +693,22 @@ pub struct PreassignTrustIdentity {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct PreassignTrustCpuTee {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub quote: String,
+}
+
+/// Engine attestation relayed with the preassignment (RB-46). Only the CPU
+/// quote is read: it is what recipient trust is re-derived from.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PreassignTrustAttestation {
+    #[serde(default)]
+    pub cpu_tee: Option<PreassignTrustCpuTee>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct PreassignTrust {
     pub engine_id: String,
     pub epoch_id: String,
@@ -654,6 +716,21 @@ pub struct PreassignTrust {
     pub not_after: String,
     pub hybrid: PreassignTrustHybrid,
     pub identity: PreassignTrustIdentity,
+    /// Absent from gateways predating RB-46.
+    #[serde(default)]
+    pub attestation: Option<PreassignTrustAttestation>,
+}
+
+impl PreassignTrust {
+    /// The SEV-SNP quote the epoch keys must be found in, when one was relayed.
+    pub fn cpu_quote(&self) -> Option<&str> {
+        self.attestation
+            .as_ref()?
+            .cpu_tee
+            .as_ref()
+            .map(|c| c.quote.trim())
+            .filter(|q| !q.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1003,7 +1080,10 @@ mod tests {
     fn rejects_dns_name_host() {
         let _g = env_lock();
         clear_ope_env();
-        std::env::set_var("OPENAPI_GATEWAY_OPE_API_URL", "https://gateway.example.com:8791");
+        std::env::set_var(
+            "OPENAPI_GATEWAY_OPE_API_URL",
+            "https://gateway.example.com:8791",
+        );
         let err = GatewayOpeApiConfig::from_env().unwrap_err();
         assert!(matches!(err, GatewayOpeApiError::Config(_)));
         let msg = err.to_string();
@@ -1029,8 +1109,16 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let cert_path = dir.join("client.crt");
         let key_path = dir.join("client.key");
-        fs::write(&cert_path, "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n").unwrap();
-        fs::write(&key_path, "-----BEGIN PRIVATE KEY-----\nAA==\n-----END PRIVATE KEY-----\n").unwrap();
+        fs::write(
+            &cert_path,
+            "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        fs::write(
+            &key_path,
+            "-----BEGIN PRIVATE KEY-----\nAA==\n-----END PRIVATE KEY-----\n",
+        )
+        .unwrap();
 
         std::env::set_var("OPENAPI_GATEWAY_OPE_API_URL", "https://127.0.0.1:8791");
         std::env::set_var(

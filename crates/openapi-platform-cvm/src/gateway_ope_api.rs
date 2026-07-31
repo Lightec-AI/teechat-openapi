@@ -8,7 +8,7 @@ use std::io::{Cursor, Read};
 use std::sync::Arc;
 use std::time::Duration;
 
-use openapi_platform::{EdgeProfile, EngineIdentityPins};
+use openapi_platform::{EdgeProfile, EngineIdentityPins, EngineRecipientPolicy};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::version::TLS13;
@@ -50,6 +50,11 @@ pub struct GatewayOpeApiConfig {
     pub read_timeout: Duration,
     pub engine_identity_pins: EngineIdentityPins,
     pub epoch_clock_skew: Duration,
+    /// Which engine keys customer plaintext may be encrypted to (RB-46/47).
+    pub recipient_policy: EngineRecipientPolicy,
+    /// Verify the AMD chain over the engine report the epoch keys live in.
+    /// Needs egress to the AMD KDS; results are cached per report.
+    pub verify_engine_snp_chain: bool,
 }
 
 impl GatewayOpeApiConfig {
@@ -66,19 +71,40 @@ impl GatewayOpeApiConfig {
             opt_env("OPENAPI_GATEWAY_OPE_API_TLS_CA_PEM"),
             truthy_env("OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY"),
         )?;
-        let pins_json = opt_env("OPENAPI_ENGINE_IDENTITY_PINS_JSON").ok_or_else(|| {
-            GatewayOpeApiError::Config(
-                "OPENAPI_ENGINE_IDENTITY_PINS_JSON required when OPE dispatch is enabled".into(),
-            )
-        })?;
-        cfg.engine_identity_pins = EngineIdentityPins::parse_json(&pins_json)
-            .map_err(|e| GatewayOpeApiError::Config(e.to_string()))?;
-        if cfg.engine_identity_pins.is_empty() {
-            return Err(GatewayOpeApiError::Config(
-                "OPENAPI_ENGINE_IDENTITY_PINS_JSON must contain at least one engine".into(),
-            ));
+        let require_epoch_evidence = truthy_env("OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE");
+        // Pins are the pre-RB-45 recipient check. They stay mandatory until the
+        // edge is told to demand per-epoch evidence, because dropping them
+        // first would leave the recipient decision to the relay.
+        match opt_env("OPENAPI_ENGINE_IDENTITY_PINS_JSON") {
+            Some(pins_json) => {
+                cfg.engine_identity_pins = EngineIdentityPins::parse_json(&pins_json)
+                    .map_err(|e| GatewayOpeApiError::Config(e.to_string()))?;
+                if cfg.engine_identity_pins.is_empty() && !require_epoch_evidence {
+                    return Err(GatewayOpeApiError::Config(
+                        "OPENAPI_ENGINE_IDENTITY_PINS_JSON must contain at least one engine".into(),
+                    ));
+                }
+            }
+            None if require_epoch_evidence => {}
+            None => {
+                return Err(GatewayOpeApiError::Config(
+                    "OPENAPI_ENGINE_IDENTITY_PINS_JSON required unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1"
+                        .into(),
+                ));
+            }
         }
         cfg.epoch_clock_skew = duration_secs_from_env("OPENAPI_OPE_EPOCH_CLOCK_SKEW_SEC", 300);
+        cfg.recipient_policy = EngineRecipientPolicy {
+            identity_pins: cfg.engine_identity_pins.clone(),
+            launch_digest_allowlist: EngineRecipientPolicy::parse_launch_digest_allowlist(
+                &opt_env("OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST").unwrap_or_default(),
+            ),
+            require_epoch_evidence,
+            require_launch_digest: truthy_env("OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST"),
+            epoch_clock_skew_ms: u64::try_from(cfg.epoch_clock_skew.as_millis())
+                .unwrap_or(u64::MAX),
+        };
+        cfg.verify_engine_snp_chain = truthy_env("OPENAPI_OPE_VERIFY_ENGINE_SNP_CHAIN");
         let profile = openapi_platform::load_edge_profile()
             .map_err(|e| GatewayOpeApiError::Config(e.to_string()))?;
         cfg.validate_for_profile(profile)?;
@@ -117,6 +143,11 @@ impl GatewayOpeApiConfig {
             read_timeout: duration_secs_from_env("OPENAPI_GATEWAY_OPE_API_READ_TIMEOUT_SECS", 300),
             engine_identity_pins: EngineIdentityPins::default(),
             epoch_clock_skew: Duration::from_secs(300),
+            recipient_policy: EngineRecipientPolicy {
+                epoch_clock_skew_ms: 300_000,
+                ..Default::default()
+            },
+            verify_engine_snp_chain: false,
         })
     }
 
@@ -133,9 +164,22 @@ impl GatewayOpeApiConfig {
                 "OPENAPI_GATEWAY_OPE_API_URL must use https:// when OPENAPI_PROFILE=prod".into(),
             ));
         }
-        if profile.is_prod() && self.engine_identity_pins.is_empty() {
+        if profile.is_prod()
+            && self.engine_identity_pins.is_empty()
+            && !self.recipient_policy.require_epoch_evidence
+        {
             return Err(GatewayOpeApiError::Config(
-                "OPENAPI_ENGINE_IDENTITY_PINS_JSON required in prod".into(),
+                "OPENAPI_ENGINE_IDENTITY_PINS_JSON required in prod unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1"
+                    .into(),
+            ));
+        }
+        // Fail at boot rather than on the first customer request.
+        if self.recipient_policy.require_launch_digest
+            && self.recipient_policy.launch_digest_allowlist.is_empty()
+        {
+            return Err(GatewayOpeApiError::Config(
+                "OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST required when OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST=1"
+                    .into(),
             ));
         }
         Ok(())
@@ -407,6 +451,24 @@ pub struct PreassignTrustIdentity {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct PreassignTrustCpuTee {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub quote: String,
+}
+
+/// Engine attestation relayed with the preassignment. Only the CPU quote is
+/// read here: it is the artifact the edge re-derives recipient trust from
+/// (RB-46), so the rest of the bundle is the gateway's business, not the
+/// edge's.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PreassignTrustAttestation {
+    #[serde(default)]
+    pub cpu_tee: Option<PreassignTrustCpuTee>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct PreassignTrust {
     pub engine_id: String,
     pub epoch_id: String,
@@ -414,6 +476,21 @@ pub struct PreassignTrust {
     pub not_after: String,
     pub hybrid: PreassignTrustHybrid,
     pub identity: PreassignTrustIdentity,
+    /// Absent from gateways predating RB-46.
+    #[serde(default)]
+    pub attestation: Option<PreassignTrustAttestation>,
+}
+
+impl PreassignTrust {
+    /// The SEV-SNP quote the epoch keys must be found in, when one was relayed.
+    pub fn cpu_quote(&self) -> Option<&str> {
+        self.attestation
+            .as_ref()?
+            .cpu_tee
+            .as_ref()
+            .map(|c| c.quote.trim())
+            .filter(|q| !q.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -719,6 +796,10 @@ mod tests {
             "OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY",
             "OPENAPI_ENGINE_IDENTITY_PINS_JSON",
             "OPENAPI_OPE_EPOCH_CLOCK_SKEW_SEC",
+            "OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE",
+            "OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST",
+            "OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST",
+            "OPENAPI_OPE_VERIFY_ENGINE_SNP_CHAIN",
             "OPENAPI_PROFILE",
         ] {
             std::env::remove_var(k);
@@ -831,6 +912,63 @@ mod tests {
         assert_eq!(cfg.base_url, "https://10.0.0.2:8791");
         assert_eq!(cfg.token.as_deref(), Some("secret"));
         assert!(!cfg.insecure_skip_verify);
+        clear_ope_env();
+    }
+
+    #[test]
+    fn from_env_loads_the_recipient_policy() {
+        let _g = env_lock();
+        clear_ope_env();
+        std::env::set_var("OPENAPI_GATEWAY_OPE_API_URL", "https://10.0.0.2:8791");
+        std::env::set_var("OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE", "1");
+        std::env::set_var("OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST", "true");
+        std::env::set_var("OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST", "AABB, ccdd");
+        std::env::set_var("OPENAPI_OPE_VERIFY_ENGINE_SNP_CHAIN", "yes");
+        let cfg = GatewayOpeApiConfig::from_env().unwrap().unwrap();
+        assert!(cfg.recipient_policy.require_epoch_evidence);
+        assert!(cfg.recipient_policy.require_launch_digest);
+        assert!(cfg.verify_engine_snp_chain);
+        assert_eq!(
+            cfg.recipient_policy
+                .launch_digest_allowlist
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["aabb".to_string(), "ccdd".to_string()]
+        );
+        clear_ope_env();
+    }
+
+    #[test]
+    fn from_env_keeps_pins_mandatory_until_epoch_evidence_is_required() {
+        let _g = env_lock();
+        clear_ope_env();
+        std::env::remove_var("OPENAPI_ENGINE_IDENTITY_PINS_JSON");
+        std::env::set_var("OPENAPI_GATEWAY_OPE_API_URL", "https://10.0.0.2:8791");
+        let err = GatewayOpeApiConfig::from_env().unwrap_err();
+        assert!(
+            matches!(&err, GatewayOpeApiError::Config(m) if m.contains("OPENAPI_ENGINE_IDENTITY_PINS_JSON")),
+            "unexpected error: {err:?}"
+        );
+
+        // With per-epoch evidence required, the pin is dead weight (RB-52).
+        std::env::set_var("OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE", "1");
+        let cfg = GatewayOpeApiConfig::from_env().unwrap().unwrap();
+        assert!(cfg.engine_identity_pins.is_empty());
+        clear_ope_env();
+    }
+
+    #[test]
+    fn from_env_rejects_a_measurement_pin_with_no_allowlist() {
+        let _g = env_lock();
+        clear_ope_env();
+        std::env::set_var("OPENAPI_GATEWAY_OPE_API_URL", "https://10.0.0.2:8791");
+        std::env::set_var("OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST", "1");
+        let err = GatewayOpeApiConfig::from_env().unwrap_err();
+        assert!(
+            matches!(&err, GatewayOpeApiError::Config(m) if m.contains("OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST")),
+            "unexpected error: {err:?}"
+        );
         clear_ope_env();
     }
 

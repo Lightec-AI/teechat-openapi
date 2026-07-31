@@ -182,6 +182,7 @@ mod tests {
                 ed25519_public: identity.ed25519_public.clone(),
                 identity_signature: String::new(),
             },
+            attestation: None,
         };
         let payload = json!({
             "model": "m1",

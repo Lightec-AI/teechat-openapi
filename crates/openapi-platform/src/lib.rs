@@ -5,7 +5,10 @@
 
 mod challenge;
 mod edge_policy;
+mod engine_recipient;
 mod engine_trust;
+mod epoch_evidence;
+mod launch_digest;
 mod profile;
 mod seal;
 pub mod tls;
@@ -21,9 +24,21 @@ pub use challenge::{
     SGX_REPORT_DATA_OFFSET, SNP_REPORT_DATA_OFFSET,
 };
 pub use edge_policy::{edge_runtime_policy_from_parts, EdgeRuntimePolicy};
+pub use engine_recipient::{
+    accept_engine_recipient, AcceptedRecipient, EngineRecipientPolicy, RecipientError,
+    RecipientTrustVia,
+};
 pub use engine_trust::{
     ephemeral_signing_bytes, verify_ephemeral_engine_trust, EngineIdentityPins, EngineTrustError,
     EphemeralEngineTrust,
+};
+pub use epoch_evidence::{
+    bind_epoch_report_data_64, quote_has_epoch_evidence, verify_epoch_evidence, EpochEvidenceError,
+    EpochEvidenceSubject, QuoteEpochClaims, VerifiedEpochEvidence,
+};
+pub use launch_digest::{
+    compose_launch_digest, launch_digest_from_snp_quote, measurement_from_snp_report,
+    snp_report_from_quote,
 };
 pub use profile::{
     assert_dev_host_seal_tool, is_unmeasured_guest_path, load_edge_profile, parse_edge_profile,
