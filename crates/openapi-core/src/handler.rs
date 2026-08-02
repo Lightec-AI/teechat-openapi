@@ -300,8 +300,7 @@ where
                 "region": self.config.region,
             }))),
             RouteAction::Status => Ok(AppResponse::Json(
-                self.maintenance
-                    .status_json(now_ms, &self.config.region),
+                self.maintenance.status_json(now_ms, &self.config.region),
             )),
             RouteAction::Attestation => {
                 self.handle_attestation(body, client_ip, challenge_bench_header)

@@ -181,7 +181,10 @@ pub fn parse_manifest_bytes(bytes: &[u8]) -> Result<MaintenanceWindowsManifest, 
             return Err("bad_window_id".into());
         }
         if matches!(w.scope, MaintenanceScope::Engine)
-            && w.engine_id.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
+            && w.engine_id
+                .as_ref()
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
         {
             return Err("engine_scope_requires_engine_id".into());
         }
@@ -234,7 +237,12 @@ fn resolve_bounds(w: &MaintenanceWindow) -> Result<WindowBounds, String> {
             has_soft_phase: false,
         });
     }
-    match w.soft_not_after.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    match w
+        .soft_not_after
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         None => Ok(WindowBounds {
             not_before_ms,
             hard_not_after_ms,
@@ -358,7 +366,11 @@ pub fn select_active(
             MaintenancePhase::Hard
         } else if !bounds.has_soft_phase {
             continue;
-        } else if bounds.soft_not_after_ms.map(|e| now_ms <= e).unwrap_or(true) {
+        } else if bounds
+            .soft_not_after_ms
+            .map(|e| now_ms <= e)
+            .unwrap_or(true)
+        {
             MaintenancePhase::Soft
         } else {
             continue;
@@ -448,8 +460,10 @@ fn parse_rfc3339_ms(s: &str) -> Result<u64, String> {
     };
     let days = days_from_civil(year, month, day)?;
     let day_ms = (days as i64) * 86_400_000;
-    let tod_ms =
-        (hour as i64) * 3_600_000 + (minute as i64) * 60_000 + (second as i64) * 1000 + millis as i64;
+    let tod_ms = (hour as i64) * 3_600_000
+        + (minute as i64) * 60_000
+        + (second as i64) * 1000
+        + millis as i64;
     let utc_ms = day_ms + tod_ms - offset;
     if utc_ms < 0 {
         return Err("before_epoch".into());
@@ -558,7 +572,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(soft.phase, MaintenancePhase::Soft);
-        assert!(select_active(&parsed, parse_rfc3339_ms("2026-08-02T09:00:00.000Z").unwrap(), None).is_none());
+        assert!(select_active(
+            &parsed,
+            parse_rfc3339_ms("2026-08-02T09:00:00.000Z").unwrap(),
+            None
+        )
+        .is_none());
     }
 
     #[test]
