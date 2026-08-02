@@ -375,8 +375,12 @@ where
     }
 
     fn refuse_if_maintenance(&self, now_ms: u64) -> Result<(), ApiError> {
+        use crate::maintenance::MaintenancePhase;
         if let Some(active) = self.maintenance.active(now_ms, None) {
-            return Err(ApiError::maintenance(&active));
+            // Soft phase: service may already be back — do not force 503.
+            if active.phase == MaintenancePhase::Hard {
+                return Err(ApiError::maintenance(&active));
+            }
         }
         Ok(())
     }
@@ -1241,7 +1245,9 @@ mod tests {
                         scope: MaintenanceScope::Fleet,
                         engine_id: None,
                         not_before: "2026-08-02T10:00:00.000Z".into(),
-                        not_after: "2026-08-02T10:30:00.000Z".into(),
+                        hard_not_after: Some("2026-08-02T10:30:00.000Z".into()),
+                        soft_not_after: Some("2026-08-02T12:00:00.000Z".into()),
+                        not_after: None,
                         reason: MaintenanceReason::GpuHandover,
                         message: Some("handover".into()),
                     }],
@@ -1256,7 +1262,7 @@ mod tests {
             .handle(HttpMethod::Get, "/v1/status", None, b"", now)
             .unwrap();
         match status {
-            AppResponse::Json(v) => assert_eq!(v["mode"], "maintenance"),
+            AppResponse::Json(v) => assert_eq!(v["mode"], "hard_maintenance"),
             _ => panic!("expected json"),
         }
         let err = app

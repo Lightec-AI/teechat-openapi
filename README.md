@@ -30,7 +30,7 @@ Non-streaming inference responses include `X-TeeChat-Usage-Report`. Streaming (`
 | `POST` | `/v1/chat/completions` | Bearer API key |
 | `POST` | `/v1/attestation/challenge` | none |
 
-**Planned maintenance:** when a verified ops-signed window is loaded (`OPENAPI_MAINTENANCE_MANIFEST_PATH` + `.sig`), inference/models/proxy return HTTP **503** with `error.code: "maintenance"` and `Retry-After`. `/healthz` and attestation stay up. Same contract on `openapi.teechat.ai` and `lab.openapi.teechat.ai`.
+**Planned maintenance:** when a verified ops-signed window is loaded (`OPENAPI_MAINTENANCE_MANIFEST_PATH` + `.sig`): **hard** phase → inference/models/proxy return HTTP **503** `error.code: "maintenance"` + `Retry-After`; **soft** phase → traffic is forwarded normally (`GET /v1/status` reports `soft_maintenance`). `/healthz` and attestation stay up. Same contract on `openapi.teechat.ai` and `lab.openapi.teechat.ai`.
 
 **Attestation (verifying clients):** three-step challenge → quote → verify. Locked wire format: [`docs/attestation-challenge.md`](docs/attestation-challenge.md) · summary in [`SECURITY.md`](SECURITY.md).
 

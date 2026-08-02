@@ -30,6 +30,13 @@ pub enum MaintenanceReason {
     Other,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaintenancePhase {
+    Hard,
+    Soft,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MaintenanceWindow {
     pub id: String,
@@ -37,7 +44,15 @@ pub struct MaintenanceWindow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine_id: Option<String>,
     pub not_before: String,
-    pub not_after: String,
+    /// Preferred hard-downtime end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hard_not_after: Option<String>,
+    /// Soft advisory end; omit for open-ended soft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soft_not_after: Option<String>,
+    /// Legacy hard-only end when `hard_not_after` is absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_after: Option<String>,
     pub reason: MaintenanceReason,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -55,9 +70,11 @@ pub struct MaintenanceWindowsManifest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveMaintenance {
     pub window: MaintenanceWindow,
+    pub phase: MaintenancePhase,
     pub manifest_version: u64,
     pub not_before_ms: u64,
-    pub not_after_ms: u64,
+    pub hard_not_after_ms: u64,
+    pub soft_not_after_ms: Option<u64>,
     pub retry_after_secs: u64,
 }
 
@@ -110,23 +127,33 @@ impl MaintenanceState {
 
     pub fn status_json(&self, now_ms: u64, region: &str) -> serde_json::Value {
         match self.active(now_ms, None) {
-            Some(active) => serde_json::json!({
-                "mode": "maintenance",
-                "region": region,
-                "retry_after": active.retry_after_secs,
-                "window": {
-                    "id": active.window.id,
-                    "scope": active.window.scope,
-                    "engine_id": active.window.engine_id,
-                    "not_before": active.window.not_before,
-                    "not_after": active.window.not_after,
-                    "reason": active.window.reason,
-                    "message": active.window.message,
-                },
-                "manifest_version": active.manifest_version,
-            }),
+            Some(active) => {
+                let mode = match active.phase {
+                    MaintenancePhase::Hard => "hard_maintenance",
+                    MaintenancePhase::Soft => "soft_maintenance",
+                };
+                serde_json::json!({
+                    "mode": mode,
+                    "phase": active.phase,
+                    "region": region,
+                    "retry_after": active.retry_after_secs,
+                    "window": {
+                        "id": active.window.id,
+                        "scope": active.window.scope,
+                        "engine_id": active.window.engine_id,
+                        "not_before": active.window.not_before,
+                        "hard_not_after": active.window.hard_not_after,
+                        "soft_not_after": active.window.soft_not_after,
+                        "not_after": active.window.not_after,
+                        "reason": active.window.reason,
+                        "message": active.window.message,
+                    },
+                    "manifest_version": active.manifest_version,
+                })
+            }
             None => serde_json::json!({
                 "mode": "ok",
+                "phase": null,
                 "region": region,
                 "retry_after": null,
                 "window": null,
@@ -158,13 +185,75 @@ pub fn parse_manifest_bytes(bytes: &[u8]) -> Result<MaintenanceWindowsManifest, 
         {
             return Err("engine_scope_requires_engine_id".into());
         }
-        let start = parse_rfc3339_ms(&w.not_before)?;
-        let end = parse_rfc3339_ms(&w.not_after)?;
-        if end <= start {
-            return Err(format!("bad_interval_{}", w.id));
-        }
+        resolve_bounds(w)?;
     }
     Ok(m)
+}
+
+struct WindowBounds {
+    not_before_ms: u64,
+    hard_not_after_ms: u64,
+    soft_not_after_ms: Option<u64>,
+    has_soft_phase: bool,
+}
+
+fn resolve_bounds(w: &MaintenanceWindow) -> Result<WindowBounds, String> {
+    let not_before_ms = parse_rfc3339_ms(&w.not_before)?;
+    let hard_raw = w
+        .hard_not_after
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            w.not_after
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        })
+        .ok_or_else(|| format!("missing_hard_end_{}", w.id))?;
+    let hard_not_after_ms = parse_rfc3339_ms(hard_raw)?;
+    if hard_not_after_ms <= not_before_ms {
+        return Err(format!("bad_hard_interval_{}", w.id));
+    }
+    let legacy_hard_only = w
+        .hard_not_after
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none()
+        && w.not_after
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .is_some();
+    if legacy_hard_only {
+        return Ok(WindowBounds {
+            not_before_ms,
+            hard_not_after_ms,
+            soft_not_after_ms: Some(hard_not_after_ms),
+            has_soft_phase: false,
+        });
+    }
+    match w.soft_not_after.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(WindowBounds {
+            not_before_ms,
+            hard_not_after_ms,
+            soft_not_after_ms: None,
+            has_soft_phase: true,
+        }),
+        Some(soft) => {
+            let soft_ms = parse_rfc3339_ms(soft)?;
+            if soft_ms <= hard_not_after_ms {
+                return Err(format!("bad_soft_interval_{}", w.id));
+            }
+            Ok(WindowBounds {
+                not_before_ms,
+                hard_not_after_ms,
+                soft_not_after_ms: Some(soft_ms),
+                has_soft_phase: true,
+            })
+        }
+    }
 }
 
 pub fn verify_signature(
@@ -260,28 +349,51 @@ pub fn select_active(
                 continue;
             }
         }
-        let Ok(not_before_ms) = parse_rfc3339_ms(&window.not_before) else {
+        let Ok(bounds) = resolve_bounds(window) else {
             continue;
         };
-        let Ok(not_after_ms) = parse_rfc3339_ms(&window.not_after) else {
+        let phase = if now_ms < bounds.not_before_ms {
+            continue;
+        } else if now_ms <= bounds.hard_not_after_ms {
+            MaintenancePhase::Hard
+        } else if !bounds.has_soft_phase {
+            continue;
+        } else if bounds.soft_not_after_ms.map(|e| now_ms <= e).unwrap_or(true) {
+            MaintenancePhase::Soft
+        } else {
             continue;
         };
-        if now_ms < not_before_ms || now_ms > not_after_ms {
-            continue;
-        }
-        let retry_after_secs = ((not_after_ms - now_ms).div_ceil(1000)).max(1);
+        let retry_after_secs = match phase {
+            MaintenancePhase::Hard => ((bounds.hard_not_after_ms - now_ms).div_ceil(1000)).max(1),
+            MaintenancePhase::Soft => match bounds.soft_not_after_ms {
+                Some(end) => ((end - now_ms).div_ceil(1000)).max(1),
+                None => 180,
+            },
+        };
         let candidate = ActiveMaintenance {
             window: window.clone(),
+            phase,
             manifest_version: manifest.version,
-            not_before_ms,
-            not_after_ms,
+            not_before_ms: bounds.not_before_ms,
+            hard_not_after_ms: bounds.hard_not_after_ms,
+            soft_not_after_ms: bounds.soft_not_after_ms,
             retry_after_secs,
         };
-        if best
-            .as_ref()
-            .map(|b| candidate.not_after_ms > b.not_after_ms)
-            .unwrap_or(true)
-        {
+        let better = match &best {
+            None => true,
+            Some(b) => match (candidate.phase, b.phase) {
+                (MaintenancePhase::Hard, MaintenancePhase::Soft) => true,
+                (MaintenancePhase::Soft, MaintenancePhase::Hard) => false,
+                (MaintenancePhase::Hard, MaintenancePhase::Hard) => {
+                    candidate.hard_not_after_ms > b.hard_not_after_ms
+                }
+                (MaintenancePhase::Soft, MaintenancePhase::Soft) => {
+                    candidate.soft_not_after_ms.unwrap_or(u64::MAX)
+                        > b.soft_not_after_ms.unwrap_or(u64::MAX)
+                }
+            },
+        };
+        if better {
             best = Some(candidate);
         }
     }
@@ -415,7 +527,9 @@ mod tests {
                 scope: MaintenanceScope::Fleet,
                 engine_id: None,
                 not_before: "2026-08-02T10:00:00.000Z".into(),
-                not_after: "2026-08-02T10:30:00.000Z".into(),
+                hard_not_after: Some("2026-08-02T10:30:00.000Z".into()),
+                soft_not_after: Some("2026-08-02T12:00:00.000Z".into()),
+                not_after: None,
                 reason: MaintenanceReason::GpuHandover,
                 message: Some("GPU handover".into()),
             }],
@@ -435,7 +549,15 @@ mod tests {
         let now = parse_rfc3339_ms("2026-08-02T10:15:00.000Z").unwrap();
         let active = select_active(&parsed, now, None).unwrap();
         assert_eq!(active.window.id, "wave-b");
+        assert_eq!(active.phase, MaintenancePhase::Hard);
         assert!(active.retry_after_secs > 0);
+        let soft = select_active(
+            &parsed,
+            parse_rfc3339_ms("2026-08-02T11:00:00.000Z").unwrap(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(soft.phase, MaintenancePhase::Soft);
         assert!(select_active(&parsed, parse_rfc3339_ms("2026-08-02T09:00:00.000Z").unwrap(), None).is_none());
     }
 
