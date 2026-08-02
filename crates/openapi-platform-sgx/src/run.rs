@@ -72,14 +72,20 @@ pub fn run() -> anyhow::Result<()> {
         );
     }
 
-    let app = Arc::new(App::new(
+    let app = App::new(
         env.config(),
         env.limits(),
         authenticator,
         upstream,
         platform,
         env.usage_signer().context("usage signer")?,
-    ));
+    );
+    match openapi_core::maintenance::apply_env_to_state(app.maintenance()) {
+        Ok(true) => info!("maintenance windows loaded from OPENAPI_MAINTENANCE_MANIFEST_PATH"),
+        Ok(false) => {}
+        Err(e) => warn!(error = %e, "maintenance windows not loaded"),
+    }
+    let app = Arc::new(app);
 
     let tls_acceptor =
         build_tls_acceptor_from_material(&env, cert_pem.as_deref(), key_pem.as_deref())?;

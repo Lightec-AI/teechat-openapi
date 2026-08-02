@@ -74,6 +74,7 @@ pub fn build_sse_response(body: &[u8], usage: &UsageReport) -> Vec<u8> {
 
 pub fn build_error_response(err: ApiError) -> Vec<u8> {
     let status = err.status_code();
+    let retry_after = err.retry_after_secs();
     let body = serde_json::to_vec(&err.into_body()).unwrap_or_default();
     let reason = match status {
         400 => "Bad Request",
@@ -84,14 +85,15 @@ pub fn build_error_response(err: ApiError) -> Vec<u8> {
         413 => "Payload Too Large",
         429 => "Too Many Requests",
         502 => "Bad Gateway",
+        503 => "Service Unavailable",
         _ => "Internal Server Error",
     };
     let mut out = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
         body.len()
     );
-    if status == 429 {
-        out.push_str("Retry-After: 1\r\n");
+    if let Some(secs) = retry_after {
+        out.push_str(&format!("Retry-After: {secs}\r\n"));
     }
     out.push_str("Connection: close\r\n\r\n");
     let mut bytes = out.into_bytes();
@@ -130,6 +132,20 @@ mod tests {
         assert!(text.starts_with("HTTP/1.1 429"));
         assert!(text.contains("Retry-After: 1"));
         assert!(text.contains("rate_limit_exceeded"));
+    }
+
+    #[test]
+    fn maintenance_is_503_with_retry_after() {
+        let bytes = build_error_response(ApiError::ServiceUnavailable {
+            message: "Planned maintenance".into(),
+            code: "maintenance".into(),
+            retry_after_secs: 900,
+        });
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.starts_with("HTTP/1.1 503"));
+        assert!(text.contains("Retry-After: 900"));
+        assert!(text.contains("maintenance"));
+        assert!(text.contains("Planned maintenance"));
     }
 
     #[test]

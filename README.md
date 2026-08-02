@@ -24,10 +24,13 @@ Non-streaming inference responses include `X-TeeChat-Usage-Report`. Streaming (`
 
 | Method | Path | Auth |
 |--------|------|------|
-| `GET` | `/healthz` | none |
+| `GET` | `/healthz` | none (liveness) |
+| `GET` | `/v1/status` | none — `mode: ok\|maintenance`, optional `retry_after` |
 | `GET` | `/v1/models` | Bearer API key |
 | `POST` | `/v1/chat/completions` | Bearer API key |
 | `POST` | `/v1/attestation/challenge` | none |
+
+**Planned maintenance:** when a verified ops-signed window is loaded (`OPENAPI_MAINTENANCE_MANIFEST_PATH` + `.sig`), inference/models/proxy return HTTP **503** with `error.code: "maintenance"` and `Retry-After`. `/healthz` and attestation stay up. Same contract on `openapi.teechat.ai` and `lab.openapi.teechat.ai`.
 
 **Attestation (verifying clients):** three-step challenge → quote → verify. Locked wire format: [`docs/attestation-challenge.md`](docs/attestation-challenge.md) · summary in [`SECURITY.md`](SECURITY.md).
 

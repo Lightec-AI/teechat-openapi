@@ -8,6 +8,7 @@ use crate::auth::AuthContext;
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::limits::{InflightGate, IpConnPermit, IpConnTracker, Limits, RateLimiter};
+use crate::maintenance::{MaintenanceState, SharedMaintenanceState};
 use crate::models::{AttestationChallengeRequest, ChatCompletionRequest, ModelsListResponse};
 use crate::quota::{enforce_max_context, enforce_token_quota};
 use crate::remote_auth::EdgeAuthenticator;
@@ -195,6 +196,7 @@ where
     challenge_inflight: Arc<InflightGate>,
     ip_conn_tracker: Arc<IpConnTracker>,
     ip_rate_limiter: Arc<RateLimiter>,
+    maintenance: SharedMaintenanceState,
 }
 
 impl<U, P> App<U, P>
@@ -227,11 +229,20 @@ where
             challenge_inflight,
             ip_conn_tracker,
             ip_rate_limiter,
+            maintenance: Arc::new(MaintenanceState::new()),
         }
     }
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    pub fn maintenance(&self) -> &SharedMaintenanceState {
+        &self.maintenance
+    }
+
+    pub fn set_maintenance_state(&mut self, state: SharedMaintenanceState) {
+        self.maintenance = state;
     }
 
     /// Acquire a per-IP connection slot for the TCP/TLS session lifetime.
@@ -288,10 +299,15 @@ where
                 "status": "ok",
                 "region": self.config.region,
             }))),
+            RouteAction::Status => Ok(AppResponse::Json(
+                self.maintenance
+                    .status_json(now_ms, &self.config.region),
+            )),
             RouteAction::Attestation => {
                 self.handle_attestation(body, client_ip, challenge_bench_header)
             }
             RouteAction::ModelsList => {
+                self.refuse_if_maintenance(now_ms)?;
                 self.enforce_ip_api_limit(client_ip)?;
                 let auth = self.authenticator.authenticate_bearer(authorization)?;
                 self.enforce_rate_limit(&auth)?;
@@ -300,6 +316,7 @@ where
                 Ok(AppResponse::Json(serde_json::to_value(models).unwrap()))
             }
             RouteAction::InferencePost => {
+                self.refuse_if_maintenance(now_ms)?;
                 self.enforce_ip_api_limit(client_ip)?;
                 let auth = self.authenticator.authenticate_bearer(authorization)?;
                 self.enforce_rate_limit(&auth)?;
@@ -314,6 +331,7 @@ where
                 }
             }
             RouteAction::ProxyGet | RouteAction::ProxyPost => {
+                self.refuse_if_maintenance(now_ms)?;
                 self.enforce_ip_api_limit(client_ip)?;
                 let auth = self.authenticator.authenticate_bearer(authorization)?;
                 self.enforce_rate_limit(&auth)?;
@@ -354,6 +372,13 @@ where
             RouteAction::MethodNotAllowed => Err(ApiError::MethodNotAllowed),
             RouteAction::NotFound => Err(ApiError::NotFound),
         }
+    }
+
+    fn refuse_if_maintenance(&self, now_ms: u64) -> Result<(), ApiError> {
+        if let Some(active) = self.maintenance.active(now_ms, None) {
+            return Err(ApiError::maintenance(&active));
+        }
+        Ok(())
     }
 
     fn enforce_rate_limit(&self, auth: &AuthContext) -> Result<(), ApiError> {
@@ -1166,6 +1191,81 @@ mod tests {
             Some("198.51.100.8"),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn maintenance_blocks_inference_but_not_health_or_status() {
+        use crate::maintenance::{
+            MaintenanceReason, MaintenanceScope, MaintenanceWindow, MaintenanceWindowsManifest,
+            VerifiedMaintenance, KEY_ID, SCHEMA,
+        };
+        let api_key = "sk-teechat-test";
+        let catalog_signing = SigningKey::from_bytes(&[7u8; 32]);
+        let signed = sign_test_catalog(
+            vec![KeyRecord {
+                key_id: "k".into(),
+                key_hash_hex: hash_api_key(api_key),
+                revoked: false,
+            }],
+            &catalog_signing,
+        );
+        let catalog = KeyCatalog::from_signed(signed, catalog_signing.verifying_key()).unwrap();
+        let auth = format!("Bearer {api_key}");
+        let upstream = MockUpstream::default().with(
+            "/v1/models",
+            UpstreamResponse::Json(serde_json::json!({
+                "object": "list",
+                "data": []
+            })),
+        );
+        let app = App::new(
+            Config::default(),
+            Limits::default(),
+            EdgeAuthenticator::from_catalog(Authenticator::new(catalog)),
+            upstream,
+            TestPlatform,
+            UsageSigner::from_seed([9u8; 32]),
+        );
+        // Fixed window containing 2026-08-02T10:15Z.
+        let now = crate::maintenance::parse_rfc3339_ms_for_test("2026-08-02T10:15:00.000Z");
+        app.maintenance()
+            .set_verified(VerifiedMaintenance {
+                signature_verified: true,
+                manifest: MaintenanceWindowsManifest {
+                    schema: SCHEMA.into(),
+                    key_id: KEY_ID.into(),
+                    version: 9,
+                    published_at: "2026-08-02T00:00:00.000Z".into(),
+                    windows: vec![MaintenanceWindow {
+                        id: "t".into(),
+                        scope: MaintenanceScope::Fleet,
+                        engine_id: None,
+                        not_before: "2026-08-02T10:00:00.000Z".into(),
+                        not_after: "2026-08-02T10:30:00.000Z".into(),
+                        reason: MaintenanceReason::GpuHandover,
+                        message: Some("handover".into()),
+                    }],
+                },
+            })
+            .unwrap();
+
+        assert!(app
+            .handle(HttpMethod::Get, "/healthz", None, b"", now)
+            .is_ok());
+        let status = app
+            .handle(HttpMethod::Get, "/v1/status", None, b"", now)
+            .unwrap();
+        match status {
+            AppResponse::Json(v) => assert_eq!(v["mode"], "maintenance"),
+            _ => panic!("expected json"),
+        }
+        let err = app
+            .handle(HttpMethod::Get, "/v1/models", Some(&auth), b"", now)
+            .unwrap_err();
+        match err {
+            ApiError::ServiceUnavailable { code, .. } => assert_eq!(code, "maintenance"),
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     #[test]

@@ -33,6 +33,8 @@ impl ProxyMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteAction {
     Health,
+    /// Unauthenticated planned-maintenance / readiness signal (not liveness).
+    Status,
     Attestation,
     ModelsList,
     /// OpenAI inference POST with usage metering (chat, completions, embeddings, …).
@@ -76,6 +78,7 @@ pub fn classify(method: HttpMethod, path: &str, mode: ProxyMode) -> RouteAction 
 
     match path.as_str() {
         "/healthz" if method == HttpMethod::Get => RouteAction::Health,
+        "/v1/status" if method == HttpMethod::Get => RouteAction::Status,
         "/v1/attestation/challenge" => match method {
             HttpMethod::Post => RouteAction::Attestation,
             _ => RouteAction::MethodNotAllowed,
@@ -184,6 +187,18 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    #[test]
+    fn status_route_classified() {
+        assert_eq!(
+            classify(HttpMethod::Get, "/v1/status", ProxyMode::Allowlist),
+            RouteAction::Status
+        );
+        assert_eq!(
+            classify(HttpMethod::Get, "/healthz", ProxyMode::Allowlist),
+            RouteAction::Health
+        );
     }
 
     #[test]

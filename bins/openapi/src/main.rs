@@ -161,14 +161,20 @@ fn main() -> anyhow::Result<()> {
     let upstream = EdgeUpstream::from_env(env.profile(), &env.upstream_base_url)
         .context("upstream (OPE / clear HTTP)")?;
 
-    let app = Arc::new(App::new(
+    let app = App::new(
         env.config(),
         env.limits(),
         authenticator,
         upstream,
         platform,
         env.usage_signer().context("usage signer")?,
-    ));
+    );
+    match openapi_core::maintenance::apply_env_to_state(app.maintenance()) {
+        Ok(true) => info!("maintenance windows loaded from OPENAPI_MAINTENANCE_MANIFEST_PATH"),
+        Ok(false) => {}
+        Err(e) => warn!(error = %e, "maintenance windows not loaded"),
+    }
+    let app = Arc::new(app);
 
     let tls_acceptor = build_tls_acceptor(&env, &sealer, seal_root.as_ref())?;
     let tls_hook = tls_acceptor.map(|acceptor| {

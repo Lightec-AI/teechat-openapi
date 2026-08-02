@@ -8,6 +8,7 @@ pub mod handler;
 pub mod http1_body;
 pub mod key_format;
 pub mod limits;
+pub mod maintenance;
 pub mod models;
 pub mod quota;
 pub mod remote_auth;
@@ -24,6 +25,10 @@ pub use error::{ApiError, ApiErrorBody};
 pub use handler::{
     App, AppResponse, HttpMethod, StreamForwardResult, UpstreamForwarder, UpstreamRequestContext,
     UpstreamResponse,
+};
+pub use maintenance::{
+    load_from_files, verify_and_parse, ActiveMaintenance, MaintenanceState, SharedMaintenanceState,
+    VerifiedMaintenance, PINNED_PUBLIC_KEY_HEX as MAINTENANCE_PINNED_PUBLIC_KEY_HEX,
 };
 pub use key_format::{hash_api_key, parse_api_key};
 pub use limits::{IpConnPermit, IpConnTracker, Limits};

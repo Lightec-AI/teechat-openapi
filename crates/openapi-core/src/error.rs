@@ -25,6 +25,13 @@ pub enum ApiError {
     NotImplemented(String),
     #[error("internal error: {0}")]
     Internal(String),
+    /// Planned maintenance (§8.6.6) — does not weaken attestation.
+    #[error("{message}")]
+    ServiceUnavailable {
+        message: String,
+        code: String,
+        retry_after_secs: u64,
+    },
 }
 
 impl ApiError {
@@ -40,6 +47,7 @@ impl ApiError {
             Self::BadRequest(_) => 400,
             Self::NotImplemented(_) => 501,
             Self::Upstream(_) => 502,
+            Self::ServiceUnavailable { .. } => 503,
             Self::Internal(_) => 500,
         }
     }
@@ -54,8 +62,35 @@ impl ApiError {
             Self::InsufficientQuota(_) => "insufficient_quota",
             Self::BadRequest(_) => "invalid_request_error",
             Self::NotImplemented(_) => "invalid_request_error",
-            Self::Upstream(_) => "server_error",
-            Self::Internal(_) => "server_error",
+            Self::Upstream(_) | Self::ServiceUnavailable { .. } | Self::Internal(_) => {
+                "server_error"
+            }
+        }
+    }
+
+    pub fn retry_after_secs(&self) -> Option<u64> {
+        match self {
+            Self::RateLimited => Some(1),
+            Self::ServiceUnavailable {
+                retry_after_secs, ..
+            } => Some(*retry_after_secs),
+            _ => None,
+        }
+    }
+
+    pub fn maintenance(active: &crate::maintenance::ActiveMaintenance) -> Self {
+        let message = active
+            .window
+            .message
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| {
+                "Planned maintenance is in progress. Retry after the announced window.".into()
+            });
+        Self::ServiceUnavailable {
+            message,
+            code: "maintenance".into(),
+            retry_after_secs: active.retry_after_secs,
         }
     }
 }
@@ -81,6 +116,7 @@ impl ApiError {
             Self::RateLimited => Some("rate_limit_exceeded".to_string()),
             Self::InsufficientQuota(_) => Some("insufficient_quota".to_string()),
             Self::NotImplemented(_) => Some("not_supported".to_string()),
+            Self::ServiceUnavailable { code, .. } => Some(code.clone()),
             _ => None,
         };
         ApiErrorBody {
