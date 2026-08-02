@@ -149,10 +149,21 @@ fn decode_public_key(value: &str) -> Result<[u8; 32], EngineTrustError> {
 }
 
 pub(crate) fn parse_rfc3339_ms(value: &str) -> Result<u64, EngineTrustError> {
-    let (date, time) = value
-        .trim()
-        .strip_suffix('Z')
-        .and_then(|v| v.split_once('T'))
+    // Engines historically emit chrono `to_rfc3339()` (`…+00:00` with up to 9
+    // fractional digits). Accept both that form and the Z-millis form used in
+    // fixtures / `to_rfc3339_opts(Millis, true)`.
+    let trimmed = value.trim();
+    let body = if let Some(v) = trimmed.strip_suffix('Z') {
+        v
+    } else if let Some(v) = trimmed.strip_suffix("+00:00") {
+        v
+    } else if let Some(v) = trimmed.strip_suffix("-00:00") {
+        v
+    } else {
+        return Err(EngineTrustError::InvalidTimestamp);
+    };
+    let (date, time) = body
+        .split_once('T')
         .ok_or(EngineTrustError::InvalidTimestamp)?;
     let mut date_parts = date.split('-');
     let year: i64 = parse_part(date_parts.next())?;
@@ -266,6 +277,13 @@ mod tests {
             URL_SAFE_NO_PAD.encode(key.verifying_key().to_bytes())
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn parse_rfc3339_ms_accepts_chrono_offset_form() {
+        let z = parse_rfc3339_ms("2026-07-31T18:39:28.901Z").unwrap();
+        let offset = parse_rfc3339_ms("2026-07-31T18:39:28.901828070+00:00").unwrap();
+        assert_eq!(z, offset);
     }
 
     #[test]

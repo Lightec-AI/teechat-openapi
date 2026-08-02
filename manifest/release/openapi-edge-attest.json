@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-07-30T09:15:08Z",
-  "epoch": 31,
+  "published_at": "2026-07-31T20:09:30Z",
+  "epoch": 34,
   "not_after": "2027-07-29T02:35:30Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -28,10 +28,100 @@
           ],
           "measurement": {
             "kind": "launch_digest",
+            "launch_digest": "30aa440d581ced4a1c104a88ff1d1cd5373533402396dec50b8d1d2242beedd9",
+            "image_digest": "3d520d848a0d6d76ae9bec571bc075f894318bc249c3f1083666ab279b97b8cb"
+          },
+          "notes": "0.7.11 composed LD with correct 853aefc IMAGE_DIGEST.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.7.11"
+        },
+        {
+          "build_version": "0.7.11",
+          "code_hash": "6d0808764dbe1112e918bd2737fe34d79d139da7d4f246c5a761ad85a991f11f",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "30aa440d581ced4a1c104a88ff1d1cd5373533402396dec50b8d1d2242beedd9",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "TRANSITIONAL live green: composed LD + stale IMAGE_DIGEST; distinct golden_version for find_golden_release.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.7.11-img-fdc5250b"
+        },
+        {
+          "build_version": "0.8.0",
+          "code_hash": "2fca0b600c03c925fe574add83f34bf875a1c9890c6362de947a42fe8e45a843",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "f6302bfb9e67c6d9c36154cdf73a2aa04ba89fce2df4ab31e7b1c923ecc3903c",
+            "image_digest": "3d520d848a0d6d76ae9bec571bc075f894318bc249c3f1083666ab279b97b8cb"
+          },
+          "notes": "0.8.0 dm-verity ENABLED=1: initramfs-injected OS golden 853aefc + app-verity R=606a3003\u2026 Seal_sync blue/green. Epoch-evidence recipient trust (permissive).",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.8.0"
+        },
+        {
+          "build_version": "0.7.11",
+          "code_hash": "6d0808764dbe1112e918bd2737fe34d79d139da7d4f246c5a761ad85a991f11f",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "30aa440d581ced4a1c104a88ff1d1cd5373533402396dec50b8d1d2242beedd9",
+            "image_digest": "3d520d848a0d6d76ae9bec571bc075f894318bc249c3f1083666ab279b97b8cb"
+          },
+          "notes": "0.7.11 dm-verity ENABLED=1: initramfs-injected OS golden 853aefc + app-verity R=bc3f08d4\u2026 (same volume). Seal_sync blue/green. injected=True.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync"
+        },
+        {
+          "build_version": "0.7.11",
+          "code_hash": "6d0808764dbe1112e918bd2737fe34d79d139da7d4f246c5a761ad85a991f11f",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "30aa440d581ced4a1c104a88ff1d1cd5373533402396dec50b8d1d2242beedd9",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "TRANSITIONAL: 853aefc composed LD with stale guest OPENAPI_IMAGE_DIGEST (6f84bc contentSha) until green re-seal after env fix. Do not VIP-cutover new color without correcting IMAGE_DIGEST+reseal.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync"
+        },
+        {
+          "build_version": "0.7.11",
+          "code_hash": "6d0808764dbe1112e918bd2737fe34d79d139da7d4f246c5a761ad85a991f11f",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "1a68bea2e89b649ad2c0e7ec96fab2ca167bebd9718c7bcba9521206e6a7c4df",
+            "image_digest": "8a7344be6ec6590d017e2416ee301e58a0998c04656d21b4a66e81404c972938"
+          },
+          "notes": "0.7.11 dm-verity ENABLED=1: initramfs-injected OS golden 853aefc + app-verity R=bc3f08d4\u2026 (same volume). Ceremony. injected=True.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-key-ceremony"
+        },
+        {
+          "build_version": "0.7.11",
+          "code_hash": "6d0808764dbe1112e918bd2737fe34d79d139da7d4f246c5a761ad85a991f11f",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
             "launch_digest": "1b69f72ca9cc770a51c2c7bb1a23577177b841b0b44543adf16746b4500ddac4",
             "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
           },
-          "notes": "0.7.11 dm-verity ENABLED=1: hybrid OS (CONFIG_DM_VERITY=y) + app-verity R=bc3f08d4\u2026 (snpguest on volume). GitHub v0.7.11. Ceremony golden.",
+          "notes": "0.7.11 dm-verity ENABLED=1: hybrid OS (CONFIG_DM_VERITY=y) + app-verity R=bc3f08d4\u2026 (snpguest on volume). GitHub v0.7.11. Ceremony golden. Overlap until VIP cutover to 853aefc inject goldens.",
           "golden_version": "openapi-golden-20260729-6f84bc625867-key-ceremony"
         },
         {
@@ -46,7 +136,7 @@
             "launch_digest": "dbd0ce74fae81499a24cfc0625b3a184e0bc2f819f81dfe7ede9f04d239a7031",
             "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
           },
-          "notes": "0.7.11 dm-verity ENABLED=1: hybrid OS (CONFIG_DM_VERITY=y) + app-verity R=bc3f08d4\u2026 (snpguest on volume). GitHub v0.7.11. Seal_sync blue/green.",
+          "notes": "0.7.11 dm-verity ENABLED=1: hybrid OS (CONFIG_DM_VERITY=y) + app-verity R=bc3f08d4\u2026 (snpguest on volume). GitHub v0.7.11. Seal_sync blue/green. Overlap until VIP cutover to 853aefc inject goldens.",
           "golden_version": "openapi-golden-20260729-6f84bc625867-seal-sync"
         },
         {
@@ -381,6 +471,336 @@
         }
       ],
       "retired": [
+        {
+          "build_version": "0.4.5",
+          "code_hash": "24ba616539d92c9bc84ae8bd2a55601d06746c5014b0547472887c78fb36213e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
+            "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
+          },
+          "notes": "Same binary digest as 0.4.4 (GitHub v0.4.5); label/manifest sync after guest pin bump. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-sev-snp-legacy-2026-07",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.5.2",
+          "code_hash": "39c687b89a420586fc5d5c95175f697293db05ca9abb8a1445b8066fd37f7c08",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
+            "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
+          },
+          "notes": "0.5.2: fix prod seal_root\u2192unseal footgun; AMD-SP seal + seal-sync + openapi-acme. Overlap with 0.4.5 (GitHub v0.5.2). | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-sev-snp-legacy-2026-07",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.5.4",
+          "code_hash": "ad55a2bebee70b38b2b171c02081aeb1d87a4115709a1d5bb4e5b211489f4584",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
+            "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
+          },
+          "notes": "0.5.4: Family B verify includes policy.max_in_flight (matches L0 authorize). Overlap with 0.5.2 during install. Pins golden_version for split trust. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-sev-snp-legacy-2026-07",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.5.7",
+          "code_hash": "2c27b3965030406ce87768bed34544e29da6e89d2c406401d62e4cf6eb8c04b1",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "8e8f33b47c4d69b9fe92a9ab6489e0cef690c51192d6e89a419f3b155e1f5f35",
+            "image_digest": "53fdde898feed8b027d94baa9cfe8229867f330a1d9c49dc7d84465ee7f229f7"
+          },
+          "notes": "Overlap: Ubuntu legacy golden (pre-Talos). Same code_hash as 0.5.8. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-sev-snp-legacy-2026-07",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.5.8",
+          "code_hash": "2c27b3965030406ce87768bed34544e29da6e89d2c406401d62e4cf6eb8c04b1",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "39e038368ecbf9845e868bc905682dc39fcec20ab38277c8b36d243f5fc69fc3",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.5.8 on Talos seal_sync fleet golden. Same code_hash; verifier disambiguates via golden digests. challenge-canonical LD for 0.16.x clients. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.5.8",
+          "code_hash": "2c27b3965030406ce87768bed34544e29da6e89d2c406401d62e4cf6eb8c04b1",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "ad6dd11b11ce00d2f9d30c2c5868c75d6a7fd3b2be6851fe3fcfcd0dcbe61a61",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.5.8 on Talos key_ceremony (live VIP during fleet seal-sync). Same bytes as GitHub v0.5.8 / prior 0.5.7 label. challenge-canonical LD for 0.16.x clients. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.5.9",
+          "code_hash": "45f8832808f2e9c2f419ce62114b8fd967873a16a11be7b21cf05373c0a14fd9",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "ad6dd11b11ce00d2f9d30c2c5868c75d6a7fd3b2be6851fe3fcfcd0dcbe61a61",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.5.9 on ceremony golden (optional). Same code_hash as seal_sync row. challenge-canonical LD for 0.16.x clients. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.5.9",
+          "code_hash": "45f8832808f2e9c2f419ce62114b8fd967873a16a11be7b21cf05373c0a14fd9",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "39e038368ecbf9845e868bc905682dc39fcec20ab38277c8b36d243f5fc69fc3",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.5.9: seal-sync cold start + snpguest path. GitHub v0.5.9 binary. Fleet golden. challenge-canonical LD for 0.16.x clients. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.6.0",
+          "code_hash": "b1ee9413d86f64456997bb71eb7921d9b16cea372029337b327503b08ba21a8b",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "39e038368ecbf9845e868bc905682dc39fcec20ab38277c8b36d243f5fc69fc3",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.6.0: warm seal-sync peer realign non-blocking. GitHub v0.6.0. Seal_sync blue/green golden. challenge-canonical LD for 0.16.x clients. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.6.0",
+          "code_hash": "b1ee9413d86f64456997bb71eb7921d9b16cea372029337b327503b08ba21a8b",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "ad6dd11b11ce00d2f9d30c2c5868c75d6a7fd3b2be6851fe3fcfcd0dcbe61a61",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.6.0: warm seal-sync peer realign non-blocking. GitHub v0.6.0. Ceremony golden. challenge-canonical LD for 0.16.x clients. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.6.1",
+          "code_hash": "344262c4c7950c7b6795b9c904acb29b50dd01db57787474acdbf55ebb74e8cf",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "39e038368ecbf9845e868bc905682dc39fcec20ab38277c8b36d243f5fc69fc3",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.6.1: CORS on public attestation challenge (web light-challenge). GitHub v0.6.1. Seal_sync blue/green golden. challenge-canonical LD for 0.16.x clients. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.6.1",
+          "code_hash": "344262c4c7950c7b6795b9c904acb29b50dd01db57787474acdbf55ebb74e8cf",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "ad6dd11b11ce00d2f9d30c2c5868c75d6a7fd3b2be6851fe3fcfcd0dcbe61a61",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.6.1: CORS on public attestation challenge (web light-challenge). GitHub v0.6.1. Ceremony golden. challenge-canonical LD for 0.16.x clients. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.6.2",
+          "code_hash": "3e9da80523da6a2f59e7f1c3fc681cdc02171cbfe2cb6a84702400458eaff86b",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "39e038368ecbf9845e868bc905682dc39fcec20ab38277c8b36d243f5fc69fc3",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.6.2: fix challenge CORS header framing (web light-challenge). GitHub v0.6.2. Seal_sync blue/green golden. challenge-canonical LD for 0.16.x clients. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.6.2",
+          "code_hash": "3e9da80523da6a2f59e7f1c3fc681cdc02171cbfe2cb6a84702400458eaff86b",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "ad6dd11b11ce00d2f9d30c2c5868c75d6a7fd3b2be6851fe3fcfcd0dcbe61a61",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.6.2: fix challenge CORS header framing (web light-challenge). GitHub v0.6.2. Ceremony golden. challenge-canonical LD for 0.16.x clients. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.7.0",
+          "code_hash": "eb845d67be2ec231b9ecbe6b76f82d209fda1a24652cf2ae65776df676ba1fdf",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "39e038368ecbf9845e868bc905682dc39fcec20ab38277c8b36d243f5fc69fc3",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.7.0: path-aware OPE embeddings (no chat.completion reshape). GitHub v0.7.0. Seal_sync blue/green golden. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.7.0",
+          "code_hash": "eb845d67be2ec231b9ecbe6b76f82d209fda1a24652cf2ae65776df676ba1fdf",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "ad6dd11b11ce00d2f9d30c2c5868c75d6a7fd3b2be6851fe3fcfcd0dcbe61a61",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.7.0: path-aware OPE embeddings (no chat.completion reshape). GitHub v0.7.0. Ceremony golden. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.7.2",
+          "code_hash": "af1b5ab4e69671a60f13a00f48132d3dc5440d82e421da4db8c2ae178b8593e9",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "3cb55ee2bb2567d854f83422d634b5e49c29e9e05dd02ebab44fb911bc5126d6",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.7.2 hybrid app-verity: R=8e6842f80de4e8d1\u2026 composed LD. GitHub v0.7.2 + app-verity.json. Seal_sync golden. golden_version\u2192appverity-072 for VIP seal-sync exporter. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync-appverity-072",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.7.2",
+          "code_hash": "af1b5ab4e69671a60f13a00f48132d3dc5440d82e421da4db8c2ae178b8593e9",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "a5981375b2fe10a8b3db1f13ec56aa478b7e5196535c528d424aad32c305088c",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.7.2 hybrid app-verity: R=8e6842f80de4e8d1\u2026 composed LD. GitHub v0.7.2 + app-verity.json. Ceremony golden. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.7.5",
+          "code_hash": "f82a650785cbdbf472a590d7de7ccf5192c5269ebdb1d75afd95d73c837e0ad5",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "9e39a47a8a8897b41580d5da35d8ca6473991c46049c99acd3bb16ef0af2610c",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.7.5 hybrid app-verity: R=75036766b7a19074\u2026 composed LD. GitHub v0.7.5 + app-verity.json. Seal_sync golden. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.7.5",
+          "code_hash": "f82a650785cbdbf472a590d7de7ccf5192c5269ebdb1d75afd95d73c837e0ad5",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "c75b80d923d2777b289dbe670d3b72cc82ace4fc40c5f4e46a2476d557501c50",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.7.5 hybrid app-verity: R=75036766b7a19074\u2026 composed LD. GitHub v0.7.5 + app-verity.json. Ceremony golden. | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.7.8",
+          "code_hash": "d5bbebd2673a4e2276bdb260e4e379ed7bdc799b8adfc0555cacf41db34afb85",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "15fe16741a43ae19ec33de8dcdf01d1fed5f9136f3143d0328f37929a2823605",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.7.8 hybrid app-verity: R=53fdef025c910fc5\u2026 composed LD. GitHub v0.7.8 + hybrid attest golden OS pin (image_digest). | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-seal-sync",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
+        {
+          "build_version": "0.7.8",
+          "code_hash": "d5bbebd2673a4e2276bdb260e4e379ed7bdc799b8adfc0555cacf41db34afb85",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "fbb1e21cbfb7ed0edb0f24226cc254fadba4a4836b9fb35bbf542193e9b19e85",
+            "image_digest": "e669e401fe4689bbb37c723d6f640a8f41380843bec40c7da5dabea5a947962f"
+          },
+          "notes": "0.7.8 hybrid app-verity: R=53fdef025c910fc5\u2026 composed LD. GitHub v0.7.8 + hybrid attest golden OS pin (image_digest). | retired after 20260729 rekey / allowlist cleanup",
+          "golden_version": "openapi-golden-20260722-6f84bc625867-key-ceremony",
+          "retired_at": "2026-07-29T10:20:09Z"
+        },
         {
           "build_version": "0.5.0",
           "code_hash": "0b2eb1c2fcc570aeefb87fb3b40a080f4badf6e482aecd2525163670a8943787",
