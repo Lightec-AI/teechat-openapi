@@ -26,6 +26,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Install protoc (aesm-client / protobuf-codegen)
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -46,5 +48,7 @@ jobs:
         run: ln -sfn "$GITHUB_WORKSPACE/_attested-mtls" "$GITHUB_WORKSPACE/../attested-mtls"
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
+      - name: Install protoc (aesm-client / protobuf-codegen)
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - name: build openapi binary
         run: cargo build --release -p openapi
