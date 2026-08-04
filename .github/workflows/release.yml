@@ -72,21 +72,15 @@ jobs:
                           f"{region.get('region')} {release.get('build_version')}"
                       )
           PY
-            # Allowlist code_hashes are the *deployed* CVM edge binaries — one per active
-            # row during an overlap window (old live edge + newly released edge). GHA
-            # ubuntu builds are for the attest CLI + transparency and may differ. Clients
-            # cross-check the *live* edge code_hash against SHA256SUMS (github_release.rs
-            # cross_check_code_hash_against_sha256sums), so EVERY active row hash must be
-            # discoverable here — not just the first row — or the old edge fails GitHub
-            # verification during cutover.
+            # RB-13 (Phase 0): Do NOT append allowlist code_hashes into SHA256SUMS.
+            # That synthesis made provenance vacuous — verifiers that test digest membership
+            # against a file generated from the same manifest cannot fail.
+            # SHA256SUMS is only digests of artifacts built in this job (filename-bound).
+            # Deployed CVM edge code_hashes live in openapi-edge-attest.json only; overlap
+            # windows must not be "fixed" by forging SHA256SUMS rows.
             mapfile -t MANIFEST_HASHES < <(python3 -c 'import json;[print(r["code_hash"]) for reg in json.load(open("dist/openapi-edge-attest.json"))["regions"] for r in reg["active"]]')
-            for H in "${MANIFEST_HASHES[@]}"; do
-              if ! grep -qi "${H}" dist/SHA256SUMS; then
-                echo "${H}  openapi (allowlist code_hash / deployed edge)" >> dist/SHA256SUMS
-              fi
-            done
             if ! printf '%s\n' "${MANIFEST_HASHES[@]}" | grep -qi "${CODE_HASH}"; then
-              echo "::warning::CI openapi hash (${CODE_HASH}) not in allowlist active rows. Expected when the deployed edge is a CVM build — allowlist + SHA256SUMS remain the challenge trust root; update the allowlist from the guest binary before cutover."
+              echo "::warning::CI openapi hash (${CODE_HASH}) not in allowlist active rows. Expected when the deployed edge is a CVM build — update openapi-edge-attest.json from the guest binary before cutover; do not pad SHA256SUMS."
             fi
           else
             echo "::error::manifest/release/openapi-edge-attest.json is required; CI stubs cannot be release trust roots"
@@ -95,6 +89,11 @@ jobs:
           echo "Artifacts:"
           ls -la dist
           cat dist/SHA256SUMS
+          # Fail closed if anyone reintroduces synthetic allowlist padding.
+          if grep -E 'allowlist code_hash|deployed edge' dist/SHA256SUMS; then
+            echo "::error::RB-13: SHA256SUMS must not contain synthesized allowlist rows" >&2
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -108,7 +107,7 @@ jobs:
           body: |
             ## Attestation trust root
 
-            - **`SHA256SUMS`** — digests of `openapi` + `teechat-openapi-attest`
+            - **`SHA256SUMS`** — digests of **this release's** `openapi` + `teechat-openapi-attest` only (no allowlist padding; RB-13)
             - **`openapi-edge-attest.json`** — edge allowlist (mirror to www `.well-known` as signed fallback)
 
             Verify: `teechat-openapi-attest verify https://openapi.teechat.ai`
