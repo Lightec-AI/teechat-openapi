@@ -171,7 +171,7 @@ impl fmt::Display for Problem {
         }
 
         if let Some(r#type) = &self.r#type {
-            write!(f, " ({})", r#type)?;
+            write!(f, " ({type})")?;
         }
 
         Ok(())

@@ -51,9 +51,11 @@ impl DnsResolver for StdDnsResolver {
     }
 }
 
+type DnsResolveFn = dyn Fn(&str, u16) -> Result<SocketAddr, Error> + Send + Sync;
+
 /// Resolver backed by a closure (tests, Fortanix EDP with pre-resolved IPs).
 pub struct FnDnsResolver {
-    f: Arc<dyn Fn(&str, u16) -> Result<SocketAddr, Error> + Send + Sync>,
+    f: Arc<DnsResolveFn>,
 }
 
 impl FnDnsResolver {
@@ -121,13 +123,12 @@ pub trait AcmeTransport: Send + Sync {
     ) -> Result<HttpResponse, Error>;
 }
 
+type AcmeRequestFn =
+    dyn Fn(&str, &str, Option<&str>, Option<&[u8]>) -> Result<HttpResponse, Error> + Send + Sync;
+
 /// Closure-backed [`AcmeTransport`] (tests / relays).
 pub struct FnAcmeTransport {
-    f: Arc<
-        dyn Fn(&str, &str, Option<&str>, Option<&[u8]>) -> Result<HttpResponse, Error>
-            + Send
-            + Sync,
-    >,
+    f: Arc<AcmeRequestFn>,
 }
 
 impl FnAcmeTransport {
