@@ -32,4 +32,8 @@ pub use manifest::{
     fetch_signed_manifest, load_signed_manifest_files, verify_signed_manifest_bytes,
     OpenApiEdgeManifest, DEFAULT_MANIFEST_URL, PINNED_KEY_ID, PINNED_PUBLIC_KEY_HEX,
 };
+pub use snp::{
+    challenge_canonical_launch_digest, expected_quote_format, verify_snp_report,
+    verify_snp_report_with_collateral, SnpVerifyReport,
+};
 pub use verify::{verify_openapi_edge, AttestationVerdict, VerifyOptions};

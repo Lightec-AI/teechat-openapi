@@ -43,17 +43,7 @@ pub fn verify_snp_report(quote_b64: &str, reject_debug: bool) -> Result<SnpVerif
     let report = AttestationReport::from_bytes(&raw)
         .map_err(|e| AttestError::Quote(format!("parse SNP report: {e}")))?;
 
-    let policy_debug = report.policy.debug_allowed();
-    if reject_debug && policy_debug {
-        return Err(AttestError::Policy(
-            "SNP report has debug policy bit set".into(),
-        ));
-    }
-    if report.policy.migrate_ma_allowed() {
-        return Err(AttestError::Policy(
-            "SNP report allows migration agent (policy MIGRATE_MA)".into(),
-        ));
-    }
+    apply_snp_policy(&report, reject_debug)?;
 
     let product = snp_product_name(&report);
     let chip_id = hex::encode(report.chip_id);
@@ -63,7 +53,30 @@ pub fn verify_snp_report(quote_b64: &str, reject_debug: bool) -> Result<SnpVerif
         tcb.bootloader, tcb.tee, tcb.snp, tcb.microcode
     );
     let vcek_der = http_get(&vcek_url)?;
-    let vcek = Certificate::from_der(&vcek_der)
+    verify_snp_report_with_collateral(quote_b64, &vcek_der, reject_debug)
+}
+
+/// I/O-free SNP chain verify (RB-02 / decision 15 seed).
+///
+/// Caller supplies VCEK DER (from KDS, cache, or an embedded endorsement).
+/// ARK/ASK come from the `sev` builtin roots for the product encoded in the report.
+/// Live `verify_snp_report` is a thin fetch wrapper over this.
+pub fn verify_snp_report_with_collateral(
+    quote_b64: &str,
+    vcek_der: &[u8],
+    reject_debug: bool,
+) -> Result<SnpVerifyReport> {
+    let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, quote_b64.trim())
+        .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
+
+    let report = AttestationReport::from_bytes(&raw)
+        .map_err(|e| AttestError::Quote(format!("parse SNP report: {e}")))?;
+
+    apply_snp_policy(&report, reject_debug)?;
+
+    let product = snp_product_name(&report);
+    let chip_id = hex::encode(report.chip_id);
+    let vcek = Certificate::from_der(vcek_der)
         .map_err(|e| AttestError::Quote(format!("VCEK parse: {e}")))?;
 
     let (ark, ask) = builtin_ca(&product)?;
@@ -83,9 +96,24 @@ pub fn verify_snp_report(quote_b64: &str, reject_debug: bool) -> Result<SnpVerif
         launch_measurement_hex: hex::encode(report.measurement),
         report_data_hex: hex::encode(report.report_data),
         chip_id_hex: chip_id,
-        policy_debug,
+        policy_debug: report.policy.debug_allowed(),
         guest_svn: report.guest_svn,
     })
+}
+
+fn apply_snp_policy(report: &AttestationReport, reject_debug: bool) -> Result<()> {
+    let policy_debug = report.policy.debug_allowed();
+    if reject_debug && policy_debug {
+        return Err(AttestError::Policy(
+            "SNP report has debug policy bit set".into(),
+        ));
+    }
+    if report.policy.migrate_ma_allowed() {
+        return Err(AttestError::Policy(
+            "SNP report allows migration agent (policy MIGRATE_MA)".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn builtin_ca(product: &str) -> Result<(Certificate, Certificate)> {
@@ -196,6 +224,29 @@ mod tests {
         assert_eq!(
             challenge_canonical_launch_digest(&raw.to_ascii_uppercase()),
             got
+        );
+    }
+
+    #[test]
+    fn collateral_api_rejects_garbage_quote() {
+        let err = verify_snp_report_with_collateral("not-base64!!!", b"not-der", true).unwrap_err();
+        assert!(
+            matches!(err, AttestError::Quote(_)),
+            "expected Quote error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn collateral_api_rejects_empty_vcek_on_empty_report_bytes() {
+        // Valid base64 of random bytes that are not an AttestationReport.
+        let quote = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            [0u8; 32],
+        );
+        let err = verify_snp_report_with_collateral(&quote, b"", true).unwrap_err();
+        assert!(
+            matches!(err, AttestError::Quote(_)),
+            "expected Quote error, got {err:?}"
         );
     }
 }
