@@ -33,7 +33,8 @@ pub use manifest::{
     OpenApiEdgeManifest, DEFAULT_MANIFEST_URL, PINNED_KEY_ID, PINNED_PUBLIC_KEY_HEX,
 };
 pub use snp::{
-    challenge_canonical_launch_digest, expected_quote_format, verify_snp_report,
-    verify_snp_report_with_collateral, SnpVerifyReport,
+    challenge_canonical_launch_digest, expected_quote_format, raw_snp_report_b64,
+    verify_snp_quote_with_collateral, verify_snp_report, verify_snp_report_with_collateral,
+    SnpVerifyReport,
 };
 pub use verify::{verify_openapi_edge, AttestationVerdict, VerifyOptions};

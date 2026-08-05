@@ -7,6 +7,7 @@
 
 use std::io::Read;
 
+use base64::Engine as _;
 use openapi_platform::{snp_report_reportdata, QuoteFormat};
 use sev::certs::snp::{builtin, Certificate, Chain, Verifiable};
 use sev::firmware::guest::AttestationReport;
@@ -37,7 +38,8 @@ pub fn challenge_canonical_launch_digest(raw_measurement_hex: &str) -> String {
 }
 
 pub fn verify_snp_report(quote_b64: &str, reject_debug: bool) -> Result<SnpVerifyReport> {
-    let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, quote_b64.trim())
+    let report_b64 = raw_snp_report_b64(quote_b64)?;
+    let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, report_b64.trim())
         .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
 
     let report = AttestationReport::from_bytes(&raw)
@@ -53,7 +55,64 @@ pub fn verify_snp_report(quote_b64: &str, reject_debug: bool) -> Result<SnpVerif
         tcb.bootloader, tcb.tee, tcb.snp, tcb.microcode
     );
     let vcek_der = http_get(&vcek_url)?;
-    verify_snp_report_with_collateral(quote_b64, &vcek_der, reject_debug)
+    verify_snp_report_with_collateral(&report_b64, &vcek_der, reject_debug)
+}
+
+/// Accept either a raw SNP attestation report (standard Base64) or a TeeChat
+/// engine quote wrapper (`base64(JSON { v:2, kind:"sev-snp", report_b64 })`).
+///
+/// Returns standard Base64 of the raw report bytes for
+/// [`verify_snp_report_with_collateral`].
+pub fn raw_snp_report_b64(quote_or_wrapper_b64: &str) -> Result<String> {
+    let trimmed = quote_or_wrapper_b64.trim();
+    let raw = decode_b64_flexible(trimmed)
+        .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
+
+    // TeeChat engine wrapper: UTF-8 JSON with report_b64.
+    if let Ok(text) = std::str::from_utf8(&raw) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {
+            if v.get("v") == Some(&serde_json::Value::from(2))
+                && v.get("kind").and_then(|k| k.as_str()) == Some("sev-snp")
+            {
+                let report_b64 = v
+                    .get("report_b64")
+                    .and_then(|r| r.as_str())
+                    .ok_or_else(|| AttestError::Quote("wrapper missing report_b64".into()))?;
+                // Normalize to standard Base64 of the report bytes.
+                let report = decode_b64_flexible(report_b64)
+                    .map_err(|e| AttestError::Quote(format!("report_b64: {e}")))?;
+                return Ok(base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    report,
+                ));
+            }
+        }
+    }
+
+    // Already raw report bytes (or opaque) — re-encode as standard Base64.
+    Ok(base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        raw,
+    ))
+}
+
+/// I/O-free SNP verify that accepts engine wrappers or raw reports.
+pub fn verify_snp_quote_with_collateral(
+    quote_or_wrapper_b64: &str,
+    vcek_der: &[u8],
+    reject_debug: bool,
+) -> Result<SnpVerifyReport> {
+    let report_b64 = raw_snp_report_b64(quote_or_wrapper_b64)?;
+    verify_snp_report_with_collateral(&report_b64, vcek_der, reject_debug)
+}
+
+fn decode_b64_flexible(s: &str) -> std::result::Result<Vec<u8>, base64::DecodeError> {
+    let standard = base64::engine::general_purpose::STANDARD.decode(s.trim());
+    if standard.is_ok() {
+        return standard;
+    }
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(s.trim().trim_end_matches('='))
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(s.trim()))
 }
 
 /// I/O-free SNP chain verify (RB-02 / decision 15 seed).
@@ -244,6 +303,47 @@ mod tests {
             [0u8; 32],
         );
         let err = verify_snp_report_with_collateral(&quote, b"", true).unwrap_err();
+        assert!(
+            matches!(err, AttestError::Quote(_)),
+            "expected Quote error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn raw_snp_report_b64_unwraps_engine_wrapper() {
+        let report = vec![0xabu8; 0x90 + 48];
+        let report_b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &report);
+        let wrapper = serde_json::json!({
+            "v": 2,
+            "kind": "sev-snp",
+            "report_b64": report_b64,
+        });
+        let wrapper_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            wrapper.to_string().as_bytes(),
+        );
+        let got = raw_snp_report_b64(&wrapper_b64).expect("unwrap");
+        let got_bytes =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &got).unwrap();
+        assert_eq!(got_bytes, report);
+    }
+
+    #[test]
+    fn quote_with_collateral_rejects_wrapper_with_empty_vcek() {
+        let report = vec![0u8; 64];
+        let report_b64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &report);
+        let wrapper = serde_json::json!({
+            "v": 2,
+            "kind": "sev-snp",
+            "report_b64": report_b64,
+        });
+        let wrapper_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            wrapper.to_string().as_bytes(),
+        );
+        let err = verify_snp_quote_with_collateral(&wrapper_b64, b"", true).unwrap_err();
         assert!(
             matches!(err, AttestError::Quote(_)),
             "expected Quote error, got {err:?}"
