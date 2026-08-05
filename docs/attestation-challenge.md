@@ -2,7 +2,9 @@
 
 **Status:** Locked contract for Option A (challenge-bound `report_data`). Implementation must match this document; do not invent alternate hashes.
 
-**Related:** [`SECURITY.md`](../SECURITY.md) · product docs at [openapi.teechat.ai](https://openapi.teechat.ai)
+**Scope:** This document is **API client → OpenAPI edge** attestation (customers verifying the edge). It is **not** the engine-challenge contract. Edge → engine challenges (RB-46) use the shared TeeChat pin [engine-attestation-challenge.md](../../../docs/design/engine-attestation-challenge.md); CVM + `lab.openapi` implementation is **in progress (2026-08-05)** and must not invent a second preimage.
+
+**Related:** [`SECURITY.md`](../SECURITY.md) · product docs at [openapi.teechat.ai](https://openapi.teechat.ai) · TeeChat [engine-attestation-challenge.md](../../../docs/design/engine-attestation-challenge.md)
 
 This is the public, researcher-facing pin for:
 
