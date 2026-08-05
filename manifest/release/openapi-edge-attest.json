@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-08-05T06:45:00Z",
-  "epoch": 37,
+  "published_at": "2026-08-05T06:50:00Z",
+  "epoch": 38,
   "not_after": "2027-07-29T02:35:30Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -88,11 +88,26 @@
           ],
           "measurement": {
             "kind": "launch_digest",
-            "launch_digest": "170f40b1305c0d7857b938a11be5636bc62e194b06151c55c8ed284f5523ae1a",
+            "launch_digest": "08744b30d4d815b54e4e9e52a8038b27f70856e74d3c35427b16e4f84c655aef",
+            "image_digest": "3d520d848a0d6d76ae9bec571bc075f894318bc249c3f1083666ab279b97b8cb"
+          },
+          "notes": "0.9.0 composed LD; OS golden 853aefc + app-verity R=df5bd6a5\u2026. Seal_sync blue/green.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.9.0"
+        },
+        {
+          "build_version": "0.9.0",
+          "code_hash": "f010bc9ffdbfd93003e82fc8e46d2f152438cc11f1e4447957707b6e8e03c023",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "08744b30d4d815b54e4e9e52a8038b27f70856e74d3c35427b16e4f84c655aef",
             "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
           },
-          "notes": "0.9.0 composed LD; OS golden 6f84bc (IMAGE_DIGEST fdc5250b) + app-verity R=daede884\u2026; seal_sync blue/green.",
-          "golden_version": "openapi-golden-20260729-6f84bc625867-seal-sync-app-0.9.0"
+          "notes": "0.9.0 composed LD + IMAGE_DIGEST fdc5250b (live VIP pin); dual row with 3d520d84.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.9.0"
         },
         {
           "build_version": "0.8.0",
