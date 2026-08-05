@@ -5,6 +5,7 @@
 
 mod challenge;
 mod edge_policy;
+mod engine_challenge;
 mod engine_recipient;
 mod engine_trust;
 mod epoch_evidence;
@@ -24,6 +25,13 @@ pub use challenge::{
     SGX_REPORT_DATA_OFFSET, SNP_REPORT_DATA_OFFSET,
 };
 pub use edge_policy::{edge_runtime_policy_from_parts, EdgeRuntimePolicy};
+pub use engine_challenge::{
+    build_engine_challenge_preimage, build_engine_challenge_report_data, decode_nonce_b64_url,
+    encode_nonce_b64_url, require_engine_challenge_from_env, verify_engine_challenge_response,
+    EngineChallengeError, EngineChallengeMeasurement, EngineChallengeReportDataInput,
+    EngineChallengeWireResponse, ENGINE_CHALLENGE_MAGIC, ENGINE_CHALLENGE_REPORT_DATA_VERSION,
+    ENGINE_CHALLENGE_SCHEMA_VERSION,
+};
 pub use engine_recipient::{
     accept_engine_recipient, AcceptedRecipient, EngineRecipientPolicy, RecipientError,
     RecipientTrustVia,

@@ -3,6 +3,7 @@
 //! Identical wire logic to `openapi-platform-cvm::ope_upstream`; only the underlying
 //! `GatewayOpeApiClient` dialer differs (raw `TcpStream` + rustls here, `ureq` on CVM).
 
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::Mutex;
 
@@ -13,8 +14,14 @@ use openapi_core::handler::{
 };
 use openapi_core::models::{ModelObject, ModelsListResponse};
 use openapi_core::upstream::{body_wants_stream, model_from_body};
-use openapi_platform::{accept_engine_recipient, EngineRecipientPolicy, EphemeralEngineTrust};
+use openapi_platform::{
+    accept_engine_recipient, encode_nonce_b64_url, require_engine_challenge_from_env,
+    verify_engine_challenge_response, EngineRecipientPolicy, EphemeralEngineTrust,
+};
+use rand::RngCore;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tracing::warn;
 
 use crate::gateway_ope_api::{
     DispatchRequest, GatewayOpeApiClient, GatewayOpeApiConfig, GatewayOpeApiError, InventoryEngine,
@@ -146,12 +153,32 @@ impl OpeDispatchUpstream {
             identity_signature: &pre.trust.identity.identity_signature,
         };
         // The gateway chose this engine; the edge decides whether its keys may
-        // receive customer plaintext (RB-46).
+        // receive customer plaintext (RB-46). ARCH-CHAL: mint nonce → F′ challenge
+        // → verify report_data → accept with the same nonce (fail-closed).
+        let challenge_nonce = if require_engine_challenge_from_env() {
+            let mut nonce = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut nonce);
+            let nonce_b64 = encode_nonce_b64_url(&nonce);
+            let chal = self
+                .client
+                .challenge_engine(
+                    &pre.trust.engine_id,
+                    &nonce_b64,
+                    Some(pre.trust.epoch_id.as_str()),
+                )
+                .map_err(Self::map_gw)?;
+            verify_engine_challenge_response(&nonce, &chal).map_err(|e| {
+                ApiError::Forbidden(format!("engine challenge failed: {e}"))
+            })?;
+            Some(nonce_b64)
+        } else {
+            None
+        };
         accept_engine_recipient(
             &self.recipient_policy,
             &trust,
             pre.trust.cpu_quote(),
-            None,
+            challenge_nonce.as_deref(),
             now_ms,
         )
         .map_err(|e| ApiError::Forbidden(format!("untrusted OPE engine recipient: {e}")))?;

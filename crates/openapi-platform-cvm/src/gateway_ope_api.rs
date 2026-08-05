@@ -28,6 +28,13 @@ const HEADER_ENGINE_ID: &str = "x-ope-engine-id";
 const HEADER_CONVERSATION_ID: &str = "x-ope-conversation-id";
 const HEADER_EPHEMERAL_EPOCH: &str = "x-ope-ephemeral-epoch";
 const HEADER_ASSIGN_ID: &str = "x-ope-assign-id";
+
+fn challenge_path(engine_id: &str) -> String {
+    format!(
+        "/v1/ope/api/engines/{}/challenge",
+        urlencoding_minimal(engine_id.trim())
+    )
+}
 /// Binds API-key ledger debit on the gateway (METER-002). Must match gateway `HEADER_OPENAPI_KEY_ID`.
 const HEADER_OPENAPI_KEY_ID: &str = "x-teechat-openapi-key-id";
 
@@ -292,6 +299,45 @@ impl GatewayOpeApiClient {
             .apply_auth(self.agent.post(&url))
             .set("Content-Type", "application/json")
             .send_bytes(&body)
+            .or_any_status()
+            .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
+        let status = resp.status();
+        let text = resp
+            .into_string()
+            .map_err(|e| GatewayOpeApiError::Transport(format!("read body: {e}")))?;
+        if status != 200 {
+            return Err(GatewayOpeApiError::Http {
+                status,
+                body: truncate_body(&text),
+            });
+        }
+        serde_json::from_str(&text).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))
+    }
+
+    /// `POST /v1/ope/api/engines/:id/challenge` — ARCH-CHAL relay (RB-46).
+    pub fn challenge_engine(
+        &self,
+        engine_id: &str,
+        nonce_b64: &str,
+        epoch_id: Option<&str>,
+    ) -> Result<openapi_platform::EngineChallengeWireResponse, GatewayOpeApiError> {
+        let engine_id = engine_id.trim();
+        if engine_id.is_empty() {
+            return Err(GatewayOpeApiError::Config(
+                "challenge requires non-empty engine_id".into(),
+            ));
+        }
+        let url = self.url(&challenge_path(engine_id));
+        let mut body = serde_json::json!({ "nonce_b64": nonce_b64 });
+        if let Some(epoch) = epoch_id.map(str::trim).filter(|s| !s.is_empty()) {
+            body["epoch_id"] = serde_json::Value::String(epoch.to_string());
+        }
+        let bytes =
+            serde_json::to_vec(&body).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))?;
+        let resp = self
+            .apply_auth(self.agent.post(&url))
+            .set("Content-Type", "application/json")
+            .send_bytes(&bytes)
             .or_any_status()
             .map_err(|e| GatewayOpeApiError::Transport(e.to_string()))?;
         let status = resp.status();

@@ -46,6 +46,13 @@ const HEADER_ASSIGN_ID: &str = "x-ope-assign-id";
 /// Binds API-key ledger debit on the gateway (METER-002). Must match gateway `HEADER_OPENAPI_KEY_ID`.
 const HEADER_OPENAPI_KEY_ID: &str = "x-teechat-openapi-key-id";
 
+fn challenge_path(engine_id: &str) -> String {
+    format!(
+        "/v1/ope/api/engines/{}/challenge",
+        urlencoding_minimal(engine_id.trim())
+    )
+}
+
 /// Env configuration for the edge → gateway OPE API dialer.
 #[derive(Debug, Clone)]
 pub struct GatewayOpeApiConfig {
@@ -391,6 +398,38 @@ impl GatewayOpeApiClient {
         let mut headers = self.auth_headers();
         headers.push(("Content-Type".into(), "application/json".into()));
         let (status, text) = self.exec_buffered("POST", PREASSIGN_PATH, headers, Some(&body))?;
+        if status != 200 {
+            return Err(GatewayOpeApiError::Http {
+                status,
+                body: truncate_body(&text),
+            });
+        }
+        serde_json::from_str(&text).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))
+    }
+
+    /// `POST /v1/ope/api/engines/:id/challenge` — ARCH-CHAL relay (RB-46).
+    pub fn challenge_engine(
+        &self,
+        engine_id: &str,
+        nonce_b64: &str,
+        epoch_id: Option<&str>,
+    ) -> Result<openapi_platform::EngineChallengeWireResponse, GatewayOpeApiError> {
+        let engine_id = engine_id.trim();
+        if engine_id.is_empty() {
+            return Err(GatewayOpeApiError::Config(
+                "challenge requires non-empty engine_id".into(),
+            ));
+        }
+        let mut body = serde_json::json!({ "nonce_b64": nonce_b64 });
+        if let Some(epoch) = epoch_id.map(str::trim).filter(|s| !s.is_empty()) {
+            body["epoch_id"] = serde_json::Value::String(epoch.to_string());
+        }
+        let bytes =
+            serde_json::to_vec(&body).map_err(|e| GatewayOpeApiError::Decode(e.to_string()))?;
+        let mut headers = self.auth_headers();
+        headers.push(("Content-Type".into(), "application/json".into()));
+        let path = challenge_path(engine_id);
+        let (status, text) = self.exec_buffered("POST", &path, headers, Some(&bytes))?;
         if status != 200 {
             return Err(GatewayOpeApiError::Http {
                 status,
