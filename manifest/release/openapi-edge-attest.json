@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-08-02T16:36:10Z",
-  "epoch": 35,
+  "published_at": "2026-08-05T05:50:00Z",
+  "epoch": 36,
   "not_after": "2027-07-29T02:35:30Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -62,6 +62,21 @@
             "image_digest": "3d520d848a0d6d76ae9bec571bc075f894318bc249c3f1083666ab279b97b8cb"
           },
           "notes": "0.8.1 hard/soft maintenance windows. dm-verity ENABLED=1: OS golden 853aefc + app-verity R=e26c80ca\u2026. Seal_sync blue/green.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.8.1"
+        },
+        {
+          "build_version": "0.8.1",
+          "code_hash": "ea063a5083029f9955045115f002a2145d4734bc67220972ab6d6aa3e49e9528",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "a38dade47cc47a56554fa67afdc587182a11d54609100aed0324fa66a064fa28",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "TRANSITIONAL live VIP: 0.8.1 composed LD + IMAGE_DIGEST fdc5250b (OS image swap); dual row until 0.9.0 cutover.",
           "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.8.1"
         },
         {
