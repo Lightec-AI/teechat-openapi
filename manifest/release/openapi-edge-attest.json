@@ -1,8 +1,8 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-08-06T06:45:00Z",
-  "epoch": 39,
+  "published_at": "2026-08-06T08:01:04Z",
+  "epoch": 40,
   "not_after": "2027-07-29T02:35:30Z",
   "retired_grace_period_days": 30,
   "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json",
@@ -558,6 +558,36 @@
           },
           "notes": "Same binary digest as 0.4.4 (GitHub v0.4.5); label/manifest sync after guest pin bump.",
           "golden_version": "openapi-sev-snp-legacy-2026-07"
+        },
+        {
+          "build_version": "0.10.2",
+          "code_hash": "e410cfb1ba5881d3c712488bdc82f7a8c2eac79aece60418a38f4bfddedce062",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "981c8e6d8e2aa736c0e0d29d50b49e79e6fa6983b519652af70a786ed745bb62",
+            "image_digest": "3d520d848a0d6d76ae9bec571bc075f894318bc249c3f1083666ab279b97b8cb"
+          },
+          "notes": "0.10.0 composed LD; OS golden 853aefc + app-verity R=81c6fdb5\u2026. Seal_sync blue/green. Engine challenge (RB-46).",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.10.2"
+        },
+        {
+          "build_version": "0.10.2",
+          "code_hash": "e410cfb1ba5881d3c712488bdc82f7a8c2eac79aece60418a38f4bfddedce062",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "981c8e6d8e2aa736c0e0d29d50b49e79e6fa6983b519652af70a786ed745bb62",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.10.0 composed LD + IMAGE_DIGEST fdc5250b (live VIP pin); dual row with 3d520d84.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.10.2"
         }
       ],
       "retired": [
