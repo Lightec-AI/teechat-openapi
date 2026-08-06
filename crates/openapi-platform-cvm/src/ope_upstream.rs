@@ -160,8 +160,11 @@ impl OpeDispatchUpstream {
         };
         // The gateway chose this engine; the edge decides whether its keys may
         // receive customer plaintext (RB-46). ARCH-CHAL: mint nonce → F′ challenge
-        // → verify report_data → accept with the same nonce (fail-closed).
-        let challenge_nonce = if require_engine_challenge_from_env() {
+        // → verify challenge REPORT_DATA (fail-closed). Recipient bind-v2 still
+        // uses the relayed *connect* quote, which was minted with nonce=None —
+        // passing the challenge nonce here recomputes a different preimage and
+        // rejects every live epoch (REPORT_DATA mismatch / client timeouts).
+        if require_engine_challenge_from_env() {
             let mut nonce = [0u8; 32];
             rand::thread_rng().fill_bytes(&mut nonce);
             let nonce_b64 = encode_nonce_b64_url(&nonce);
@@ -175,15 +178,12 @@ impl OpeDispatchUpstream {
                 .map_err(Self::map_gw)?;
             verify_engine_challenge_response(&nonce, &chal)
                 .map_err(|e| ApiError::Forbidden(format!("engine challenge failed: {e}")))?;
-            Some(nonce_b64)
-        } else {
-            None
-        };
+        }
         let accepted = accept_engine_recipient(
             &self.recipient_policy,
             &trust,
             pre.trust.cpu_quote(),
-            challenge_nonce.as_deref(),
+            None,
             now_ms,
         )
         .map_err(|e| ApiError::Forbidden(format!("untrusted OPE engine recipient: {e}")))?;
