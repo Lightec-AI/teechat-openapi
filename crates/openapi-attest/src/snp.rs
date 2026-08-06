@@ -5,16 +5,18 @@
 //! - AMD Pub 56860 — SEV-SNP Firmware ABI
 //! - AMD UG 58217 — Platform attestation using VirTEE/SNP
 
-use std::io::Read;
-
 use base64::Engine as _;
-use openapi_platform::{snp_report_reportdata, QuoteFormat};
 use sev::certs::snp::{builtin, Certificate, Chain, Verifiable};
 use sev::firmware::guest::AttestationReport;
 use sha2::{Digest, Sha256};
 
 use crate::error::{AttestError, Result};
 
+/// AMD SEV-SNP attestation report: `REPORT_DATA` at offset 0x50 (64 bytes).
+const SNP_REPORT_DATA_OFFSET: usize = 0x50;
+const REPORT_DATA_LEN: usize = 64;
+
+#[cfg(feature = "full")]
 const KDS_BASE: &str = "https://kdsintf.amd.com";
 
 #[derive(Debug, Clone)]
@@ -37,6 +39,25 @@ pub fn challenge_canonical_launch_digest(raw_measurement_hex: &str) -> String {
     hex::encode(Sha256::digest(normalized.as_bytes()))
 }
 
+/// Extract `REPORT_DATA` from a raw SNP report (standard Base64 of report bytes).
+fn snp_report_reportdata_local(quote_b64: &str) -> Result<[u8; REPORT_DATA_LEN]> {
+    let raw = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        quote_b64.trim(),
+    )
+    .map_err(|e| AttestError::Quote(format!("quote_b64 decode: {e}")))?;
+    if raw.len() < SNP_REPORT_DATA_OFFSET + REPORT_DATA_LEN {
+        return Err(AttestError::Quote(format!(
+            "SNP report too short: {} bytes",
+            raw.len()
+        )));
+    }
+    let mut out = [0u8; REPORT_DATA_LEN];
+    out.copy_from_slice(&raw[SNP_REPORT_DATA_OFFSET..SNP_REPORT_DATA_OFFSET + REPORT_DATA_LEN]);
+    Ok(out)
+}
+
+#[cfg(feature = "full")]
 pub fn verify_snp_report(quote_b64: &str, reject_debug: bool) -> Result<SnpVerifyReport> {
     let report_b64 = raw_snp_report_b64(quote_b64)?;
     let raw = base64::Engine::decode(
@@ -152,7 +173,7 @@ pub fn verify_snp_report_with_collateral(
         .map_err(|e| AttestError::Quote(format!("SNP VCEK/chain verify: {e}")))?;
 
     // Cross-check report_data extractor used by binding layer.
-    let _ = snp_report_reportdata(quote_b64).map_err(|e| AttestError::Quote(e.to_string()))?;
+    let _ = snp_report_reportdata_local(quote_b64)?;
 
     Ok(SnpVerifyReport {
         product_name: product,
@@ -213,7 +234,10 @@ fn snp_product_name(report: &AttestationReport) -> String {
     }
 }
 
+#[cfg(feature = "full")]
 fn http_get(url: &str) -> Result<Vec<u8>> {
+    use std::io::Read;
+
     // Disk cache: seal-sync importer+exporter both challenge the VIP within ~1s and
     // each verify_snp_report hits AMD KDS; without a cache the second call 429s.
     let cache_dir = std::env::var("OPENAPI_KDS_CACHE_DIR")
@@ -266,8 +290,9 @@ fn http_get(url: &str) -> Result<Vec<u8>> {
     Err(last_err.unwrap_or_else(|| AttestError::Http(format!("GET {url}: exhausted retries"))))
 }
 
-pub fn expected_quote_format() -> QuoteFormat {
-    QuoteFormat::SnpReport
+#[cfg(feature = "full")]
+pub fn expected_quote_format() -> openapi_platform::QuoteFormat {
+    openapi_platform::QuoteFormat::SnpReport
 }
 
 #[cfg(test)]

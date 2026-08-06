@@ -7,27 +7,52 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["full"]
+# Full CLI / edge verifier (network + SGX DCAP + platform types).
+full = [
+    "dep:openapi-platform",
+    "dep:ureq",
+    "dep:rustls",
+    "dep:rustls-pemfile",
+    "dep:webpki-roots",
+    "dep:dcap-qvl",
+    "dep:tokio",
+    "dep:url",
+    "dep:rand",
+    "dep:ed25519-dalek",
+    "dep:subtle",
+]
+# I/O-free SNP collateral verify only (RB-02 / browser WASM). Use with
+# `--no-default-features --features collateral-only`.
+collateral-only = []
+
 [dependencies]
-openapi-platform = { path = "../openapi-platform" }
 base64 = { workspace = true }
-ed25519-dalek = { workspace = true }
 hex = { workspace = true }
-rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
-ureq = { workspace = true }
-rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
-subtle = { workspace = true }
-url = "2.5"
-webpki-roots = "0.26"
 # SEV-SNP report parsing + VCEK chain helpers (AMD 57230 / 56860)
 sev = { version = "6.2", default-features = false, features = ["snp", "crypto_nossl"] }
-# SGX DCAP Quote3 verification (pure Rust, cross-platform)
-dcap-qvl = { version = "0.3.11", default-features = false, features = ["std", "report", "rustcrypto"] }
-tokio = { version = "1.44", features = ["rt-multi-thread", "macros"] }
+
+# Full-feature deps (optional so collateral-only builds for wasm32).
+openapi-platform = { path = "../openapi-platform", optional = true }
+ed25519-dalek = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
+subtle = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rustls-pemfile = { workspace = true, optional = true }
+dcap-qvl = { version = "0.3.11", default-features = false, features = ["std", "report", "rustcrypto"], optional = true }
+tokio = { version = "1.44", features = ["rt-multi-thread", "macros"], optional = true }
+url = { version = "2.5", optional = true }
+webpki-roots = { version = "0.26", optional = true }
+
+# Browser WASM: `sev`/`rand_core` pull getrandom 0.2 without a wasm backend by default.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 tempfile = "3"

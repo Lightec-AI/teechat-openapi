@@ -1,0 +1,21 @@
+{
+  "name": "@teechat/openapi-attest-wasm",
+  "type": "module",
+  "description": "Browser WASM bindings for I/O-free SNP collateral verify (RB-02)",
+  "version": "0.10.3",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lightec-AI/teechat-openapi"
+  },
+  "files": [
+    "openapi_attest_wasm_bg.wasm",
+    "openapi_attest_wasm.js",
+    "openapi_attest_wasm.d.ts"
+  ],
+  "main": "openapi_attest_wasm.js",
+  "types": "openapi_attest_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
