@@ -118,6 +118,40 @@ pub fn cross_check_code_hash_against_sha256sums(
     Ok(())
 }
 
+/// RB-13: `latest` SHA256SUMS lists only the newest train binary. During B/G overlap the
+/// peer may still serve an older allowlisted `code_hash`. Fall back to
+/// `releases/download/v{build_version}/SHA256SUMS` (same bytes as that train's release).
+pub fn cross_check_code_hash_for_edge(
+    code_hash: &str,
+    build_version: &str,
+    owner: &str,
+    repo: &str,
+    latest_sha256sums: Option<&[String]>,
+) -> Result<()> {
+    if cross_check_code_hash_against_sha256sums(code_hash, latest_sha256sums).is_ok() {
+        return Ok(());
+    }
+    let tag = if build_version.starts_with('v') {
+        build_version.to_string()
+    } else {
+        format!("v{build_version}")
+    };
+    let url = format!(
+        "https://github.com/{owner}/{repo}/releases/download/{tag}/{SHA256SUMS_ASSET_NAME}"
+    );
+    match http_get_github(&url) {
+        Ok(raw) => {
+            let text = String::from_utf8(raw)
+                .map_err(|e| AttestError::Manifest(format!("SHA256SUMS utf8: {e}")))?;
+            let sums = parse_sha256sums(&text)?;
+            cross_check_code_hash_against_sha256sums(code_hash, Some(&sums))
+        }
+        Err(e) => Err(AttestError::Policy(format!(
+            "edge code_hash {code_hash} not in latest SHA256SUMS and failed to fetch {url}: {e}"
+        ))),
+    }
+}
+
 pub fn parse_sha256sums(text: &str) -> Result<Vec<String>> {
     let mut out = Vec::new();
     for line in text.lines() {

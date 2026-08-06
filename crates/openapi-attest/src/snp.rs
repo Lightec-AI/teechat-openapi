@@ -39,8 +39,11 @@ pub fn challenge_canonical_launch_digest(raw_measurement_hex: &str) -> String {
 
 pub fn verify_snp_report(quote_b64: &str, reject_debug: bool) -> Result<SnpVerifyReport> {
     let report_b64 = raw_snp_report_b64(quote_b64)?;
-    let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, report_b64.trim())
-        .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
+    let raw = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        report_b64.trim(),
+    )
+    .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
 
     let report = AttestationReport::from_bytes(&raw)
         .map_err(|e| AttestError::Quote(format!("parse SNP report: {e}")))?;
@@ -65,8 +68,8 @@ pub fn verify_snp_report(quote_b64: &str, reject_debug: bool) -> Result<SnpVerif
 /// [`verify_snp_report_with_collateral`].
 pub fn raw_snp_report_b64(quote_or_wrapper_b64: &str) -> Result<String> {
     let trimmed = quote_or_wrapper_b64.trim();
-    let raw = decode_b64_flexible(trimmed)
-        .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
+    let raw =
+        decode_b64_flexible(trimmed).map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
 
     // TeeChat engine wrapper: UTF-8 JSON with report_b64.
     if let Ok(text) = std::str::from_utf8(&raw) {
@@ -111,7 +114,8 @@ fn decode_b64_flexible(s: &str) -> std::result::Result<Vec<u8>, base64::DecodeEr
     if standard.is_ok() {
         return standard;
     }
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(s.trim().trim_end_matches('='))
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(s.trim().trim_end_matches('='))
         .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(s.trim()))
 }
 
@@ -298,10 +302,7 @@ mod tests {
     #[test]
     fn collateral_api_rejects_empty_vcek_on_empty_report_bytes() {
         // Valid base64 of random bytes that are not an AttestationReport.
-        let quote = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            [0u8; 32],
-        );
+        let quote = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0u8; 32]);
         let err = verify_snp_report_with_collateral(&quote, b"", true).unwrap_err();
         assert!(
             matches!(err, AttestError::Quote(_)),

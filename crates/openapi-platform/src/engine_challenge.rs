@@ -71,7 +71,9 @@ fn decode_hex_32(raw: &str, label: &'static str) -> Result<[u8; 32], EngineChall
         .map_err(|_| EngineChallengeError::Invalid(label))
 }
 
-fn measurement_body(measurement: &EngineChallengeMeasurement) -> Result<Vec<u8>, EngineChallengeError> {
+fn measurement_body(
+    measurement: &EngineChallengeMeasurement,
+) -> Result<Vec<u8>, EngineChallengeError> {
     match measurement {
         EngineChallengeMeasurement::Mrenclave { mrenclave } => {
             let mut body = Vec::with_capacity(33);
@@ -281,15 +283,22 @@ pub fn verify_engine_challenge_response(
     Ok(())
 }
 
-fn extract_report_data_from_quote(quote: &[u8]) -> Result<[u8; 64], EngineChallengeError> {
-    // SNP attestation report: report_data at offset 0x50 (see openapi challenge.rs).
+fn report_data_from_raw_snp(raw: &[u8]) -> Result<[u8; 64], EngineChallengeError> {
+    // AMD SEV-SNP attestation report: REPORT_DATA at offset 0x50 (64 bytes).
     const SNP_REPORT_DATA_OFFSET: usize = 0x50;
-    if quote.len() >= SNP_REPORT_DATA_OFFSET + 64 {
-        let mut out = [0u8; 64];
-        out.copy_from_slice(&quote[SNP_REPORT_DATA_OFFSET..SNP_REPORT_DATA_OFFSET + 64]);
-        return Ok(out);
+    if raw.len() < SNP_REPORT_DATA_OFFSET + 64 {
+        return Err(EngineChallengeError::Invalid("quote_missing_report_data"));
     }
-    // JSON quote wrapper with report_data_b64
+    let mut out = [0u8; 64];
+    out.copy_from_slice(&raw[SNP_REPORT_DATA_OFFSET..SNP_REPORT_DATA_OFFSET + 64]);
+    Ok(out)
+}
+
+fn extract_report_data_from_quote(quote: &[u8]) -> Result<[u8; 64], EngineChallengeError> {
+    // TeeChat engine quotes are JSON wrappers (`{"v":2,"report_data_b64",…}`). Prefer the
+    // explicit field (and nested `report_b64`) before treating bytes as a raw SNP report —
+    // wrappers are longer than 0x50+64, so a raw-first path misreads ASCII as report_data
+    // and fails closed with report_data_mismatch (matches TS engine-challenge-client).
     if let Ok(v) = serde_json::from_slice::<serde_json::Value>(quote) {
         if let Some(b64) = v.get("report_data_b64").and_then(|x| x.as_str()) {
             let bytes = decode_b64(b64)?;
@@ -297,8 +306,12 @@ fn extract_report_data_from_quote(quote: &[u8]) -> Result<[u8; 64], EngineChalle
                 .try_into()
                 .map_err(|_| EngineChallengeError::Invalid("report_data_len"));
         }
+        if let Some(rb64) = v.get("report_b64").and_then(|x| x.as_str()) {
+            let raw = decode_b64(rb64)?;
+            return report_data_from_raw_snp(&raw);
+        }
     }
-    Err(EngineChallengeError::Invalid("quote_missing_report_data"))
+    report_data_from_raw_snp(quote)
 }
 
 /// Whether production profiles must challenge before encrypt (default on).
@@ -354,5 +367,81 @@ mod tests {
                 "0000000000000000000000000000000000000000000000000000000000000000"
             )
         );
+    }
+
+    #[test]
+    fn extract_prefers_json_wrapper_report_data_b64_over_raw_offset() {
+        let expected = [0xABu8; 64];
+        // Long JSON so a naive raw-at-0x50 path would succeed with wrong bytes.
+        let pad = "x".repeat(200);
+        let wrapper = serde_json::json!({
+            "v": 2,
+            "kind": "sev-snp",
+            "report_b64": STANDARD.encode([0u8; 128]),
+            "report_data_b64": STANDARD.encode(expected),
+            "pad": pad,
+        });
+        let bytes = serde_json::to_vec(&wrapper).unwrap();
+        assert!(bytes.len() >= 0x50 + 64);
+        let got = extract_report_data_from_quote(&bytes).unwrap();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn verify_engine_challenge_accepts_json_wrapped_quote() {
+        let nonce = [1u8; 32];
+        let usage = [2u8; 32];
+        let mlkem = [3u8; 1184];
+        let x25519 = [4u8; 32];
+        let gpu_hash = [0u8; 32];
+        let policy_hash = [5u8; 32];
+        let measurement = launch_measurement();
+        let report_data = build_engine_challenge_report_data(&EngineChallengeReportDataInput {
+            nonce: &nonce,
+            engine_id: "eng-1",
+            epoch_id: "ep-1",
+            not_before: "2026-08-01T00:00:00.000Z",
+            not_after: "2026-08-02T00:00:00.000Z",
+            usage_signing_public_raw: &usage,
+            mlkem_encap_key_raw: &mlkem,
+            x25519_public_raw: &x25519,
+            gpu_evidence_sha256: &gpu_hash,
+            policy_hash: &policy_hash,
+            measurement: &measurement,
+        })
+        .unwrap();
+        let quote = serde_json::to_vec(&serde_json::json!({
+            "v": 2,
+            "kind": "sev-snp",
+            "report_b64": STANDARD.encode([0u8; 128]),
+            "report_data_b64": STANDARD.encode(report_data),
+        }))
+        .unwrap();
+        let doc: EngineChallengeWireResponse = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "report_data_version": 1,
+            "engine": {
+                "engine_id": "eng-1",
+                "build_version": "0.15.0",
+                "measurement": {
+                    "kind": "launch_digest",
+                    "launch_digest": "a".repeat(64),
+                    "image_digest": "b".repeat(64),
+                },
+                "policy_hash": hex::encode(policy_hash),
+            },
+            "epoch": {
+                "epoch_id": "ep-1",
+                "not_before": "2026-08-01T00:00:00.000Z",
+                "not_after": "2026-08-02T00:00:00.000Z",
+                "usage_signing_public": STANDARD.encode(usage),
+                "mlkem_encapsulation_key": STANDARD.encode(mlkem),
+                "x25519_public": STANDARD.encode(x25519),
+            },
+            "challenge_nonce_b64": encode_nonce_b64_url(&nonce),
+            "cpu": { "quote_b64": STANDARD.encode(quote) },
+        }))
+        .unwrap();
+        verify_engine_challenge_response(&nonce, &doc).unwrap();
     }
 }

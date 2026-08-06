@@ -13,7 +13,7 @@ use crate::ceremony::{
 use crate::challenge_client::{challenge_edge, generate_nonce, ChallengeOutcome};
 use crate::error::{AttestError, Result};
 use crate::github_release::{
-    cross_check_code_hash_against_sha256sums, fallback_tip, fetch_github_release_trust,
+    cross_check_code_hash_for_edge, fallback_tip, fetch_github_release_trust,
     github_releases_html_url, DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO,
 };
 use crate::golden::{
@@ -335,8 +335,11 @@ fn finish_verify(
         }
     }
 
-    cross_check_code_hash_against_sha256sums(
+    cross_check_code_hash_for_edge(
         &response.edge.code_hash,
+        &response.edge.build_version,
+        DEFAULT_GITHUB_OWNER,
+        DEFAULT_GITHUB_REPO,
         trust.sha256sums.as_deref(),
     )?;
 

@@ -173,9 +173,8 @@ impl OpeDispatchUpstream {
                     Some(pre.trust.epoch_id.as_str()),
                 )
                 .map_err(Self::map_gw)?;
-            verify_engine_challenge_response(&nonce, &chal).map_err(|e| {
-                ApiError::Forbidden(format!("engine challenge failed: {e}"))
-            })?;
+            verify_engine_challenge_response(&nonce, &chal)
+                .map_err(|e| ApiError::Forbidden(format!("engine challenge failed: {e}")))?;
             Some(nonce_b64)
         } else {
             None
