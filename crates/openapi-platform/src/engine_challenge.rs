@@ -444,4 +444,120 @@ mod tests {
         .unwrap();
         verify_engine_challenge_response(&nonce, &doc).unwrap();
     }
+
+    #[test]
+    fn verify_rejects_nonce_echo_mismatch() {
+        let nonce = [1u8; 32];
+        let wrong = [9u8; 32];
+        let usage = [2u8; 32];
+        let mlkem = [3u8; 1184];
+        let x25519 = [4u8; 32];
+        let gpu_hash = [0u8; 32];
+        let policy_hash = [5u8; 32];
+        let measurement = launch_measurement();
+        let report_data = build_engine_challenge_report_data(&EngineChallengeReportDataInput {
+            nonce: &nonce,
+            engine_id: "eng-1",
+            epoch_id: "ep-1",
+            not_before: "2026-08-01T00:00:00.000Z",
+            not_after: "2026-08-02T00:00:00.000Z",
+            usage_signing_public_raw: &usage,
+            mlkem_encap_key_raw: &mlkem,
+            x25519_public_raw: &x25519,
+            gpu_evidence_sha256: &gpu_hash,
+            policy_hash: &policy_hash,
+            measurement: &measurement,
+        })
+        .unwrap();
+        let quote = serde_json::to_vec(&serde_json::json!({
+            "v": 2,
+            "kind": "sev-snp",
+            "report_data_b64": STANDARD.encode(report_data),
+        }))
+        .unwrap();
+        let doc: EngineChallengeWireResponse = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "report_data_version": 1,
+            "engine": {
+                "engine_id": "eng-1",
+                "measurement": {
+                    "kind": "launch_digest",
+                    "launch_digest": "a".repeat(64),
+                    "image_digest": "b".repeat(64),
+                },
+                "policy_hash": hex::encode(policy_hash),
+            },
+            "epoch": {
+                "epoch_id": "ep-1",
+                "not_before": "2026-08-01T00:00:00.000Z",
+                "not_after": "2026-08-02T00:00:00.000Z",
+                "usage_signing_public": STANDARD.encode(usage),
+                "mlkem_encapsulation_key": STANDARD.encode(mlkem),
+                "x25519_public": STANDARD.encode(x25519),
+            },
+            "challenge_nonce_b64": encode_nonce_b64_url(&wrong),
+            "cpu": { "quote_b64": STANDARD.encode(quote) },
+        }))
+        .unwrap();
+        let err = verify_engine_challenge_response(&nonce, &doc).unwrap_err();
+        assert!(matches!(err, EngineChallengeError::NonceEchoMismatch));
+    }
+
+    #[test]
+    fn verify_rejects_report_data_mismatch() {
+        let nonce = [1u8; 32];
+        let usage = [2u8; 32];
+        let mlkem = [3u8; 1184];
+        let x25519 = [4u8; 32];
+        let gpu_hash = [0u8; 32];
+        let policy_hash = [5u8; 32];
+        let measurement = launch_measurement();
+        // Quote binds a different engine_id than the wire document claims.
+        let report_data = build_engine_challenge_report_data(&EngineChallengeReportDataInput {
+            nonce: &nonce,
+            engine_id: "eng-other",
+            epoch_id: "ep-1",
+            not_before: "2026-08-01T00:00:00.000Z",
+            not_after: "2026-08-02T00:00:00.000Z",
+            usage_signing_public_raw: &usage,
+            mlkem_encap_key_raw: &mlkem,
+            x25519_public_raw: &x25519,
+            gpu_evidence_sha256: &gpu_hash,
+            policy_hash: &policy_hash,
+            measurement: &measurement,
+        })
+        .unwrap();
+        let quote = serde_json::to_vec(&serde_json::json!({
+            "v": 2,
+            "kind": "sev-snp",
+            "report_data_b64": STANDARD.encode(report_data),
+        }))
+        .unwrap();
+        let doc: EngineChallengeWireResponse = serde_json::from_value(serde_json::json!({
+            "schema_version": 1,
+            "report_data_version": 1,
+            "engine": {
+                "engine_id": "eng-1",
+                "measurement": {
+                    "kind": "launch_digest",
+                    "launch_digest": "a".repeat(64),
+                    "image_digest": "b".repeat(64),
+                },
+                "policy_hash": hex::encode(policy_hash),
+            },
+            "epoch": {
+                "epoch_id": "ep-1",
+                "not_before": "2026-08-01T00:00:00.000Z",
+                "not_after": "2026-08-02T00:00:00.000Z",
+                "usage_signing_public": STANDARD.encode(usage),
+                "mlkem_encapsulation_key": STANDARD.encode(mlkem),
+                "x25519_public": STANDARD.encode(x25519),
+            },
+            "challenge_nonce_b64": encode_nonce_b64_url(&nonce),
+            "cpu": { "quote_b64": STANDARD.encode(quote) },
+        }))
+        .unwrap();
+        let err = verify_engine_challenge_response(&nonce, &doc).unwrap_err();
+        assert!(matches!(err, EngineChallengeError::ReportDataMismatch));
+    }
 }
