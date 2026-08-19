@@ -47,6 +47,9 @@ ARGS=(
   "OPENAPI_LISTEN_ADDR=${OPENAPI_LISTEN_ADDR}"
   "OPENAPI_BUILD_VERSION=${OPENAPI_BUILD_VERSION:-sgx}"
 )
+# Fortanix EDP starts with an empty enclave env — host export is not inherited.
+# Unset CODE_HASH reports sha256("unknown") (retired 0.1.1 placeholder).
+[[ -n "${OPENAPI_CODE_HASH:-}" ]] && ARGS+=("OPENAPI_CODE_HASH=${OPENAPI_CODE_HASH}")
 [[ -n "${OPENAPI_CATALOG_JSON:-}" ]] && ARGS+=("OPENAPI_CATALOG_JSON=${OPENAPI_CATALOG_JSON}")
 # Prod profile policy requires these env names set; EDP loads bytes via ceremony helper.
 if [[ -n "${OPENAPI_CEREMONY_HELPER_URL:-}" ]]; then

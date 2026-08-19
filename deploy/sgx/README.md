@@ -57,6 +57,8 @@ cd /path/to/teechat-openapi
 | Variable | Required | Notes |
 |----------|----------|-------|
 | `OPENAPI_MRENCLAVE` | yes | Must match signed enclave |
+| `OPENAPI_BUILD_VERSION` | lab/prod | Challenge `edge.build_version` (e.g. `0.10.3`). Default `sgx` is not a release id. |
+| `OPENAPI_CODE_HASH` | lab/prod | 64-hex SHA-256 of the signed `.sgxs`. Unset → `sha256("unknown")` (retired placeholder). Must be passed as an enclave arg (EDP does not inherit host env). |
 | `OPENAPI_UPSTREAM_BASE_URL` | yes | **`http://IP:port`** only (no HTTPS; no DNS resolution in enclave) |
 | `OPENAPI_CATALOG_PATH` | yes | L0 signed key catalog |
 | `OPENAPI_CATALOG_VERIFY_KEY_HEX` | yes | Ed25519 catalog verify key |
