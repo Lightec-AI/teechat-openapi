@@ -482,8 +482,6 @@ impl GatewayOpeApiClient {
             .filter(|s| !s.is_empty())
         {
             headers.push((HEADER_EPHEMERAL_EPOCH.into(), epoch.to_string()));
-        } else {
-            headers.push((HEADER_EPHEMERAL_EPOCH.into(), "0".into()));
         }
         if let Some(key_id) = req
             .openapi_key_id

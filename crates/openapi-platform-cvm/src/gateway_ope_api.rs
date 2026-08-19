@@ -398,8 +398,6 @@ impl GatewayOpeApiClient {
             .filter(|s| !s.is_empty())
         {
             ureq_req = ureq_req.set(HEADER_EPHEMERAL_EPOCH, epoch);
-        } else {
-            ureq_req = ureq_req.set(HEADER_EPHEMERAL_EPOCH, "0");
         }
         if let Some(key_id) = req
             .openapi_key_id

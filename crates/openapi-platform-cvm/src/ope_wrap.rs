@@ -1,7 +1,8 @@
 //! Rust OPE encrypt/decrypt helpers for the OpenAPI edge (same crates.io pins as desktop).
 
+use ope_crypto::{mock_keypair_from_seed, DEV_VECTOR_001_SEED};
 use ope_e2e::{decrypt_response_chunk, encrypt_request, ClientSession, EngineIdentity};
-use ope_envelope::Envelope;
+use ope_envelope::{sign_envelope, Envelope};
 use serde_json::{json, Value};
 use thiserror::Error;
 
@@ -65,7 +66,7 @@ pub fn encrypt_openai_body_with_path(
         ope_version: "1.0".into(),
         alg: "EdDSA".into(),
         enc: "none".into(),
-        kid: kid.into(),
+        kid: "guest".into(),
         recipient: "teechat-gateway".into(),
         engine_id: Some(identity.engine_id.clone()),
         ts: chrono_like_now(),
@@ -78,6 +79,7 @@ pub fn encrypt_openai_body_with_path(
         meta: Some(json!({
             "model": payload.get("model").cloned().unwrap_or(Value::Null),
             "openai_path": openai_path,
+            "openapi_key_id": kid,
         })),
         e2e: None,
         sig: None,
@@ -92,6 +94,12 @@ pub fn encrypt_openai_body_with_path(
             obj.insert("ephemeral_epoch".into(), json!(trust.epoch_id));
         }
     }
+
+    // RB-47: sign over engine_id and e2e after the epoch is in `e2e`.
+    // Kid is the edge signer (`guest` matches prod-bootstrap); set before encrypt
+    // so AEAD AAD stays consistent. The API key stays in the header and meta.
+    let kp = mock_keypair_from_seed(&DEV_VECTOR_001_SEED);
+    sign_envelope(&mut envelope, &kp.secret).map_err(|e| OpeWrapError::Ope(e.to_string()))?;
 
     Ok(EncryptedOpeRequest {
         envelope,
@@ -193,6 +201,12 @@ mod tests {
             e2e.get("ephemeral_epoch").and_then(|v| v.as_str()),
             Some("epoch-test")
         );
+        assert_eq!(enc.envelope.engine_id.as_deref(), Some(identity.engine_id.as_str()));
+        assert!(
+            enc.envelope.sig.as_deref().is_some_and(|s| !s.is_empty()),
+            "edge envelope must be signed (RB-47)"
+        );
+        assert_eq!(enc.envelope.kid, "guest");
 
         let decrypted = decrypt_request(&enc.envelope, &engine_secret).unwrap();
         assert_eq!(decrypted, payload);
