@@ -34,6 +34,7 @@ fn main() -> Result<()> {
             let mut github_owner = DEFAULT_GITHUB_OWNER.to_string();
             let mut github_repo = DEFAULT_GITHUB_REPO.to_string();
             let mut github_tag = None;
+            let mut allow_latest = false;
             let mut golden = GoldenLoadOptions::default();
             let mut require_golden = true;
             let mut ceremony = CeremonyLoadOptions::default();
@@ -67,6 +68,7 @@ fn main() -> Result<()> {
                         i += 1;
                         github_tag = Some(args.get(i).context("--github-tag value")?.clone());
                     }
+                    "--allow-latest" => allow_latest = true,
                     "--golden-github-owner" => {
                         i += 1;
                         golden.github_owner =
@@ -134,6 +136,7 @@ fn main() -> Result<()> {
                 github_owner,
                 github_repo,
                 github_tag,
+                allow_latest,
                 golden,
                 require_golden_digests: require_golden,
                 ceremony,
@@ -180,7 +183,8 @@ Trust (default):
 Flags:
   --github-owner <org>   default: Lightec-AI
   --github-repo <name>   default: teechat-openapi
-  --github-tag <tag>     pin a release tag (default: latest)
+  --github-tag <tag>     pin a release tag (default: v0.10.3; latest refused)
+  --allow-latest         break-glass: fetch GitHub releases/latest (RB-04)
   --prefer-teechat-manifest
                          skip GitHub; use teechat.ai (or --manifest-url) only
   --manifest-url <url>   Fallback signed app allowlist URL

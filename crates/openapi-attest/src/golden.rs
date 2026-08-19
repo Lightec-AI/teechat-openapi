@@ -18,6 +18,8 @@ pub const GOLDEN_SCHEMA: &str = "teechat-golden-digests-manifest/v1";
 pub const GOLDEN_KEY_ID: &str = "golden-digests-v1";
 pub const DEFAULT_GOLDEN_GITHUB_OWNER: &str = "Lightec-AI";
 pub const DEFAULT_GOLDEN_GITHUB_REPO: &str = "teechat-golden-digests";
+/// Immutable golden release tag. `releases/latest` is refused (RB-04).
+pub const DEFAULT_GOLDEN_RELEASE_TAG: &str = "epoch-65";
 pub const GOLDEN_ASSET_NAME: &str = "golden-digests.json";
 pub const DEFAULT_GOLDEN_WWW_URL: &str =
     "https://www.teechat.ai/.well-known/teechat/golden/manifest.json";
@@ -149,10 +151,16 @@ pub fn fetch_github_golden_digests(
     repo: &str,
     tag: Option<&str>,
 ) -> Result<VerifiedGoldenManifest> {
-    let base = match tag {
-        Some(t) => format!("https://github.com/{owner}/{repo}/releases/download/{t}"),
-        None => format!("https://github.com/{owner}/{repo}/releases/latest/download"),
+    let tag = match tag.map(str::trim).filter(|s| !s.is_empty()) {
+        Some("latest") => {
+            return Err(AttestError::Manifest(
+                "golden releases/latest is refused (RB-04); pass --golden-github-tag epoch-N".into(),
+            ));
+        }
+        Some(t) => t.to_string(),
+        None => DEFAULT_GOLDEN_RELEASE_TAG.to_string(),
     };
+    let base = format!("https://github.com/{owner}/{repo}/releases/download/{tag}");
     let url = format!("{base}/{GOLDEN_ASSET_NAME}");
     let bytes = http_get_bytes(&url)?;
     let manifest = parse_golden_manifest(&bytes)?;
@@ -372,5 +380,16 @@ mod tests {
         };
         assert!(!measurement_matches_golden(g, &composed));
         assert!(golden_os_pin_matches(g, &composed));
+    }
+
+    #[test]
+    fn github_fetch_refuses_mutable_latest() {
+        let err = fetch_github_golden_digests(
+            DEFAULT_GOLDEN_GITHUB_OWNER,
+            DEFAULT_GOLDEN_GITHUB_REPO,
+            Some("latest"),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("releases/latest"));
     }
 }

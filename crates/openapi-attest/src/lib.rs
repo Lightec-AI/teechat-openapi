@@ -24,6 +24,8 @@ pub mod ceremony;
 #[cfg(feature = "full")]
 pub mod challenge_client;
 #[cfg(feature = "full")]
+pub mod epoch_floor;
+#[cfg(feature = "full")]
 pub mod github_release;
 #[cfg(feature = "full")]
 pub mod golden;
@@ -44,7 +46,8 @@ pub use snp::{
 
 #[cfg(feature = "full")]
 pub use github_release::{
-    ATTEST_ASSET_NAME, DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO, SHA256SUMS_ASSET_NAME,
+    ATTEST_ASSET_NAME, DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO, DEFAULT_OPENAPI_RELEASE_TAG,
+    SHA256SUMS_ASSET_NAME,
 };
 #[cfg(feature = "full")]
 pub use manifest::{

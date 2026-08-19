@@ -12,9 +12,13 @@ use crate::ceremony::{
 };
 use crate::challenge_client::{challenge_edge, generate_nonce, ChallengeOutcome};
 use crate::error::{AttestError, Result};
+use crate::epoch_floor::{
+    assert_epoch_monotonic, remember_epoch, GOLDEN_EPOCH_KIND, OPENAPI_EPOCH_KIND,
+};
 use crate::github_release::{
-    cross_check_code_hash_for_edge, fallback_tip, fetch_github_release_trust,
-    github_releases_html_url, DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO,
+    assert_not_mutable_latest_url, cross_check_code_hash_for_edge, fallback_tip,
+    fetch_github_release_trust_resolved, github_releases_html_url, DEFAULT_GITHUB_OWNER,
+    DEFAULT_GITHUB_REPO,
 };
 use crate::golden::{
     find_golden_release, golden_os_pin_matches, load_golden_digests, GoldenLoadOptions,
@@ -73,6 +77,8 @@ pub struct VerifyOptions {
     pub github_owner: String,
     pub github_repo: String,
     pub github_tag: Option<String>,
+    /// Break-glass: allow GitHub `releases/latest` (RB-04 refuses this by default).
+    pub allow_latest: bool,
     pub golden: GoldenLoadOptions,
     /// When true, rows with `golden_version` must resolve on the golden channel.
     /// Default true. Set false only for break-glass legacy tests.
@@ -96,6 +102,7 @@ impl Default for VerifyOptions {
             github_owner: DEFAULT_GITHUB_OWNER.into(),
             github_repo: DEFAULT_GITHUB_REPO.into(),
             github_tag: None,
+            allow_latest: false,
             golden: GoldenLoadOptions::default(),
             require_golden_digests: true,
             ceremony: CeremonyLoadOptions::default(),
@@ -161,11 +168,12 @@ fn load_trust_bundle(opts: &VerifyOptions) -> Result<TrustBundle> {
         return load_teechat_fallback(opts, &default_gh_url, None);
     }
 
-    // 3) GitHub Releases (primary)
-    match fetch_github_release_trust(
+    // 3) GitHub Releases (primary) — versioned tag, never mutable `latest` (RB-04).
+    match fetch_github_release_trust_resolved(
         &opts.github_owner,
         &opts.github_repo,
         opts.github_tag.as_deref(),
+        opts.allow_latest,
     ) {
         Ok(gh) => Ok(TrustBundle {
             manifest: gh.manifest,
@@ -191,6 +199,7 @@ fn load_teechat_fallback(
     tip: Option<&str>,
 ) -> Result<TrustBundle> {
     let url = opts.manifest_url.as_deref().unwrap_or(DEFAULT_MANIFEST_URL);
+    assert_not_mutable_latest_url(url)?;
     let manifest = fetch_signed_manifest(url)?;
     Ok(TrustBundle {
         manifest,
@@ -215,6 +224,7 @@ fn finish_verify(
 ) -> Result<AttestationVerdict> {
     let response = &outcome.response;
     let verified_manifest = &trust.manifest;
+    assert_epoch_monotonic(OPENAPI_EPOCH_KIND, verified_manifest.manifest.epoch)?;
 
     verify_challenge_report_data(&outcome.nonce, response)
         .map_err(|e| AttestError::Challenge(e.to_string()))?;
@@ -262,6 +272,8 @@ fn finish_verify(
                         continue;
                     };
                     if golden_os_pin_matches(grelease, &response.edge.measurement) {
+                        assert_epoch_monotonic(GOLDEN_EPOCH_KIND, golden.manifest.epoch)?;
+                        remember_epoch(GOLDEN_EPOCH_KIND, golden.manifest.epoch)?;
                         golden_version = Some(gv.to_string());
                         golden_trust_source = Some(golden.trust_source.clone());
                         matched = Some(*rel);
@@ -411,6 +423,8 @@ fn finish_verify(
 
     let measurement = serde_json::to_value(&response.edge.measurement)
         .map_err(|e| AttestError::Challenge(e.to_string()))?;
+
+    remember_epoch(OPENAPI_EPOCH_KIND, verified_manifest.manifest.epoch)?;
 
     Ok(AttestationVerdict {
         ok: true,

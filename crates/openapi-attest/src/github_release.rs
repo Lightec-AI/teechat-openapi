@@ -7,8 +7,32 @@ use crate::manifest::{parse_and_validate_manifest, OpenApiEdgeManifest, Verified
 
 pub const DEFAULT_GITHUB_OWNER: &str = "Lightec-AI";
 pub const DEFAULT_GITHUB_REPO: &str = "teechat-openapi";
+/// Pinned immutable release. `releases/latest` is refused (RB-04).
+pub const DEFAULT_OPENAPI_RELEASE_TAG: &str = "v0.10.3";
 pub const ATTEST_ASSET_NAME: &str = "openapi-edge-attest.json";
 pub const SHA256SUMS_ASSET_NAME: &str = "SHA256SUMS";
+
+/// Resolve the GitHub release tag. `None` pins {@link DEFAULT_OPENAPI_RELEASE_TAG}.
+/// `"latest"` is accepted only when `allow_latest` is set (break-glass).
+pub fn resolve_openapi_release_tag(tag: Option<&str>, allow_latest: bool) -> Result<String> {
+    match tag.map(str::trim).filter(|s| !s.is_empty()) {
+        Some("latest") if allow_latest => Ok("latest".into()),
+        Some("latest") => Err(AttestError::Policy(
+            "releases/latest is refused (RB-04); pass --github-tag vX.Y.Z".into(),
+        )),
+        Some(t) => Ok(t.to_string()),
+        None => Ok(DEFAULT_OPENAPI_RELEASE_TAG.into()),
+    }
+}
+
+pub fn assert_not_mutable_latest_url(url: &str) -> Result<()> {
+    if url.contains("/releases/latest") {
+        return Err(AttestError::Policy(format!(
+            "mutable releases/latest URL refused (RB-04): {url}"
+        )));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 pub struct GitHubReleaseTrust {
@@ -34,10 +58,13 @@ struct GhAsset {
 
 pub fn github_releases_api_url(owner: &str, repo: &str, tag: Option<&str>) -> String {
     match tag {
+        Some("latest") => format!("https://api.github.com/repos/{owner}/{repo}/releases/latest"),
         Some(t) if !t.is_empty() => {
             format!("https://api.github.com/repos/{owner}/{repo}/releases/tags/{t}")
         }
-        _ => format!("https://api.github.com/repos/{owner}/{repo}/releases/latest"),
+        _ => format!(
+            "https://api.github.com/repos/{owner}/{repo}/releases/tags/{DEFAULT_OPENAPI_RELEASE_TAG}"
+        ),
     }
 }
 
@@ -51,7 +78,17 @@ pub fn fetch_github_release_trust(
     repo: &str,
     tag: Option<&str>,
 ) -> Result<GitHubReleaseTrust> {
-    let api = github_releases_api_url(owner, repo, tag);
+    fetch_github_release_trust_resolved(owner, repo, tag, false)
+}
+
+pub fn fetch_github_release_trust_resolved(
+    owner: &str,
+    repo: &str,
+    tag: Option<&str>,
+    allow_latest: bool,
+) -> Result<GitHubReleaseTrust> {
+    let tag = resolve_openapi_release_tag(tag, allow_latest)?;
+    let api = github_releases_api_url(owner, repo, Some(&tag));
     let body = http_get_github(&api)?;
     let release: GhRelease = serde_json::from_slice(&body)
         .map_err(|e| AttestError::Http(format!("GitHub release JSON: {e}")))?;
@@ -255,5 +292,28 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *teechat-openap
         assert!(tip.contains("teechat.ai"));
         assert!(tip.contains("github.com/Lightec-AI/teechat-openapi/releases"));
         assert!(tip.contains(ATTEST_ASSET_NAME));
+    }
+
+    #[test]
+    fn default_api_url_is_versioned_not_latest() {
+        let url = github_releases_api_url(DEFAULT_GITHUB_OWNER, DEFAULT_GITHUB_REPO, None);
+        assert!(url.contains(&format!("/releases/tags/{DEFAULT_OPENAPI_RELEASE_TAG}")));
+        assert!(!url.contains("/releases/latest"));
+        assert!(resolve_openapi_release_tag(None, false)
+            .unwrap()
+            .starts_with('v'));
+        assert!(resolve_openapi_release_tag(Some("latest"), false).is_err());
+        assert_eq!(
+            resolve_openapi_release_tag(Some("latest"), true).unwrap(),
+            "latest"
+        );
+        assert!(assert_not_mutable_latest_url(
+            "https://github.com/Lightec-AI/teechat-openapi/releases/latest/download/openapi-edge-attest.json"
+        )
+        .is_err());
+        assert!(assert_not_mutable_latest_url(
+            "https://github.com/Lightec-AI/teechat-openapi/releases/download/v0.10.3/openapi-edge-attest.json"
+        )
+        .is_ok());
     }
 }
