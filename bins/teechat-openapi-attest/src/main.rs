@@ -183,7 +183,7 @@ Trust (default):
 Flags:
   --github-owner <org>   default: Lightec-AI
   --github-repo <name>   default: teechat-openapi
-  --github-tag <tag>     pin a release tag (default: v0.11.0, or v{{challenge.build_version}} when unset; latest refused)
+  --github-tag <tag>     pin a release tag (default: v0.11.1, or v{{challenge.build_version}} when unset; latest refused)
   --allow-latest         break-glass: fetch GitHub releases/latest (RB-04)
   --prefer-teechat-manifest
                          skip GitHub; use teechat.ai (or --manifest-url) only

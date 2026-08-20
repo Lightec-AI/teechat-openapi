@@ -96,10 +96,11 @@ pub fn encrypt_openai_body_with_path(
     }
 
     // RB-47: sign over engine_id and e2e after the epoch is in `e2e`.
-    // Kid must be the engine trust map key (`prod-bootstrap`). Same DEV_VECTOR_001
-    // seed as desktop prod. `guest` is not an alias — signed-only then fails
-    // ope_unknown_kid. Set before encrypt so AEAD AAD stays consistent.
-    let kp = mock_keypair_from_seed(&DEV_VECTOR_001_SEED);
+    // Kid is the engine trust map key (`prod-bootstrap`). Prod must sign with
+    // the same seed as desktop (`OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX`), not
+    // DEV_VECTOR_001 — that public key is forbidden on the live trust map
+    // (`ope_invalid_signature` on 0.11.0).
+    let kp = mock_keypair_from_seed(&envelope_signing_seed()?);
     sign_envelope(&mut envelope, &kp.secret).map_err(|e| OpeWrapError::Ope(e.to_string()))?;
 
     Ok(EncryptedOpeRequest {
@@ -130,6 +131,60 @@ pub fn decrypt_chunk(
     .map_err(|e| OpeWrapError::Ope(e.to_string()))
 }
 
+fn parse_signing_seed_hex(hex: &str) -> Result<[u8; 32], OpeWrapError> {
+    let raw = hex.trim().to_ascii_lowercase();
+    if raw.len() != 64 || !raw.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(OpeWrapError::Ope(
+            "OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX must be 64 hex characters".into(),
+        ));
+    }
+    let bytes = hex::decode(&raw).map_err(|e| OpeWrapError::Ope(format!("signing seed hex: {e}")))?;
+    let seed: [u8; 32] = bytes.try_into().map_err(|_| {
+        OpeWrapError::Ope("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX must decode to 32 bytes".into())
+    })?;
+    Ok(seed)
+}
+
+fn edge_profile_is_prod() -> bool {
+    matches!(
+        std::env::var("OPENAPI_PROFILE")
+            .ok()
+            .as_deref()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("prod") | Some("production")
+    )
+}
+
+/// Prod: data-disk seed matching desktop `VITE_OPE_ENVELOPE_SIGNING_SEED_HEX`.
+/// Non-prod: DEV_VECTOR_001 when unset (unit tests / lab).
+fn envelope_signing_seed() -> Result<[u8; 32], OpeWrapError> {
+    let raw = std::env::var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX")
+        .ok()
+        .or_else(|| std::env::var("TEECHAT_OPE_ENVELOPE_SIGNING_SEED_HEX").ok())
+        .unwrap_or_default();
+    let raw = raw.trim();
+    let prod = edge_profile_is_prod();
+    if raw.is_empty() {
+        if prod {
+            return Err(OpeWrapError::Ope(
+                "OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX is required in prod \
+                 (desktop prod-bootstrap seed; not DEV_VECTOR_001)"
+                    .into(),
+            ));
+        }
+        return Ok(DEV_VECTOR_001_SEED);
+    }
+    let seed = parse_signing_seed_hex(raw)?;
+    if prod && seed == DEV_VECTOR_001_SEED {
+        return Err(OpeWrapError::Ope(
+            "OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX must not be DEV_VECTOR_001 in prod"
+                .into(),
+        ));
+    }
+    Ok(seed)
+}
+
 pub(crate) fn chrono_like_now() -> String {
     // Must be real RFC3339 — ope-envelope::verify_timestamp parses with chrono.
     // (A prior `{unix_secs}.000Z` form caused live `ope_invalid_timestamp` / client timeouts.)
@@ -153,6 +208,9 @@ fn uuid_v4_simple() -> String {
 mod tests {
     use super::*;
     use ope_crypto::encode;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
     use ope_e2e::{
         begin_response_session_from_share, decrypt_request, encrypt_response_chunk,
         mock_engine_from_seed, DEV_ENGINE_SEED,
@@ -202,6 +260,10 @@ mod tests {
 
     #[test]
     fn encrypt_sets_rfc3339_ts_compatible_with_ope_verify() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("OPENAPI_PROFILE");
+        std::env::remove_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX");
+        std::env::remove_var("TEECHAT_OPE_ENVELOPE_SIGNING_SEED_HEX");
         let (_engine_secret, identity) = mock_engine_from_seed(&DEV_ENGINE_SEED);
         let trust = PreassignTrust {
             engine_id: identity.engine_id.clone(),
@@ -240,6 +302,10 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip_with_mock_engine() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("OPENAPI_PROFILE");
+        std::env::remove_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX");
+        std::env::remove_var("TEECHAT_OPE_ENVELOPE_SIGNING_SEED_HEX");
         let (engine_secret, identity) = mock_engine_from_seed(&DEV_ENGINE_SEED);
         let trust = PreassignTrust {
             engine_id: identity.engine_id.clone(),
@@ -302,5 +368,82 @@ mod tests {
         let plain =
             decrypt_chunk(&enc.envelope, &enc.client_session, &server_share, 0, &ct).unwrap();
         assert_eq!(plain, b"hello");
+    }
+
+    #[test]
+    fn prod_without_signing_seed_fails_closed() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX");
+        std::env::remove_var("TEECHAT_OPE_ENVELOPE_SIGNING_SEED_HEX");
+        std::env::set_var("OPENAPI_PROFILE", "prod");
+        let err = envelope_signing_seed().unwrap_err().to_string();
+        std::env::remove_var("OPENAPI_PROFILE");
+        assert!(err.contains("required in prod"), "{err}");
+    }
+
+    #[test]
+    fn prod_rejects_vector001_seed() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::set_var("OPENAPI_PROFILE", "prod");
+        std::env::set_var(
+            "OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX",
+            "01".repeat(32),
+        );
+        let err = envelope_signing_seed().unwrap_err().to_string();
+        std::env::remove_var("OPENAPI_PROFILE");
+        std::env::remove_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX");
+        assert!(err.contains("DEV_VECTOR_001"), "{err}");
+    }
+
+    #[test]
+    fn custom_seed_verifies_with_that_public_not_vector001() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("OPENAPI_PROFILE");
+        let seed = [2u8; 32];
+        std::env::set_var(
+            "OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX",
+            hex::encode(seed),
+        );
+        let (_engine_secret, identity) = mock_engine_from_seed(&DEV_ENGINE_SEED);
+        let trust = PreassignTrust {
+            engine_id: identity.engine_id.clone(),
+            epoch_id: "epoch-test".into(),
+            not_before: "2026-07-30T08:00:00.000Z".into(),
+            not_after: "2026-07-30T10:00:00.000Z".into(),
+            hybrid: crate::gateway_ope_api::PreassignTrustHybrid {
+                kex: identity.kex.clone(),
+                mlkem_encapsulation_key: identity.mlkem_encapsulation_key.clone(),
+                x25519_public: identity.x25519_public.clone(),
+            },
+            identity: crate::gateway_ope_api::PreassignTrustIdentity {
+                ed25519_public: identity.ed25519_public.clone(),
+                identity_signature: String::new(),
+            },
+            attestation: None,
+        };
+        let payload = json!({"model": "m1", "messages": [{"role":"user","content":"hi"}]});
+        let enc = encrypt_openai_body(&trust, "tcak_test", &payload).unwrap();
+        std::env::remove_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX");
+        let opts = ope_envelope::VerifyOptions {
+            max_skew: std::time::Duration::from_secs(300),
+            expected_recipient: Some("teechat-gateway".into()),
+            opaque_e2e: true,
+            ..ope_envelope::VerifyOptions::with_defaults()
+        };
+        ope_envelope::verify_envelope(
+            &enc.envelope,
+            &mock_keypair_from_seed(&seed).public,
+            &opts,
+        )
+        .expect("custom seed must verify");
+        assert!(
+            ope_envelope::verify_envelope(
+                &enc.envelope,
+                &mock_keypair_from_seed(&DEV_VECTOR_001_SEED).public,
+                &opts,
+            )
+            .is_err(),
+            "vector-001 must not verify a custom-seed signature"
+        );
     }
 }
