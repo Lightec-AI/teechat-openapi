@@ -68,7 +68,7 @@ pub fn encrypt_openai_body_with_path(
         ope_version: "1.0".into(),
         alg: "EdDSA".into(),
         enc: "none".into(),
-        kid: "guest".into(),
+        kid: "prod-bootstrap".into(),
         recipient: "teechat-gateway".into(),
         engine_id: Some(identity.engine_id.clone()),
         ts: chrono_like_now(),
@@ -98,8 +98,9 @@ pub fn encrypt_openai_body_with_path(
     }
 
     // RB-47: sign over engine_id and e2e after the epoch is in `e2e`.
-    // Kid is the edge signer (`guest` matches prod-bootstrap); set before encrypt
-    // so AEAD AAD stays consistent. The API key stays in the header and meta.
+    // Kid must be the engine trust map key (`prod-bootstrap`). Same DEV_VECTOR_001
+    // seed as desktop prod. `guest` is not an alias — signed-only then fails
+    // ope_unknown_kid. Set before encrypt so AEAD AAD stays consistent.
     let kp = mock_keypair_from_seed(&DEV_VECTOR_001_SEED);
     sign_envelope(&mut envelope, &kp.secret).map_err(|e| OpeWrapError::Ope(e.to_string()))?;
 
@@ -216,7 +217,7 @@ mod tests {
             enc.envelope.sig.as_deref().is_some_and(|s| !s.is_empty()),
             "edge envelope must be signed (RB-47)"
         );
-        assert_eq!(enc.envelope.kid, "guest");
+        assert_eq!(enc.envelope.kid, "prod-bootstrap");
 
         let decrypted = decrypt_request(&enc.envelope, &engine_secret).unwrap();
         assert_eq!(decrypted, payload);

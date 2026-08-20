@@ -22,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.10.5"
+version = "0.11.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Lightec-AI/teechat-openapi"
