@@ -8,7 +8,9 @@ use crate::manifest::{parse_and_validate_manifest, OpenApiEdgeManifest, Verified
 pub const DEFAULT_GITHUB_OWNER: &str = "Lightec-AI";
 pub const DEFAULT_GITHUB_REPO: &str = "teechat-openapi";
 /// Pinned immutable release. `releases/latest` is refused (RB-04).
-pub const DEFAULT_OPENAPI_RELEASE_TAG: &str = "v0.10.3";
+/// Keep in lockstep with the live VIP `edge.build_version` train; verifiers also
+/// prefer `v{challenge.build_version}` when the caller leaves `github_tag` unset.
+pub const DEFAULT_OPENAPI_RELEASE_TAG: &str = "v0.10.4";
 pub const ATTEST_ASSET_NAME: &str = "openapi-edge-attest.json";
 pub const SHA256SUMS_ASSET_NAME: &str = "SHA256SUMS";
 
@@ -312,7 +314,7 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *teechat-openap
         )
         .is_err());
         assert!(assert_not_mutable_latest_url(
-            "https://github.com/Lightec-AI/teechat-openapi/releases/download/v0.10.3/openapi-edge-attest.json"
+            "https://github.com/Lightec-AI/teechat-openapi/releases/download/v0.10.4/openapi-edge-attest.json"
         )
         .is_ok());
     }

@@ -129,10 +129,30 @@ pub fn verify_openapi_edge(opts: VerifyOptions) -> Result<AttestationVerdict> {
         .unwrap_or(&connect_host);
 
     let peer = fetch_peer_tls_identity(&connect_host, port)?;
-    let trust = load_trust_bundle(&opts)?;
 
+    // Challenge first so an unset github_tag can pin the allowlist to the live
+    // edge train (v{build_version}). Loading a stale DEFAULT tag succeeds on
+    // GitHub and skips www fallback — then matching fails with a confusing
+    // "not on allowlist" error (0.10.3 pin vs live 0.10.4, 2026-08-20).
     let nonce = generate_nonce();
     let outcome = challenge_edge(&opts.endpoint, &nonce)?;
+
+    let mut trust_opts = opts.clone();
+    if trust_opts.github_tag.is_none()
+        && !trust_opts.prefer_teechat_manifest
+        && trust_opts.manifest_path.is_none()
+    {
+        let bv = outcome.response.edge.build_version.trim();
+        if !bv.is_empty() {
+            trust_opts.github_tag = Some(if bv.starts_with('v') {
+                bv.to_string()
+            } else {
+                format!("v{bv}")
+            });
+        }
+    }
+    let trust = load_trust_bundle(&trust_opts)?;
+
     finish_verify(
         outcome,
         trust,
