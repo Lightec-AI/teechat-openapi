@@ -5,7 +5,7 @@
   "epoch": 42,
   "not_after": "2027-07-29T02:35:30Z",
   "retired_grace_period_days": 30,
-  "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/download/v0.10.4/openapi-edge-attest.json",
+  "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/download/v0.10.5/openapi-edge-attest.json",
   "policy": {
     "reject_debug": true,
     "max_quote_age_ms": 3600000,

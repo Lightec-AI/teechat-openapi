@@ -130,14 +130,9 @@ pub fn decrypt_chunk(
 }
 
 fn chrono_like_now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    // RFC3339-ish UTC without chrono dep — engines accept ISO-ish timestamps.
-    let secs = ms / 1000;
-    format!("{secs}.000Z")
+    // Must be real RFC3339 — ope-envelope::verify_timestamp parses with chrono.
+    // (A prior `{unix_secs}.000Z` form caused live `ope_invalid_timestamp` / client timeouts.)
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 fn uuid_v4_simple() -> String {
@@ -195,6 +190,19 @@ mod tests {
             "messages": [{"role":"user","content":"hi"}]
         });
         let enc = encrypt_openai_body(&trust, "tcak_test", &payload).unwrap();
+        assert!(
+            enc.envelope.ts.contains('T') && enc.envelope.ts.ends_with('Z'),
+            "envelope.ts must be RFC3339, got {}",
+            enc.envelope.ts
+        );
+        assert!(
+            enc.envelope
+                .ts
+                .parse::<chrono::DateTime<chrono::Utc>>()
+                .is_ok(),
+            "envelope.ts must parse as RFC3339, got {}",
+            enc.envelope.ts
+        );
         assert_eq!(enc.envelope.enc, "e2e-hybrid-pq");
         let e2e = enc.envelope.e2e.as_ref().unwrap();
         assert_eq!(

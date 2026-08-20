@@ -15,6 +15,7 @@ attested-mtls-seal-sync = { workspace = true, features = ["rustcrypto"] }
 # PEM path-or-inline load + cert digest helpers (no TLS/crypto backend deps — safe on EDP).
 attested-mtls = { workspace = true }
 base64 = { workspace = true }
+chrono = { workspace = true }
 hex = { workspace = true }
 hkdf = { workspace = true }
 rand = { workspace = true }

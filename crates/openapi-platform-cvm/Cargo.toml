@@ -13,6 +13,7 @@ attested-mtls = { workspace = true }
 attested-mtls-seal-sync = { workspace = true, features = ["aws-lc"] }
 attested-mtls-snp-seal = { workspace = true, features = ["sev-guest", "test-hooks"] }
 base64 = { workspace = true }
+chrono = { workspace = true }
 ed25519-dalek = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }

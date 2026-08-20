@@ -22,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.10.4"
+version = "0.10.5"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Lightec-AI/teechat-openapi"
@@ -37,6 +37,8 @@ attested-mtls = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git
 attested-mtls-seal-sync = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "912fadfe2ca01e573a05c18ce68f66a161cfe504", default-features = false }
 attested-mtls-snp-seal = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "912fadfe2ca01e573a05c18ce68f66a161cfe504" }
 base64 = "0.22"
+# Clock only — OPE envelope `ts` must be real RFC3339 (ope-envelope verify_timestamp).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 hex = "0.4"
 hkdf = "0.12"
