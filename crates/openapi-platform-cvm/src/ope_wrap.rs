@@ -130,7 +130,7 @@ pub fn decrypt_chunk(
     .map_err(|e| OpeWrapError::Ope(e.to_string()))
 }
 
-fn chrono_like_now() -> String {
+pub(crate) fn chrono_like_now() -> String {
     // Must be real RFC3339 — ope-envelope::verify_timestamp parses with chrono.
     // (A prior `{unix_secs}.000Z` form caused live `ope_invalid_timestamp` / client timeouts.)
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -165,6 +165,77 @@ mod tests {
             EngineIdentity::KEX_X25519_MLKEM768
         );
         assert_eq!(normalize_kex(""), EngineIdentity::KEX_X25519_MLKEM768);
+    }
+
+    /// Regression: 0.10.4 used `format!("{secs}.000Z")`, which OPE rejects as
+    /// `ope_invalid_timestamp` once envelopes are signed (`signed-only` VERIFY).
+    #[test]
+    fn chrono_like_now_is_rfc3339_not_unix_secs_dot_z() {
+        let ts = chrono_like_now();
+        let parsed = ts
+            .parse::<chrono::DateTime<chrono::Utc>>()
+            .unwrap_or_else(|e| panic!("ts must parse as RFC3339, got {ts:?}: {e}"));
+        assert!(
+            ts.contains('T') && ts.ends_with('Z'),
+            "expected RFC3339 millis UTC, got {ts}"
+        );
+        // Exact buggy shape from 0.10.4 — digits + ".000Z", no civil date.
+        let unix_bogus = format!(
+            "{}.000Z",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        );
+        assert!(
+            unix_bogus.parse::<chrono::DateTime<chrono::Utc>>().is_err(),
+            "precondition: legacy shape must stay unparseable"
+        );
+        assert_ne!(ts, unix_bogus);
+        assert!(
+            !ts.chars().all(|c| c.is_ascii_digit() || c == '.' || c == 'Z'),
+            "ts must not be unix-secs.000Z, got {ts}"
+        );
+        let skew = (chrono::Utc::now() - parsed).num_seconds().abs();
+        assert!(skew < 5, "ts should be wall-clock now, skew={skew}s ts={ts}");
+    }
+
+    #[test]
+    fn encrypt_sets_rfc3339_ts_compatible_with_ope_verify() {
+        let (_engine_secret, identity) = mock_engine_from_seed(&DEV_ENGINE_SEED);
+        let trust = PreassignTrust {
+            engine_id: identity.engine_id.clone(),
+            epoch_id: "epoch-test".into(),
+            not_before: "2026-07-30T08:00:00.000Z".into(),
+            not_after: "2026-07-30T10:00:00.000Z".into(),
+            hybrid: crate::gateway_ope_api::PreassignTrustHybrid {
+                kex: identity.kex.clone(),
+                mlkem_encapsulation_key: identity.mlkem_encapsulation_key.clone(),
+                x25519_public: identity.x25519_public.clone(),
+            },
+            identity: crate::gateway_ope_api::PreassignTrustIdentity {
+                ed25519_public: identity.ed25519_public.clone(),
+                identity_signature: String::new(),
+            },
+            attestation: None,
+        };
+        let payload = json!({
+            "model": "m1",
+            "messages": [{"role":"user","content":"hi"}]
+        });
+        let enc = encrypt_openai_body(&trust, "tcak_test", &payload).unwrap();
+        // Same admission gate the engine runs under signed-only VERIFY.
+        ope_envelope::verify_envelope(
+            &enc.envelope,
+            &mock_keypair_from_seed(&DEV_VECTOR_001_SEED).public,
+            &ope_envelope::VerifyOptions {
+                max_skew: std::time::Duration::from_secs(300),
+                expected_recipient: Some("teechat-gateway".into()),
+                opaque_e2e: true,
+                ..ope_envelope::VerifyOptions::with_defaults()
+            },
+        )
+        .unwrap_or_else(|e| panic!("signed edge envelope must verify (ts/sig): {e}"));
     }
 
     #[test]
