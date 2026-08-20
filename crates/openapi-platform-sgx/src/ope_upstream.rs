@@ -15,8 +15,10 @@ use openapi_core::handler::{
 use openapi_core::models::{ModelObject, ModelsListResponse};
 use openapi_core::upstream::{body_wants_stream, model_from_body};
 use openapi_platform::{
-    accept_engine_recipient, encode_nonce_b64_url, require_engine_challenge_from_env,
-    verify_engine_challenge_response, EngineRecipientPolicy, EphemeralEngineTrust,
+    accept_engine_recipient, encode_nonce_b64_url, independent_token_bound,
+    observe_host_time_from_env, request_body_hash_hex, require_engine_challenge_from_env,
+    require_signed_usage_from_env, resolve_usage_tokens, verify_engine_challenge_response,
+    EngineRecipientPolicy, EphemeralEngineTrust, UsageVerifyContext,
 };
 use rand::RngCore;
 use serde_json::{json, Value};
@@ -138,7 +140,7 @@ impl OpeDispatchUpstream {
                 "OPE preassignment binding mismatch".into(),
             ));
         }
-        let now_ms = current_unix_ms();
+        let now_ms = current_unix_ms()?;
         if pre.ttl_ms == 0 || pre.expires_at_ms <= now_ms {
             return Err(ApiError::Forbidden("OPE preassignment expired".into()));
         }
@@ -238,12 +240,14 @@ impl OpeDispatchUpstream {
     }
 }
 
-fn current_unix_ms() -> u64 {
+fn current_unix_ms() -> Result<u64, ApiError> {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
+    let host = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-        .unwrap_or(0)
+        .unwrap_or(0);
+    // RB-49: when OPENAPI_SEALED_TIME=1, refuse host rewind below sealed floor.
+    observe_host_time_from_env(host).map_err(|e| ApiError::Forbidden(e.to_string()))
 }
 
 impl UpstreamForwarder for OpeDispatchUpstream {
@@ -306,8 +310,16 @@ impl UpstreamForwarder for OpeDispatchUpstream {
             }
             return Ok(UpstreamResponse::Json(embeddings));
         }
-        let (prompt_tokens, completion_tokens) =
-            usage_from_header_or_estimate(usage_hdr, body, &text);
+        let (prompt_tokens, completion_tokens) = resolve_usage_or_estimate(
+            usage_hdr,
+            body,
+            &text,
+            Some(UsageMeterCtx {
+                engine_id: &pre.engine_id,
+                epoch_id: &pre.trust.epoch_id,
+                verify_key: &pre.trust.identity.ed25519_public,
+            }),
+        )?;
         let completion =
             openai_chat_completion_json(&model, &text, prompt_tokens, completion_tokens);
         Ok(UpstreamResponse::Json(completion))
@@ -377,6 +389,11 @@ impl UpstreamForwarder for OpeDispatchUpstream {
             usage_hdr.as_deref(),
             &model,
             body,
+            Some(UsageMeterCtx {
+                engine_id: &pre.engine_id,
+                epoch_id: &pre.trust.epoch_id,
+                verify_key: &pre.trust.identity.ed25519_public,
+            }),
             out,
         )?;
         Ok(StreamForwardResult {
@@ -512,6 +529,7 @@ fn bridge_ope_to_openai_sse(
     usage_hdr: Option<&str>,
     model: &str,
     request_body: &[u8],
+    meter: Option<UsageMeterCtx<'_>>,
     out: &mut dyn Write,
 ) -> Result<u64, ApiError> {
     let id = format!("chatcmpl-{}", uuid_like());
@@ -591,7 +609,7 @@ fn bridge_ope_to_openai_sse(
 
     let usage_src = trailer_usage.as_deref().or(usage_hdr);
     let (prompt_tokens, completion_tokens) =
-        usage_from_header_or_estimate(usage_src, request_body, &full);
+        resolve_usage_or_estimate(usage_src, request_body, &full, meter)?;
     written += write_sse(out, &openai_sse_delta(&id, model, "", Some("stop")))?;
     // Final usage-bearing chunk (OpenAI-compatible clients).
     let usage_chunk = json!({
@@ -673,40 +691,37 @@ fn strip_model_provider_suffix(model: &str) -> String {
     }
 }
 
-fn usage_from_header_or_estimate(
+struct UsageMeterCtx<'a> {
+    engine_id: &'a str,
+    epoch_id: &'a str,
+    verify_key: &'a str,
+}
+
+fn resolve_usage_or_estimate(
     usage_hdr: Option<&str>,
     request_body: &[u8],
     completion_text: &str,
-) -> (u64, u64) {
-    if let Some(hdr) = usage_hdr {
-        if let Ok(bytes) = base64_url_decode(hdr) {
-            if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
-                let report = v.get("report").cloned().unwrap_or(v);
-                let p = report
-                    .get("prompt_tokens")
-                    .and_then(|x| x.as_u64())
-                    .unwrap_or(0);
-                let c = report
-                    .get("completion_tokens")
-                    .and_then(|x| x.as_u64())
-                    .unwrap_or(0);
-                if p > 0 || c > 0 {
-                    return (p, c);
-                }
-            }
-        }
+    meter: Option<UsageMeterCtx<'_>>,
+) -> Result<(u64, u64), ApiError> {
+    let require = require_signed_usage_from_env();
+    if !require {
+        return resolve_usage_tokens(usage_hdr, request_body, completion_text, false, None)
+            .map_err(|e| ApiError::BadRequest(e.to_string()));
     }
-    let prompt_est = (request_body.len() as u64 / 4).max(1);
-    let completion_est = (completion_text.len() as u64 / 4).max(1);
-    (prompt_est, completion_est)
-}
-
-fn base64_url_decode(s: &str) -> Result<Vec<u8>, ()> {
-    use base64::Engine;
-    base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(s.trim())
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(s.trim()))
-        .map_err(|_| ())
+    let meter = meter.ok_or_else(|| {
+        ApiError::BadRequest("engine usage verify context missing (RB-37)".into())
+    })?;
+    let hash = request_body_hash_hex(request_body);
+    let bound = independent_token_bound(request_body, completion_text);
+    let ctx = UsageVerifyContext {
+        expected_engine_id: meter.engine_id,
+        expected_epoch_id: meter.epoch_id,
+        verify_key_b64url: meter.verify_key,
+        expected_request_hash_hex: &hash,
+        max_total_tokens: bound,
+    };
+    resolve_usage_tokens(usage_hdr, request_body, completion_text, true, Some(&ctx))
+        .map_err(|e| ApiError::BadRequest(e.to_string()))
 }
 
 fn uuid_like() -> String {
@@ -831,6 +846,11 @@ mod trust_tests {
         let _g = crate::TEST_ENV_LOCK
             .lock()
             .unwrap_or_else(|p| p.into_inner());
+        // openapi-platform is linked without cfg(test), so challenge defaults on;
+        // unit fixtures have no F′ challenge server.
+        std::env::set_var("OPENAPI_OPE_REQUIRE_ENGINE_CHALLENGE", "0");
+        std::env::remove_var("OPENAPI_SEALED_TIME");
+        std::env::remove_var("OPENAPI_REQUIRE_SIGNED_USAGE");
         let mut config = GatewayOpeApiConfig::from_parts(
             "https://127.0.0.1:8791",
             None,

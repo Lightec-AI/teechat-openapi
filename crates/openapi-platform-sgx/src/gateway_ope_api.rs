@@ -94,20 +94,25 @@ impl GatewayOpeApiConfig {
             truthy_env("OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY"),
         )?;
         let require_epoch_evidence = truthy_env("OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE");
+        // Stage 5 (RB-52) — default OFF. When on, identity pins are inert for
+        // admit and may be empty/absent. Do not set on live until leftover
+        // ≤0.24.0 census is clean and an explicit GO.
+        let stage5_identity_deleted = truthy_env("OPENAPI_STAGE5_IDENTITY_DELETED");
+        let pins_optional = require_epoch_evidence || stage5_identity_deleted;
         match opt_env("OPENAPI_ENGINE_IDENTITY_PINS_JSON") {
             Some(pins_json) => {
                 cfg.engine_identity_pins = EngineIdentityPins::parse_json(&pins_json)
                     .map_err(|e| GatewayOpeApiError::Config(e.to_string()))?;
-                if cfg.engine_identity_pins.is_empty() && !require_epoch_evidence {
+                if cfg.engine_identity_pins.is_empty() && !pins_optional {
                     return Err(GatewayOpeApiError::Config(
                         "OPENAPI_ENGINE_IDENTITY_PINS_JSON must contain at least one engine".into(),
                     ));
                 }
             }
-            None if require_epoch_evidence => {}
+            None if pins_optional => {}
             None => {
                 return Err(GatewayOpeApiError::Config(
-                    "OPENAPI_ENGINE_IDENTITY_PINS_JSON required unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1"
+                    "OPENAPI_ENGINE_IDENTITY_PINS_JSON required unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1 or OPENAPI_STAGE5_IDENTITY_DELETED=1"
                         .into(),
                 ));
             }
@@ -119,6 +124,7 @@ impl GatewayOpeApiConfig {
                 &opt_env("OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST").unwrap_or_default(),
             ),
             require_epoch_evidence,
+            stage5_identity_deleted,
             require_launch_digest: truthy_env("OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST"),
             epoch_clock_skew_ms: u64::try_from(cfg.epoch_clock_skew.as_millis())
                 .unwrap_or(u64::MAX),
@@ -206,9 +212,10 @@ impl GatewayOpeApiConfig {
         if profile.is_prod()
             && self.engine_identity_pins.is_empty()
             && !self.recipient_policy.require_epoch_evidence
+            && !self.recipient_policy.stage5_identity_deleted
         {
             return Err(GatewayOpeApiError::Config(
-                "OPENAPI_ENGINE_IDENTITY_PINS_JSON required in prod unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1"
+                "OPENAPI_ENGINE_IDENTITY_PINS_JSON required in prod unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1 or OPENAPI_STAGE5_IDENTITY_DELETED=1"
                     .into(),
             ));
         }
@@ -1082,6 +1089,8 @@ mod tests {
             "OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY",
             "OPENAPI_ENGINE_IDENTITY_PINS_JSON",
             "OPENAPI_OPE_EPOCH_CLOCK_SKEW_SEC",
+            "OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE",
+            "OPENAPI_STAGE5_IDENTITY_DELETED",
             "OPENAPI_PROFILE",
         ] {
             std::env::remove_var(k);

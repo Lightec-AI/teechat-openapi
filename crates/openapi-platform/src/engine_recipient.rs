@@ -33,6 +33,9 @@ use crate::epoch_evidence::{
     verify_epoch_evidence, EpochEvidenceError, EpochEvidenceSubject, QuoteEpochClaims,
 };
 use crate::launch_digest::launch_digest_from_snp_quote;
+use crate::sealed_time::{
+    epoch_window_active, sealed_time_enabled_from_env, SealedTimeStore,
+};
 
 /// What convinced the edge to encrypt to this epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,8 +43,8 @@ pub enum RecipientTrustVia {
     /// The report names these epoch keys (bind v2).
     EpochEvidence,
     /// Legacy: a pinned long-lived engine key signed the epoch. Accepted only
-    /// while `require_epoch_evidence` is off, for the window where the edge is
-    /// ahead of the engine fleet.
+    /// while `require_epoch_evidence` is off **and** Stage 5 identity delete is
+    /// off, for the window where the edge is ahead of the engine fleet.
     IdentitySignature,
 }
 
@@ -85,6 +88,10 @@ pub struct EngineRecipientPolicy {
     pub launch_digest_allowlist: BTreeSet<String>,
     /// Reject epochs that arrive without per-epoch hardware evidence.
     pub require_epoch_evidence: bool,
+    /// Stage 5 (RB-52): identity pin / `OPE-ENGINE-EPHEMERAL-v1` is no longer an
+    /// admit path. Empty or stale `OPENAPI_ENGINE_IDENTITY_PINS_JSON` must not
+    /// admit. Default **off** so live edges stay unchanged until an explicit GO.
+    pub stage5_identity_deleted: bool,
     /// Reject epochs whose measurement is absent or unlisted.
     pub require_launch_digest: bool,
     pub epoch_clock_skew_ms: u64,
@@ -108,10 +115,16 @@ fn check_window(
         parse_rfc3339_ms(trust.not_before).map_err(|_| RecipientError::InvalidTimestamp)?;
     let not_after =
         parse_rfc3339_ms(trust.not_after).map_err(|_| RecipientError::InvalidTimestamp)?;
-    if not_before > not_after
-        || now_ms < not_before.saturating_sub(skew_ms)
-        || now_ms > not_after.saturating_add(skew_ms)
-    {
+    // RB-49.3: when sealed time is on, a floor past not_after cannot be rescued by skew.
+    let sealed_floor = if sealed_time_enabled_from_env() {
+        SealedTimeStore::from_env()
+            .read_floor_ms()
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    if !epoch_window_active(now_ms, not_before, not_after, skew_ms, sealed_floor) {
         return Err(RecipientError::EpochNotActive);
     }
     Ok(())
@@ -172,7 +185,9 @@ pub fn accept_engine_recipient(
         // never a reason to fall back to the weaker check.
         Some(Err(e)) if e != EpochEvidenceError::Absent => Err(RecipientError::EpochEvidence(e)),
         _ => {
-            if policy.require_epoch_evidence {
+            // Stage 5 and Stage 3 both refuse identity-only admit. Stage 5 also
+            // makes leftover/stale pins inert even if an operator left them set.
+            if policy.require_epoch_evidence || policy.stage5_identity_deleted {
                 return Err(RecipientError::EpochEvidenceRequired);
             }
             verify_ephemeral_engine_trust(
@@ -428,6 +443,96 @@ mod tests {
         )
         .expect("accepted");
         assert_eq!(accepted.via, RecipientTrustVia::IdentitySignature);
+    }
+
+    /// RB-52 case 52.1 / 52.2 — identity-only (connect quote + valid pin) is
+    /// refused once Stage 5 is on; `OPE-ENGINE-EPHEMERAL-v1` is not an admit path.
+    #[test]
+    fn stage5_refuses_identity_only_even_with_matching_pins() {
+        let claims = epoch_claims();
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        let public = URL_SAFE_NO_PAD.encode(key.verifying_key().to_bytes());
+        let mut trust = trust_for(&claims);
+        trust.ed25519_public = Box::leak(public.clone().into_boxed_str());
+        let signature =
+            URL_SAFE_NO_PAD.encode(key.sign(&ephemeral_signing_bytes(&trust)).to_bytes());
+        trust.identity_signature = Box::leak(signature.into_boxed_str());
+
+        let policy = EngineRecipientPolicy {
+            require_epoch_evidence: false,
+            stage5_identity_deleted: true,
+            identity_pins: EngineIdentityPins::parse_json(&format!(r#"{{"engine-1":"{public}"}}"#))
+                .unwrap(),
+            epoch_clock_skew_ms: 300_000,
+            ..Default::default()
+        };
+        assert_eq!(
+            accept_engine_recipient(
+                &policy,
+                &trust,
+                Some(&quote_with(None, None, 0xab)),
+                None,
+                now_ms(),
+            )
+            .unwrap_err(),
+            RecipientError::EpochEvidenceRequired
+        );
+    }
+
+    /// RB-52 case 52.3 — empty or stale pin env must not admit under Stage 5.
+    #[test]
+    fn stage5_empty_or_stale_pins_do_not_admit() {
+        let claims = epoch_claims();
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        let public = URL_SAFE_NO_PAD.encode(key.verifying_key().to_bytes());
+        let mut trust = trust_for(&claims);
+        trust.ed25519_public = Box::leak(public.clone().into_boxed_str());
+        let signature =
+            URL_SAFE_NO_PAD.encode(key.sign(&ephemeral_signing_bytes(&trust)).to_bytes());
+        trust.identity_signature = Box::leak(signature.into_boxed_str());
+
+        let empty = EngineRecipientPolicy {
+            require_epoch_evidence: false,
+            stage5_identity_deleted: true,
+            identity_pins: EngineIdentityPins::default(),
+            epoch_clock_skew_ms: 300_000,
+            ..Default::default()
+        };
+        assert_eq!(
+            accept_engine_recipient(
+                &empty,
+                &trust,
+                Some(&quote_with(None, None, 0xab)),
+                None,
+                now_ms(),
+            )
+            .unwrap_err(),
+            RecipientError::EpochEvidenceRequired
+        );
+
+        let stale = EngineRecipientPolicy {
+            require_epoch_evidence: false,
+            stage5_identity_deleted: true,
+            // Wrong pin for this identity — must still refuse as evidence-required,
+            // not as IdentityPinMismatch (pins are inert after Stage 5).
+            identity_pins: EngineIdentityPins::parse_json(
+                r#"{"engine-1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}"#,
+            )
+            .unwrap(),
+            epoch_clock_skew_ms: 300_000,
+            ..Default::default()
+        };
+        assert_eq!(
+            accept_engine_recipient(
+                &stale,
+                &trust,
+                Some(&quote_with(None, None, 0xab)),
+                None,
+                now_ms(),
+            )
+            .unwrap_err(),
+            RecipientError::EpochEvidenceRequired
+        );
     }
 
     #[test]

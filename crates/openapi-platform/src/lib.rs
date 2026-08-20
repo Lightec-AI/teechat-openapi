@@ -8,10 +8,12 @@ mod edge_policy;
 mod engine_challenge;
 mod engine_recipient;
 mod engine_trust;
+mod engine_usage;
 mod epoch_evidence;
 mod launch_digest;
 mod profile;
 mod seal;
+mod sealed_time;
 pub mod tls;
 
 use std::path::Path;
@@ -40,9 +42,19 @@ pub use engine_trust::{
     ephemeral_signing_bytes, verify_ephemeral_engine_trust, EngineIdentityPins, EngineTrustError,
     EphemeralEngineTrust,
 };
+pub use engine_usage::{
+    independent_token_bound, parse_usage_report_header, request_body_hash_hex,
+    require_signed_usage_from_env, resolve_usage_tokens, sign_usage_report_for_tests,
+    usage_report_signing_bytes, verify_signed_usage_report, verify_usage_signature,
+    EngineUsageError, SignedUsageReport, UsageReport, UsageVerifyContext,
+};
 pub use epoch_evidence::{
     bind_epoch_report_data_64, quote_has_epoch_evidence, verify_epoch_evidence, EpochEvidenceError,
     EpochEvidenceSubject, QuoteEpochClaims, VerifiedEpochEvidence,
+};
+pub use sealed_time::{
+    epoch_window_active, floor_past_not_after, observe_host_time_from_env,
+    sealed_time_enabled_from_env, sealed_time_path_from_env, SealedTimeError, SealedTimeStore,
 };
 pub use launch_digest::{
     compose_launch_digest, launch_digest_from_snp_quote, measurement_from_snp_report,

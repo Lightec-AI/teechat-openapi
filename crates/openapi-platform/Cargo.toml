@@ -31,3 +31,4 @@ rustls-rustcrypto = { version = "0.0.2-alpha", default-features = false, feature
 
 [dev-dependencies]
 rcgen = "0.13"
+tempfile = "3"

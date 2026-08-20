@@ -79,23 +79,28 @@ impl GatewayOpeApiConfig {
             truthy_env("OPENAPI_GATEWAY_OPE_API_TLS_INSECURE_SKIP_VERIFY"),
         )?;
         let require_epoch_evidence = truthy_env("OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE");
+        // Stage 5 (RB-52) — default OFF. When on, identity pins are inert for
+        // admit and may be empty/absent. Do not set on live until leftover
+        // ≤0.24.0 census is clean and an explicit GO.
+        let stage5_identity_deleted = truthy_env("OPENAPI_STAGE5_IDENTITY_DELETED");
+        let pins_optional = require_epoch_evidence || stage5_identity_deleted;
         // Pins are the pre-RB-45 recipient check. They stay mandatory until the
-        // edge is told to demand per-epoch evidence, because dropping them
-        // first would leave the recipient decision to the relay.
+        // edge is told to demand per-epoch evidence (or Stage 5 deletes them),
+        // because dropping them first would leave the recipient decision to the relay.
         match opt_env("OPENAPI_ENGINE_IDENTITY_PINS_JSON") {
             Some(pins_json) => {
                 cfg.engine_identity_pins = EngineIdentityPins::parse_json(&pins_json)
                     .map_err(|e| GatewayOpeApiError::Config(e.to_string()))?;
-                if cfg.engine_identity_pins.is_empty() && !require_epoch_evidence {
+                if cfg.engine_identity_pins.is_empty() && !pins_optional {
                     return Err(GatewayOpeApiError::Config(
                         "OPENAPI_ENGINE_IDENTITY_PINS_JSON must contain at least one engine".into(),
                     ));
                 }
             }
-            None if require_epoch_evidence => {}
+            None if pins_optional => {}
             None => {
                 return Err(GatewayOpeApiError::Config(
-                    "OPENAPI_ENGINE_IDENTITY_PINS_JSON required unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1"
+                    "OPENAPI_ENGINE_IDENTITY_PINS_JSON required unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1 or OPENAPI_STAGE5_IDENTITY_DELETED=1"
                         .into(),
                 ));
             }
@@ -107,6 +112,7 @@ impl GatewayOpeApiConfig {
                 &opt_env("OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST").unwrap_or_default(),
             ),
             require_epoch_evidence,
+            stage5_identity_deleted,
             require_launch_digest: truthy_env("OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST"),
             epoch_clock_skew_ms: u64::try_from(cfg.epoch_clock_skew.as_millis())
                 .unwrap_or(u64::MAX),
@@ -174,9 +180,10 @@ impl GatewayOpeApiConfig {
         if profile.is_prod()
             && self.engine_identity_pins.is_empty()
             && !self.recipient_policy.require_epoch_evidence
+            && !self.recipient_policy.stage5_identity_deleted
         {
             return Err(GatewayOpeApiError::Config(
-                "OPENAPI_ENGINE_IDENTITY_PINS_JSON required in prod unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1"
+                "OPENAPI_ENGINE_IDENTITY_PINS_JSON required in prod unless OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE=1 or OPENAPI_STAGE5_IDENTITY_DELETED=1"
                     .into(),
             ));
         }
@@ -841,6 +848,7 @@ mod tests {
             "OPENAPI_ENGINE_IDENTITY_PINS_JSON",
             "OPENAPI_OPE_EPOCH_CLOCK_SKEW_SEC",
             "OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE",
+            "OPENAPI_STAGE5_IDENTITY_DELETED",
             "OPENAPI_OPE_REQUIRE_ENGINE_LAUNCH_DIGEST",
             "OPENAPI_ENGINE_LAUNCH_DIGEST_ALLOWLIST",
             "OPENAPI_OPE_VERIFY_ENGINE_SNP_CHAIN",
@@ -999,6 +1007,35 @@ mod tests {
         std::env::set_var("OPENAPI_OPE_REQUIRE_EPOCH_EVIDENCE", "1");
         let cfg = GatewayOpeApiConfig::from_env().unwrap().unwrap();
         assert!(cfg.engine_identity_pins.is_empty());
+        assert!(!cfg.recipient_policy.stage5_identity_deleted);
+        clear_ope_env();
+    }
+
+    /// RB-52 case 52.3 — Stage 5 flag (default off) allows empty pins and marks
+    /// them inert for admit. Live stays unchanged until the env is set.
+    #[test]
+    fn from_env_stage5_flag_defaults_off_and_allows_empty_pins_when_on() {
+        let _g = env_lock();
+        clear_ope_env();
+        std::env::set_var("OPENAPI_GATEWAY_OPE_API_URL", "https://10.0.0.2:8791");
+        let with_pins = GatewayOpeApiConfig::from_env().unwrap().unwrap();
+        assert!(!with_pins.recipient_policy.stage5_identity_deleted);
+
+        std::env::remove_var("OPENAPI_ENGINE_IDENTITY_PINS_JSON");
+        std::env::set_var("OPENAPI_STAGE5_IDENTITY_DELETED", "1");
+        // Stale leftover pin set must parse but must not be required for boot.
+        std::env::set_var(
+            "OPENAPI_ENGINE_IDENTITY_PINS_JSON",
+            r#"{"stale-engine":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}"#,
+        );
+        let with_stale = GatewayOpeApiConfig::from_env().unwrap().unwrap();
+        assert!(with_stale.recipient_policy.stage5_identity_deleted);
+        assert!(!with_stale.engine_identity_pins.is_empty());
+
+        std::env::remove_var("OPENAPI_ENGINE_IDENTITY_PINS_JSON");
+        let empty = GatewayOpeApiConfig::from_env().unwrap().unwrap();
+        assert!(empty.recipient_policy.stage5_identity_deleted);
+        assert!(empty.engine_identity_pins.is_empty());
         clear_ope_env();
     }
 
