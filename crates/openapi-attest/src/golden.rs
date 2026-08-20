@@ -19,7 +19,7 @@ pub const GOLDEN_KEY_ID: &str = "golden-digests-v1";
 pub const DEFAULT_GOLDEN_GITHUB_OWNER: &str = "Lightec-AI";
 pub const DEFAULT_GOLDEN_GITHUB_REPO: &str = "teechat-golden-digests";
 /// Immutable golden release tag. `releases/latest` is refused (RB-04).
-pub const DEFAULT_GOLDEN_RELEASE_TAG: &str = "epoch-69";
+pub const DEFAULT_GOLDEN_RELEASE_TAG: &str = "epoch-70";
 pub const GOLDEN_ASSET_NAME: &str = "golden-digests.json";
 pub const DEFAULT_GOLDEN_WWW_URL: &str =
     "https://www.teechat.ai/.well-known/teechat/golden/manifest.json";
