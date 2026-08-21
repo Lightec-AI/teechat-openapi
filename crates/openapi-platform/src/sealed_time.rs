@@ -49,6 +49,10 @@ pub fn sealed_time_path_from_env() -> PathBuf {
             return PathBuf::from(p);
         }
     }
+    // SGX: never stat /data or temp_dir — both panic under Fortanix EDP.
+    if cfg!(target_env = "sgx") {
+        return PathBuf::from(DEFAULT_PROD_PATH);
+    }
     if Path::new("/data").is_dir() {
         return PathBuf::from(DEFAULT_PROD_PATH);
     }
@@ -68,7 +72,14 @@ impl SealedTimeStore {
     }
 
     pub fn from_env() -> Self {
-        Self::new(sealed_time_path_from_env(), sealed_time_enabled_from_env())
+        let enforce = sealed_time_enabled_from_env();
+        // Fortanix EDP panics on any host FS usercall ("no filesystem on this
+        // platform"). Path resolution is only needed when enforcement writes a
+        // floor; skip it on the default off path (lab SGX completions).
+        if !enforce {
+            return Self::new(PathBuf::new(), false);
+        }
+        Self::new(sealed_time_path_from_env(), true)
     }
 
     pub fn path(&self) -> &Path {
@@ -253,6 +264,17 @@ mod tests {
         // Soft-start path exists and both CVM/SGX call SealedTimeStore::from_env.
         let _ = sealed_time_enabled_from_env();
         let _ = sealed_time_path_from_env();
+    }
+
+    #[test]
+    fn from_env_disabled_skips_path_resolution() {
+        let _g = LOCK.lock().unwrap();
+        std::env::remove_var(ENV_ENABLE);
+        std::env::remove_var(ENV_PATH);
+        let store = SealedTimeStore::from_env();
+        assert!(!store.enforce());
+        assert_eq!(store.path(), Path::new(""));
+        assert_eq!(store.observe(99).unwrap(), 99);
     }
 
     #[test]
