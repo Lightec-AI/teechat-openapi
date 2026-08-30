@@ -1,11 +1,11 @@
 {
   "schema": "teechat-openapi-edge-manifest/v1",
   "key_id": "openapi-attestation-v1",
-  "published_at": "2026-08-30T16:38:00Z",
-  "epoch": 47,
+  "published_at": "2026-08-30T17:30:00Z",
+  "epoch": 48,
   "not_after": "2027-07-29T02:35:30Z",
   "retired_grace_period_days": 30,
-  "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/download/v0.12.4/openapi-edge-attest.json",
+  "manifest_url": "https://github.com/Lightec-AI/teechat-openapi/releases/download/v0.12.6/openapi-edge-attest.json",
   "policy": {
     "reject_debug": true,
     "max_quote_age_ms": 3600000,
@@ -19,6 +19,36 @@
         "openapi.teechat.ai"
       ],
       "active": [
+        {
+          "build_version": "0.12.5",
+          "code_hash": "ab94656e786c0475867b6850b9840fda53d52dd6d62375d451b8eb5353349e29",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "67f93877aaf63f2345b5cc11c535ce22a9f9a2a5c551968a5c1bed2829f100db",
+            "image_digest": "3d520d848a0d6d76ae9bec571bc075f894318bc249c3f1083666ab279b97b8cb"
+          },
+          "notes": "0.12.5 RB-54 closure with release-pinned ceremony helpers; OS 853aefc + app-verity R=996091e6. Seal_sync blue/green.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.12.5"
+        },
+        {
+          "build_version": "0.12.5",
+          "code_hash": "ab94656e786c0475867b6850b9840fda53d52dd6d62375d451b8eb5353349e29",
+          "policy_hash": "7c14218c6abcb3ec5dc1998a1e0ddb0e86c7f96d35a215e29538dc3f273f4c0e",
+          "quote_formats": [
+            "snp_report"
+          ],
+          "measurement": {
+            "kind": "launch_digest",
+            "launch_digest": "67f93877aaf63f2345b5cc11c535ce22a9f9a2a5c551968a5c1bed2829f100db",
+            "image_digest": "fdc5250b913498736992024fdefa6c5e5d23a98193df216671cd26ce8d371a0d"
+          },
+          "notes": "0.12.5 RB-54 closure with release-pinned helpers and transitional green IMAGE_DIGEST fdc5250b.",
+          "golden_version": "openapi-golden-20260729-853aefc5f849-seal-sync-app-0.12.5"
+        },
         {
           "build_version": "0.12.3",
           "code_hash": "27923ecf5c2572f55f268db55f5ba0674647b81220e4010c757e62f6bf22f22d",
