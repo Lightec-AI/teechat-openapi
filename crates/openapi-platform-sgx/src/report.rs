@@ -48,6 +48,7 @@ pub fn enclave_report_for_target(
 }
 
 #[cfg(not(target_env = "sgx"))]
+#[allow(dead_code)] // Exercised by host tests; enclave builds use the SGX implementation.
 pub fn enclave_report_with_data(_report_data: &[u8; 64]) -> Result<Vec<u8>, PlatformError> {
     Err(PlatformError::Attestation(
         "SGX REPORT requires target_env=sgx (enclave build)".into(),

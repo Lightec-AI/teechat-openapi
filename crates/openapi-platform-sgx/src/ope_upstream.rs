@@ -3,7 +3,6 @@
 //! Identical wire logic to `openapi-platform-cvm::ope_upstream`; only the underlying
 //! `GatewayOpeApiClient` dialer differs (raw `TcpStream` + rustls here, `ureq` on CVM).
 
-use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::Mutex;
 
@@ -22,8 +21,6 @@ use openapi_platform::{
 };
 use rand::RngCore;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use tracing::warn;
 
 use crate::gateway_ope_api::{
     DispatchRequest, GatewayOpeApiClient, GatewayOpeApiConfig, GatewayOpeApiError, InventoryEngine,
@@ -32,6 +29,8 @@ use crate::gateway_ope_api::{
 use crate::ope_wrap::{
     decrypt_chunk, encrypt_openai_body_with_path, envelope_to_bytes, EncryptedOpeRequest,
 };
+
+type BufferedDispatchResponse = (u16, Vec<(String, String)>, Vec<u8>);
 
 /// Clear-HTTP break-glass (forbidden in prod). Bypasses OPE entirely — see `EdgeUpstream`.
 pub fn clear_http_break_glass_enabled() -> bool {
@@ -222,7 +221,7 @@ impl OpeDispatchUpstream {
         pre: &PreassignResponse,
         enc: &EncryptedOpeRequest,
         ctx: &UpstreamRequestContext,
-    ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), ApiError> {
+    ) -> Result<BufferedDispatchResponse, ApiError> {
         let body =
             envelope_to_bytes(&enc.envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
         let resp = self
@@ -522,6 +521,7 @@ fn decrypt_ndjson_to_text(enc: &EncryptedOpeRequest, raw: &[u8]) -> Result<Strin
     Ok(text)
 }
 
+#[allow(clippy::too_many_arguments)] // Streaming bridge dependencies remain explicit.
 fn bridge_ope_to_openai_sse(
     enc: &EncryptedOpeRequest,
     reader: &mut dyn Read,

@@ -135,7 +135,7 @@ fn dispatch(
             if host.is_empty() || host.contains('/') || host.contains("..") {
                 bail!("invalid host");
             }
-            let addrs = resolve_dns_addrs(&host)?;
+            let addrs = resolve_dns_addrs(host)?;
             let body = serde_json::to_vec(&serde_json::json!({ "addrs": addrs }))?;
             Ok((200, body, "application/json"))
         }

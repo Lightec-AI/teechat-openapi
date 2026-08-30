@@ -87,17 +87,16 @@ pub fn read_tls_key_policy() -> Result<TlsKeyPolicy, String> {
 
 /// Prod: load measured policy file. Dev: optional env `OPENAPI_TLS_KEY_POLICY` if file missing.
 pub fn resolve_tls_key_policy_for_profile(profile_prod: bool) -> Result<TlsKeyPolicy, String> {
-    if profile_prod {
-        if std::env::var("OPENAPI_TLS_KEY_POLICY")
+    if profile_prod
+        && std::env::var("OPENAPI_TLS_KEY_POLICY")
             .ok()
             .filter(|s| !s.is_empty())
             .is_some()
-        {
-            return Err(
-                "OPENAPI_TLS_KEY_POLICY env override is forbidden in prod (use /etc/tls_key_policy)"
-                    .into(),
-            );
-        }
+    {
+        return Err(
+            "OPENAPI_TLS_KEY_POLICY env override is forbidden in prod (use /etc/tls_key_policy)"
+                .into(),
+        );
     }
     match read_tls_key_policy() {
         Ok(p) => Ok(p),

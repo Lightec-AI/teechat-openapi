@@ -27,6 +27,7 @@ pub enum MaintenanceScope {
 pub enum MaintenanceReason {
     GpuHandover,
     GatewayCutover,
+    SecurityKeyRotation,
     Other,
 }
 

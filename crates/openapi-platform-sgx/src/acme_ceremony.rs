@@ -167,13 +167,11 @@ pub fn run_acme_ceremony(mode: AcmeMode) -> anyhow::Result<()> {
     assert_acme_ceremony_policy(staging)?;
 
     let key_policy = resolve_tls_key_policy_optional().map_err(anyhow::Error::msg)?;
-    if mode == AcmeMode::Issue {
-        if matches!(key_policy, Some(TlsKeyPolicy::SealSync)) {
-            bail!(
-                "tls_key_policy=seal_sync forbids acme-issue (mint only on key_ceremony); \
-                 use seal-sync import or acme-renew on the active color"
-            );
-        }
+    if mode == AcmeMode::Issue && matches!(key_policy, Some(TlsKeyPolicy::SealSync)) {
+        bail!(
+            "tls_key_policy=seal_sync forbids acme-issue (mint only on key_ceremony); \
+             use seal-sync import or acme-renew on the active color"
+        );
     }
 
     let domain = std::env::var("OPENAPI_ACME_DOMAIN")
@@ -416,7 +414,7 @@ mod tests {
             }
         });
 
-        let client = CeremonyHelperClient::from_url(&format!("http://{}", addr)).unwrap();
+        let client = CeremonyHelperClient::from_url(&format!("http://{addr}")).unwrap();
 
         // DNS: fixture returns 127.0.0.1:443
         let resolved = client.resolve_dns("example.test", 443).unwrap();

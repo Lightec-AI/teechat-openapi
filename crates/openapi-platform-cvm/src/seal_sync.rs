@@ -390,6 +390,7 @@ fn build_attestor(cfg: &SealSyncConfig, local_measurement: &str) -> EdgeSealSync
 }
 
 /// Spawn active seal-sync admin server (background thread).
+#[allow(clippy::too_many_arguments)] // Startup wiring keeps trust inputs explicit.
 pub fn spawn_seal_sync_server(
     listen: &str,
     serving_cert_pem: &str,
@@ -424,8 +425,7 @@ pub fn spawn_seal_sync_server(
             let export_cert = {
                 let cert_path = cert_path.clone();
                 move || {
-                    let pem =
-                        fs::read(&cert_path).map_err(|e| attested_mtls_seal_sync::Error::Io(e))?;
+                    let pem = fs::read(&cert_path).map_err(attested_mtls_seal_sync::Error::Io)?;
                     Ok(Some(pem))
                 }
             };
@@ -637,9 +637,11 @@ mod tests {
 
     #[test]
     fn gate_maps_verify_errors() {
-        let mut opts = VerifyOptions::default();
-        opts.endpoint = "https://127.0.0.1:1".into();
-        opts.require_golden_digests = false;
+        let opts = VerifyOptions {
+            endpoint: "https://127.0.0.1:1".into(),
+            require_golden_digests: false,
+            ..VerifyOptions::default()
+        };
         let gate = SplitTrustChallengeGate::with_options(opts);
         let err = gate
             .verify_peer_challenge("https://127.0.0.1:1")

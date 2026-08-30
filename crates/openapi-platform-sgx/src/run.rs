@@ -17,6 +17,8 @@ use crate::seal_sync::{maybe_start_seal_sync, SealSyncConfig};
 use crate::tls::{spki_sha256_hex_from_cert_bytes, TlsAcceptor, TlsConfig};
 use crate::tls_key_policy::{resolve_tls_key_policy_optional, TlsKeyPolicy};
 
+type OptionalTlsMaterial = (Option<Vec<u8>>, Option<Vec<u8>>);
+
 pub fn run() -> anyhow::Result<()> {
     TlsConfig::install_crypto_provider().context("tls crypto provider")?;
 
@@ -152,7 +154,7 @@ fn prepare_tls_material(
     sealer: &SgxSealer,
     seal_root: Option<[u8; 32]>,
     mrenclave: &str,
-) -> anyhow::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+) -> anyhow::Result<OptionalTlsMaterial> {
     let seal_cfg = SealSyncConfig::from_env();
     let key_policy = resolve_tls_key_policy_optional().map_err(anyhow::Error::msg)?;
 

@@ -279,6 +279,7 @@ where
     }
 
     /// Full request context including optional challenge bench bypass token.
+    #[allow(clippy::too_many_arguments)] // Stable edge adapter API; callers supply wire fields directly.
     pub fn handle_from_ex(
         &self,
         method: HttpMethod,
@@ -852,8 +853,10 @@ mod tests {
 
     #[test]
     fn transparent_proxy_get_unknown_route() {
-        let mut cfg = Config::default();
-        cfg.proxy_mode = crate::routes::ProxyMode::Transparent;
+        let cfg = Config {
+            proxy_mode: crate::routes::ProxyMode::Transparent,
+            ..Config::default()
+        };
         let app = build_test_app_with_config(
             cfg,
             MockUpstream::default().with(
@@ -947,8 +950,10 @@ mod tests {
 
     #[test]
     fn attestation_challenge_rate_limited_per_ip() {
-        let mut limits = Limits::default();
-        limits.challenge_requests_per_minute = 2;
+        let limits = Limits {
+            challenge_requests_per_minute: 2,
+            ..Limits::default()
+        };
         let api_key = "sk-teechat-test";
         let catalog_signing = SigningKey::from_bytes(&[7u8; 32]);
         let signed = sign_test_catalog(
@@ -1017,9 +1022,11 @@ mod tests {
     fn challenge_bench_token_bypasses_limits_in_dev() {
         let _g = PROFILE_ENV_LOCK.lock().unwrap();
         std::env::set_var("OPENAPI_PROFILE", "dev");
-        let mut limits = Limits::default();
-        limits.challenge_requests_per_minute = 1;
-        limits.challenge_bench_token = Some("lab-token".into());
+        let limits = Limits {
+            challenge_requests_per_minute: 1,
+            challenge_bench_token: Some("lab-token".into()),
+            ..Limits::default()
+        };
         let app = App::new(
             Config::default(),
             limits,
@@ -1052,9 +1059,11 @@ mod tests {
     fn challenge_bench_token_ignored_when_profile_prod() {
         let _g = PROFILE_ENV_LOCK.lock().unwrap();
         std::env::set_var("OPENAPI_PROFILE", "prod");
-        let mut limits = Limits::default();
-        limits.challenge_requests_per_minute = 1;
-        limits.challenge_bench_token = Some("lab-token".into());
+        let limits = Limits {
+            challenge_requests_per_minute: 1,
+            challenge_bench_token: Some("lab-token".into()),
+            ..Limits::default()
+        };
         let app = App::new(
             Config::default(),
             limits,
@@ -1125,9 +1134,11 @@ mod tests {
 
     #[test]
     fn api_rate_limited_per_ip_before_key_rpm() {
-        let mut limits = Limits::default();
-        limits.ip_requests_per_minute = 2;
-        limits.requests_per_minute = 1000;
+        let limits = Limits {
+            ip_requests_per_minute: 2,
+            requests_per_minute: 1000,
+            ..Limits::default()
+        };
         let api_key = "sk-teechat-test";
         let catalog_signing = SigningKey::from_bytes(&[7u8; 32]);
         let signed = sign_test_catalog(
@@ -1275,8 +1286,10 @@ mod tests {
 
     #[test]
     fn healthz_exempt_from_ip_api_rpm() {
-        let mut limits = Limits::default();
-        limits.ip_requests_per_minute = 1;
+        let limits = Limits {
+            ip_requests_per_minute: 1,
+            ..Limits::default()
+        };
         let app = App::new(
             Config::default(),
             limits,
@@ -1303,9 +1316,11 @@ mod tests {
 
     #[test]
     fn ip_api_rpm_zero_is_unlimited() {
-        let mut limits = Limits::default();
-        limits.ip_requests_per_minute = 0;
-        limits.requests_per_minute = 10_000;
+        let limits = Limits {
+            ip_requests_per_minute: 0,
+            requests_per_minute: 10_000,
+            ..Limits::default()
+        };
         let api_key = "sk-teechat-ip0";
         let sk = SigningKey::from_bytes(&[3u8; 32]);
         let signed = sign_test_catalog(
@@ -1348,8 +1363,10 @@ mod tests {
         let sk = SigningKey::from_bytes(&[4u8; 32]);
         let catalog =
             KeyCatalog::from_signed(sign_test_catalog(vec![], &sk), sk.verifying_key()).unwrap();
-        let mut limits = Limits::default();
-        limits.ip_max_connections = 1;
+        let limits = Limits {
+            ip_max_connections: 1,
+            ..Limits::default()
+        };
         let app = App::new(
             Config::default(),
             limits,
@@ -1451,8 +1468,10 @@ mod tests {
             &signing,
         );
         let remote = RemoteAuthenticator::new(signing.verifying_key(), Arc::new(MockL0 { authz }));
-        let mut limits = Limits::default();
-        limits.requests_per_minute = global_rpm;
+        let limits = Limits {
+            requests_per_minute: global_rpm,
+            ..Limits::default()
+        };
         let app = App::new(
             Config::default(),
             limits,

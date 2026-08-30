@@ -252,13 +252,13 @@ impl RemoteAuthenticator {
 }
 
 pub enum EdgeAuthenticator {
-    Catalog(Authenticator),
+    Catalog(Box<Authenticator>),
     Remote(Arc<RemoteAuthenticator>),
 }
 
 impl EdgeAuthenticator {
     pub fn from_catalog(catalog: Authenticator) -> Self {
-        Self::Catalog(catalog)
+        Self::Catalog(Box::new(catalog))
     }
 
     pub fn from_remote(remote: RemoteAuthenticator) -> Self {

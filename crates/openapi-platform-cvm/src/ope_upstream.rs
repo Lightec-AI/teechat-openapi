@@ -30,6 +30,8 @@ use crate::ope_wrap::{
     decrypt_chunk, encrypt_openai_body_with_path, envelope_to_bytes, EncryptedOpeRequest,
 };
 
+type BufferedDispatchResponse = (u16, Vec<(String, String)>, Vec<u8>);
+
 /// Clear-HTTP break-glass (forbidden in prod).
 pub fn clear_http_break_glass_enabled() -> bool {
     match std::env::var("OPENAPI_UPSTREAM_CLEAR_HTTP") {
@@ -265,7 +267,7 @@ impl OpeDispatchUpstream {
         pre: &PreassignResponse,
         enc: &EncryptedOpeRequest,
         ctx: &UpstreamRequestContext,
-    ) -> Result<(u16, Vec<(String, String)>, Vec<u8>), ApiError> {
+    ) -> Result<BufferedDispatchResponse, ApiError> {
         let body =
             envelope_to_bytes(&enc.envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
         let resp = self
@@ -565,6 +567,7 @@ fn decrypt_ndjson_to_text(enc: &EncryptedOpeRequest, raw: &[u8]) -> Result<Strin
     Ok(text)
 }
 
+#[allow(clippy::too_many_arguments)] // Streaming bridge dependencies remain explicit.
 fn bridge_ope_to_openai_sse(
     enc: &EncryptedOpeRequest,
     reader: &mut dyn Read,

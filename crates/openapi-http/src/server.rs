@@ -184,6 +184,7 @@ where
     buf
 }
 
+#[allow(clippy::too_many_arguments)] // HTTP adapter forwards the complete request context.
 pub fn dispatch_to_writer<U, P, W: Write + ?Sized>(
     app: &App<U, P>,
     method: &str,
@@ -499,8 +500,10 @@ mod tests {
     #[test]
     fn integration_per_ip_conn_limit_returns_429() {
         std::env::set_var("OPENAPI_CONN_IDLE_SECS", "30");
-        let mut limits = Limits::default();
-        limits.ip_max_connections = 1;
+        let limits = Limits {
+            ip_max_connections: 1,
+            ..Limits::default()
+        };
         let app = test_app_with(limits);
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -159,7 +159,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         "curl-example" => {
-            println!("{}", CURL_EXAMPLE);
+            println!("{CURL_EXAMPLE}");
             Ok(())
         }
         other => bail!("unknown command {other}"),

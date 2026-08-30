@@ -45,6 +45,7 @@ pub struct EncryptedOpeRequest {
     pub ephemeral_epoch: String,
 }
 
+#[allow(dead_code)] // Public compatibility wrapper; production uses the path-bound variant.
 pub fn encrypt_openai_body(
     trust: &PreassignTrust,
     kid: &str,

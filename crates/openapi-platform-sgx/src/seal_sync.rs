@@ -27,6 +27,8 @@ use crate::report::enclave_report_for_target;
 use crate::seal::SgxSealer;
 use crate::tls_key_policy::{resolve_tls_key_policy_optional, TlsKeyPolicy};
 
+type OptionalTlsMaterial = (Option<Vec<u8>>, Option<Vec<u8>>);
+
 /// Env-driven seal-sync settings (same names as CVM).
 #[derive(Debug, Clone)]
 pub struct SealSyncConfig {
@@ -381,6 +383,7 @@ fn reload_after_import(
 }
 
 /// Spawn active seal-sync admin server (background thread).
+#[allow(clippy::too_many_arguments)] // Startup wiring keeps trust inputs explicit.
 pub fn spawn_seal_sync_server(
     listen: &str,
     serving_cert_pem: &[u8],
@@ -466,7 +469,7 @@ pub fn maybe_start_seal_sync(
     seal_root: Option<[u8; 32]>,
     mut unsealed_key_pem: Option<Vec<u8>>,
     mut cert_pem: Option<Vec<u8>>,
-) -> anyhow::Result<(Option<Vec<u8>>, Option<Vec<u8>>)> {
+) -> anyhow::Result<OptionalTlsMaterial> {
     if !cfg.enabled() {
         return Ok((unsealed_key_pem, cert_pem));
     }

@@ -18,6 +18,8 @@ use crate::upstream::HttpEndpoint;
 /// Default helper listen URL (must match `openapi-ceremony-helper`).
 pub const DEFAULT_CEREMONY_HELPER_URL: &str = "http://127.0.0.1:18501";
 
+type HttpsRelayResponseParts = (u16, HashMap<String, String>, Vec<u8>);
+
 #[derive(Debug, Clone)]
 pub struct CeremonyHelperClient {
     endpoint: HttpEndpoint,
@@ -145,7 +147,7 @@ impl CeremonyHelperClient {
         url: &str,
         content_type: Option<&str>,
         body: Option<&[u8]>,
-    ) -> Result<(u16, HashMap<String, String>, Vec<u8>), PlatformError> {
+    ) -> Result<HttpsRelayResponseParts, PlatformError> {
         let body_b64 = body.map(|b| base64::engine::general_purpose::STANDARD.encode(b));
         let req = serde_json::json!({
             "method": method,

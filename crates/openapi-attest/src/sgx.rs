@@ -70,7 +70,7 @@ fn verify_quote_with_collateral(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let report = dcap_verify(&quote, &collateral, now)
+    let report = dcap_verify(quote, collateral, now)
         .map_err(|e| AttestError::Quote(format!("DCAP verify: {e}")))?;
 
     let status = report.status.clone();

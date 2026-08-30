@@ -29,6 +29,9 @@ const HEADER_CONVERSATION_ID: &str = "x-ope-conversation-id";
 const HEADER_EPHEMERAL_EPOCH: &str = "x-ope-ephemeral-epoch";
 const HEADER_ASSIGN_ID: &str = "x-ope-assign-id";
 
+/// Status, response headers, and streaming dispatch body.
+pub type DispatchReaderResponse = (u16, Vec<(String, String)>, Box<dyn Read + Send>);
+
 fn challenge_path(engine_id: &str) -> String {
     format!(
         "/v1/ope/api/engines/{}/challenge",
@@ -378,8 +381,7 @@ impl GatewayOpeApiClient {
     pub fn dispatch_reader(
         &self,
         req: &DispatchRequest,
-    ) -> Result<(u16, Vec<(String, String)>, Box<dyn std::io::Read + Send>), GatewayOpeApiError>
-    {
+    ) -> Result<DispatchReaderResponse, GatewayOpeApiError> {
         if req.engine_id.trim().is_empty() {
             return Err(GatewayOpeApiError::Config(
                 "dispatch requires non-empty engine_id".into(),

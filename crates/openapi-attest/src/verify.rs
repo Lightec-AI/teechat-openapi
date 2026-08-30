@@ -230,6 +230,7 @@ fn load_teechat_fallback(
     })
 }
 
+#[allow(clippy::too_many_arguments)] // Verification result assembly keeps all trust inputs explicit.
 fn finish_verify(
     outcome: ChallengeOutcome,
     trust: TrustBundle,
@@ -259,8 +260,7 @@ fn finish_verify(
             session_bind_mode = "cert_der".into();
         } else {
             return Err(AttestError::Policy(format!(
-                "session SPKI mismatch: edge={} peer_spki={} peer_cert={}",
-                edge, peer_spki, peer_cert
+                "session SPKI mismatch: edge={edge} peer_spki={peer_spki} peer_cert={peer_cert}"
             )));
         }
     }
@@ -419,8 +419,7 @@ fn finish_verify(
                 Measurement::LaunchDigest { launch_digest, .. } => {
                     if !launch_digest.eq_ignore_ascii_case(&composed) {
                         return Err(AttestError::Policy(format!(
-                            "quote MEASUREMENT (challenge-canonical {}) != allowlist composed launch_digest {}",
-                            composed, launch_digest
+                            "quote MEASUREMENT (challenge-canonical {composed}) != allowlist composed launch_digest {launch_digest}"
                         )));
                     }
                 }

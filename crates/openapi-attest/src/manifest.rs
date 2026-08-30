@@ -169,7 +169,7 @@ pub(crate) fn parse_rfc3339_secs(s: &str) -> Result<u64> {
     let mp = if mo > 2 { mo - 3 } else { mo + 9 };
     let doy = (153 * mp as u64 + 2) / 5 + day as u64 - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = (era * 146097 + doe as i64 - 719468) as i64;
+    let days = era * 146097 + doe as i64 - 719468;
     let secs = days * 86400 + (hh as i64) * 3600 + (mm as i64) * 60 + ss as i64;
     if secs < 0 {
         return Err(AttestError::Manifest("timestamp before epoch".into()));

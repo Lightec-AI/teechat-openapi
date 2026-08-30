@@ -46,6 +46,11 @@ const HEADER_ASSIGN_ID: &str = "x-ope-assign-id";
 /// Binds API-key ledger debit on the gateway (METER-002). Must match gateway `HEADER_OPENAPI_KEY_ID`.
 const HEADER_OPENAPI_KEY_ID: &str = "x-teechat-openapi-key-id";
 
+type GatewayTlsStream = StreamOwned<ClientConnection, TcpStream>;
+type GatewayResponseReader = FramedBodyReader<GatewayTlsStream>;
+type GatewayExecResponse = (u16, Vec<(String, String)>, GatewayResponseReader);
+pub type DispatchReaderResponse = (u16, Vec<(String, String)>, Box<dyn Read + Send>);
+
 fn challenge_path(engine_id: &str) -> String {
     format!(
         "/v1/ope/api/engines/{}/challenge",
@@ -330,14 +335,7 @@ impl GatewayOpeApiClient {
         path: &str,
         headers: Vec<(String, String)>,
         body: Option<&[u8]>,
-    ) -> Result<
-        (
-            u16,
-            Vec<(String, String)>,
-            FramedBodyReader<StreamOwned<ClientConnection, TcpStream>>,
-        ),
-        GatewayOpeApiError,
-    > {
+    ) -> Result<GatewayExecResponse, GatewayOpeApiError> {
         let mut stream = self.connect()?;
         write_request(&mut stream, &self.host, method, path, &headers, body)?;
         let (status, headers_text, framing) = read_response_headers(&mut stream)
@@ -464,8 +462,7 @@ impl GatewayOpeApiClient {
     pub fn dispatch_reader(
         &self,
         req: &DispatchRequest,
-    ) -> Result<(u16, Vec<(String, String)>, Box<dyn std::io::Read + Send>), GatewayOpeApiError>
-    {
+    ) -> Result<DispatchReaderResponse, GatewayOpeApiError> {
         if req.engine_id.trim().is_empty() {
             return Err(GatewayOpeApiError::Config(
                 "dispatch requires non-empty engine_id".into(),

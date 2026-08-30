@@ -100,9 +100,8 @@ where
 {
     apply_idle_timeouts(&stream, Duration::from_secs(2));
     if let Some(accept_tls) = tls.as_ref() {
-        match accept_tls(stream) {
-            Some(mut conn) => write_429(conn.as_mut()),
-            None => {}
+        if let Some(mut conn) = accept_tls(stream) {
+            write_429(conn.as_mut());
         }
     } else {
         let mut stream = stream;
@@ -556,7 +555,8 @@ mod tests {
         Builder::new()
             .spawn(move || {
                 let (stream, _) = listener.accept().unwrap();
-                let none_tls: Option<Arc<fn(TcpStream) -> Option<Box<dyn ReadWriteConn>>>> = None;
+                type TestTlsAcceptor = fn(TcpStream) -> Option<Box<dyn ReadWriteConn>>;
+                let none_tls: Option<Arc<TestTlsAcceptor>> = None;
                 respond_429_and_close(stream, &none_tls);
             })
             .unwrap();
@@ -683,8 +683,10 @@ mod tests {
         std::env::set_var("OPENAPI_ACCEPT_QUEUE", "4");
         std::env::set_var("OPENAPI_CONN_IDLE_SECS", "30");
 
-        let mut limits = Limits::default();
-        limits.ip_max_connections = 1;
+        let limits = Limits {
+            ip_max_connections: 1,
+            ..Limits::default()
+        };
         let app = test_app_with(limits);
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -761,10 +763,10 @@ mod tests {
             .unwrap();
 
         for _ in 0..50 {
-            if started.load(Ordering::SeqCst) == 1 {
-                if TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok() {
-                    break;
-                }
+            if started.load(Ordering::SeqCst) == 1
+                && TcpStream::connect_timeout(&addr, Duration::from_millis(50)).is_ok()
+            {
+                break;
             }
             thread::sleep(Duration::from_millis(10));
         }
