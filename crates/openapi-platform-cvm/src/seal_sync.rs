@@ -16,7 +16,7 @@ use std::thread;
 use attested_mtls_seal_sync::{
     accept_one_with_gate, server_tls_config, sync_from_active_tcp_v3, AuditSink, LocalSealer,
     MockAttestor, PeerAttestor, PeerChallengeGate, SealSyncServerConfig, ServingIdentity,
-    StderrAudit, SyncOutcome,
+    StderrAudit, SyncOutcome, V3NonceStore,
 };
 use base64::Engine as _;
 use openapi_attest::golden::GoldenLoadOptions;
@@ -411,6 +411,7 @@ pub fn spawn_seal_sync_server(
     thread::spawn(move || {
         let attestor = attestor;
         let gate = challenge_gate;
+        let v3_nonces = Arc::new(V3NonceStore::default());
         loop {
             let cfg = SealSyncServerConfig {
                 identity: identity.clone(),
@@ -418,6 +419,7 @@ pub fn spawn_seal_sync_server(
                 channel_spki_sha256: channel_spki.clone(),
                 challenge_base_url: challenge_base_url.clone(),
                 require_v3: true,
+                v3_nonces: v3_nonces.clone(),
             };
             let export_cert = {
                 let cert_path = cert_path.clone();
@@ -438,6 +440,7 @@ pub fn spawn_seal_sync_server(
                 &audit as &dyn AuditSink,
             ) {
                 warn!(error = %e, "seal-sync accept/serve failed");
+                thread::sleep(std::time::Duration::from_millis(250));
             }
         }
     });
