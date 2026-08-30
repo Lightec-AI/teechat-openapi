@@ -17,6 +17,7 @@ full = [
     "dep:rustls-pemfile",
     "dep:webpki-roots",
     "dep:dcap-qvl",
+    "dcap-qvl/report",
     "dep:tokio",
     "dep:url",
     "dep:rand",
@@ -25,7 +26,7 @@ full = [
 ]
 # Minimal SGX quote verification surface for the Fortanix enclave. Keep the
 # full verifier's HTTP/TLS client stack (and AWS-LC) out of the EDP target.
-sgx-dcap = ["dep:dcap-qvl", "dep:tokio"]
+sgx-dcap = ["dep:dcap-qvl"]
 # I/O-free SNP collateral verify only (RB-02 / browser WASM). Use with
 # `--no-default-features --features collateral-only`.
 collateral-only = []
@@ -48,7 +49,7 @@ subtle = { workspace = true, optional = true }
 ureq = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-pemfile = { workspace = true, optional = true }
-dcap-qvl = { version = "0.3.11", default-features = false, features = ["std", "report", "rustcrypto"], optional = true }
+dcap-qvl = { version = "0.3.11", default-features = false, features = ["std", "rustcrypto"], optional = true }
 tokio = { version = "1.44", features = ["rt-multi-thread", "macros"], optional = true }
 url = { version = "2.5", optional = true }
 webpki-roots = { version = "0.26", optional = true }

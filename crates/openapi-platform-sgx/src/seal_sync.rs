@@ -182,6 +182,13 @@ pub struct DcapChannelAttestor {
     allowlist: Vec<String>,
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct DcapEvidenceV3 {
+    schema: String,
+    quote_b64: String,
+    collateral: serde_json::Value,
+}
+
 impl DcapChannelAttestor {
     fn report_data_for_channel(channel_spki_sha256: &str) -> [u8; REPORT_DATA_LEN] {
         let mut data = [0u8; REPORT_DATA_LEN];
@@ -210,10 +217,26 @@ impl PeerAttestor for DcapChannelAttestor {
         let quote = dcap
             .quote_report(&report)
             .map_err(|e| attested_mtls_seal_sync::Error::Attestation(e.to_string()))?;
+        let collateral_json = dcap
+            .quote_collateral(&quote)
+            .map_err(|e| attested_mtls_seal_sync::Error::Attestation(e.to_string()))?;
+        let collateral = serde_json::from_slice(&collateral_json).map_err(|e| {
+            attested_mtls_seal_sync::Error::Attestation(format!(
+                "DCAP helper returned invalid collateral JSON: {e}"
+            ))
+        })?;
+        let wrapped = serde_json::to_vec(&DcapEvidenceV3 {
+            schema: "teechat.seal_sync.dcap_evidence.v3".into(),
+            quote_b64: base64::engine::general_purpose::STANDARD.encode(&quote),
+            collateral,
+        })
+        .map_err(|e| {
+            attested_mtls_seal_sync::Error::Attestation(format!("serialize DCAP evidence: {e}"))
+        })?;
         Ok(attested_mtls_seal_sync::AttestationEvidence {
             measurement: self.measurement.clone(),
             channel_spki_sha256: channel_spki_sha256.to_ascii_lowercase(),
-            evidence_b64: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&quote),
+            evidence_b64: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(wrapped),
         })
     }
 
@@ -236,16 +259,32 @@ impl PeerAttestor for DcapChannelAttestor {
                 evidence.measurement
             )));
         }
-        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        let wrapped = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&evidence.evidence_b64)
             .map_err(|e| attested_mtls_seal_sync::Error::Attestation(format!("evidence: {e}")))?;
-        let quote_b64 = base64::engine::general_purpose::STANDARD.encode(raw);
-        let verified =
-            openapi_attest::sgx::verify_sgx_dcap_quote(&quote_b64, true).map_err(|e| {
-                attested_mtls_seal_sync::Error::Attestation(format!(
-                    "SGX DCAP signature/collateral verification failed: {e}"
-                ))
-            })?;
+        let wrapped: DcapEvidenceV3 = serde_json::from_slice(&wrapped).map_err(|e| {
+            attested_mtls_seal_sync::Error::Attestation(format!("DCAP evidence wrapper: {e}"))
+        })?;
+        if wrapped.schema != "teechat.seal_sync.dcap_evidence.v3" {
+            return Err(attested_mtls_seal_sync::Error::Attestation(
+                "DCAP evidence v3 schema required".into(),
+            ));
+        }
+        let collateral_json = serde_json::to_vec(&wrapped.collateral).map_err(|e| {
+            attested_mtls_seal_sync::Error::Attestation(format!(
+                "serialize DCAP collateral for verification: {e}"
+            ))
+        })?;
+        let verified = openapi_attest::sgx::verify_sgx_dcap_quote_with_collateral_json(
+            &wrapped.quote_b64,
+            &collateral_json,
+            true,
+        )
+        .map_err(|e| {
+            attested_mtls_seal_sync::Error::Attestation(format!(
+                "SGX DCAP signature/collateral verification failed: {e}"
+            ))
+        })?;
         let expect = Self::report_data_for_channel(expected_channel_spki);
         if !verified
             .report_data_hex
@@ -551,10 +590,27 @@ mod tests {
             measurement: "cd".repeat(32),
             allowlist: vec!["cd".repeat(32)],
         };
+        let wrapped = serde_json::to_vec(&DcapEvidenceV3 {
+            schema: "teechat.seal_sync.dcap_evidence.v3".into(),
+            quote_b64: base64::engine::general_purpose::STANDARD.encode([0_u8; 64]),
+            collateral: serde_json::json!({
+                "pck_crl_issuer_chain": "",
+                "root_ca_crl": [],
+                "pck_crl": [],
+                "tcb_info_issuer_chain": "",
+                "tcb_info": "",
+                "tcb_info_signature": [],
+                "qe_identity_issuer_chain": "",
+                "qe_identity": "",
+                "qe_identity_signature": [],
+                "pck_certificate_chain": null
+            }),
+        })
+        .unwrap();
         let evidence = attested_mtls_seal_sync::AttestationEvidence {
             measurement: "cd".repeat(32),
             channel_spki_sha256: binding.clone(),
-            evidence_b64: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0_u8; 64]),
+            evidence_b64: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(wrapped),
         };
         assert!(attestor.verify(&evidence, &binding).is_err());
     }

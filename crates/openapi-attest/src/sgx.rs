@@ -5,9 +5,11 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "full")]
 use dcap_qvl::collateral::get_collateral_from_pcs;
 use dcap_qvl::quote::Report;
 use dcap_qvl::verify::rustcrypto::verify as dcap_verify;
+use dcap_qvl::QuoteCollateralV3;
 #[cfg(feature = "full")]
 use openapi_platform::QuoteFormat;
 
@@ -24,11 +26,9 @@ pub struct SgxVerifyReport {
     pub tcb_status: String,
 }
 
+#[cfg(feature = "full")]
 pub fn verify_sgx_dcap_quote(quote_b64: &str, reject_debug: bool) -> Result<SgxVerifyReport> {
-    let quote =
-        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, quote_b64.trim())
-            .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))?;
-
+    let quote = decode_quote(quote_b64)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -37,7 +37,34 @@ pub fn verify_sgx_dcap_quote(quote_b64: &str, reject_debug: bool) -> Result<SgxV
     let collateral = runtime
         .block_on(async { get_collateral_from_pcs(&quote).await })
         .map_err(|e| AttestError::Quote(format!("PCS collateral: {e}")))?;
+    verify_quote_with_collateral(&quote, &collateral, reject_debug)
+}
 
+/// I/O-free SGX DCAP verification for enclave callers.
+///
+/// The untrusted host may fetch the collateral, but cannot forge it: QVL checks
+/// the Intel certificate/CRL/TCB signatures before accepting the quote.
+pub fn verify_sgx_dcap_quote_with_collateral_json(
+    quote_b64: &str,
+    collateral_json: &[u8],
+    reject_debug: bool,
+) -> Result<SgxVerifyReport> {
+    let quote = decode_quote(quote_b64)?;
+    let collateral: QuoteCollateralV3 = serde_json::from_slice(collateral_json)
+        .map_err(|e| AttestError::Quote(format!("DCAP collateral JSON: {e}")))?;
+    verify_quote_with_collateral(&quote, &collateral, reject_debug)
+}
+
+fn decode_quote(quote_b64: &str) -> Result<Vec<u8>> {
+    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, quote_b64.trim())
+        .map_err(|e| AttestError::Quote(format!("quote_b64: {e}")))
+}
+
+fn verify_quote_with_collateral(
+    quote: &[u8],
+    collateral: &QuoteCollateralV3,
+    reject_debug: bool,
+) -> Result<SgxVerifyReport> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())

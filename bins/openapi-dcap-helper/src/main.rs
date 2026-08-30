@@ -5,6 +5,7 @@
 //!
 //! - `GET /qe-targetinfo` → raw QE `Targetinfo` bytes
 //! - `POST /quote` (body = SGX REPORT) → DCAP ECDSA quote bytes
+//! - `POST /collateral` (body = quote) → signed Intel collateral JSON
 //!
 //! AESM/QE remain the trust boundary; a malicious helper can only refuse to
 //! quote — it cannot forge Intel ECDSA quotes for arbitrary reports.
@@ -84,6 +85,17 @@ fn algorithm_id(key_id: &[u8]) -> u32 {
     u32::from_le_bytes(bytes)
 }
 
+fn quote_collateral_json(quote: &[u8]) -> Result<Vec<u8>> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("build collateral fetch runtime")?;
+    let collateral = runtime
+        .block_on(dcap_qvl::collateral::get_collateral_from_pcs(quote))
+        .context("fetch signed Intel PCS collateral")?;
+    serde_json::to_vec(&collateral).context("serialize quote collateral")
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -139,6 +151,11 @@ fn handle_client(state: &Mutex<QuoteState>, mut stream: TcpStream) -> Result<()>
             let report = extract_body(&buf)?;
             let quote = state.lock().unwrap().quote(report)?;
             (200, quote, "application/octet-stream")
+        }
+        ("POST", "/collateral") => {
+            let quote = extract_body(&buf)?;
+            let collateral = quote_collateral_json(&quote)?;
+            (200, collateral, "application/json")
         }
         _ => (404, b"not found".to_vec(), "text/plain"),
     };

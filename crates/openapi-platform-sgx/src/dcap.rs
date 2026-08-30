@@ -87,6 +87,14 @@ impl DcapHelperClient {
     pub fn quote_report(&self, report: &[u8]) -> Result<Vec<u8>, PlatformError> {
         self.http_exchange("POST", "/quote", Some(report))
     }
+
+    /// Fetch signed Intel collateral for an already generated quote.
+    ///
+    /// The enclave treats this response as untrusted input and verifies every
+    /// certificate, CRL, TCB signature, and quote signature locally.
+    pub fn quote_collateral(&self, quote: &[u8]) -> Result<Vec<u8>, PlatformError> {
+        self.http_exchange("POST", "/collateral", Some(quote))
+    }
 }
 
 fn parse_http_body(raw: &[u8]) -> Result<Vec<u8>, PlatformError> {
