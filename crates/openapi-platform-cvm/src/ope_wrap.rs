@@ -209,9 +209,7 @@ fn uuid_v4_simple() -> String {
 mod tests {
     use super::*;
     use ope_crypto::encode;
-    use std::sync::Mutex;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
     use ope_e2e::{
         begin_response_session_from_share, decrypt_request, encrypt_response_chunk,
         mock_engine_from_seed, DEV_ENGINE_SEED,
@@ -265,7 +263,9 @@ mod tests {
 
     #[test]
     fn encrypt_sets_rfc3339_ts_compatible_with_ope_verify() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         std::env::remove_var("OPENAPI_PROFILE");
         std::env::remove_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX");
         std::env::remove_var("TEECHAT_OPE_ENVELOPE_SIGNING_SEED_HEX");
@@ -307,7 +307,9 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip_with_mock_engine() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         std::env::remove_var("OPENAPI_PROFILE");
         std::env::remove_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX");
         std::env::remove_var("TEECHAT_OPE_ENVELOPE_SIGNING_SEED_HEX");
@@ -380,7 +382,9 @@ mod tests {
 
     #[test]
     fn prod_without_signing_seed_fails_closed() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         std::env::remove_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX");
         std::env::remove_var("TEECHAT_OPE_ENVELOPE_SIGNING_SEED_HEX");
         std::env::set_var("OPENAPI_PROFILE", "prod");
@@ -391,7 +395,9 @@ mod tests {
 
     #[test]
     fn prod_rejects_vector001_seed() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         std::env::set_var("OPENAPI_PROFILE", "prod");
         std::env::set_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX", "01".repeat(32));
         let err = envelope_signing_seed().unwrap_err().to_string();
@@ -402,7 +408,9 @@ mod tests {
 
     #[test]
     fn custom_seed_verifies_with_that_public_not_vector001() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         std::env::remove_var("OPENAPI_PROFILE");
         let seed = [2u8; 32];
         std::env::set_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX", hex::encode(seed));
