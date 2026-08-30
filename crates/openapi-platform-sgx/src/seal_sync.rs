@@ -12,9 +12,9 @@ use std::thread;
 
 use anyhow::Context;
 use attested_mtls_seal_sync::{
-    accept_one_with_gate, server_tls_config, sync_from_active_tcp_with_gate, AuditSink,
-    LocalSealer, MockAttestor, PeerAttestor, PeerChallengeGate, SealSyncServerConfig,
-    ServingIdentity, StderrAudit, SyncOutcome,
+    accept_one_with_gate, server_tls_config, sync_from_active_tcp_v3, AuditSink, LocalSealer,
+    MockAttestor, PeerAttestor, PeerChallengeGate, SealSyncServerConfig, ServingIdentity,
+    StderrAudit, SyncOutcome,
 };
 use base64::Engine as _;
 use openapi_platform::{load_edge_profile, SealedTlsKeyBlob, Sealer, REPORT_DATA_LEN};
@@ -78,6 +78,11 @@ impl SealSyncConfig {
                 anyhow::bail!(
                     "OPENAPI_SEAL_SYNC_PSK is forbidden when OPENAPI_PROFILE=prod; \
                      use DCAP channel attestor (+ optional challenge URL)"
+                );
+            }
+            if self.allowlist.is_empty() {
+                anyhow::bail!(
+                    "OPENAPI_SEAL_SYNC_ALLOWLIST required when seal-sync enabled in prod"
                 );
             }
         }
@@ -181,7 +186,7 @@ impl DcapChannelAttestor {
     fn report_data_for_channel(channel_spki_sha256: &str) -> [u8; REPORT_DATA_LEN] {
         let mut data = [0u8; REPORT_DATA_LEN];
         let mut h = Sha256::new();
-        h.update(b"teechat-seal-sync-v1");
+        h.update(b"teechat-seal-sync-v3");
         h.update(channel_spki_sha256.as_bytes());
         let dig = h.finalize();
         data[..32].copy_from_slice(&dig);
@@ -234,10 +239,35 @@ impl PeerAttestor for DcapChannelAttestor {
         let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&evidence.evidence_b64)
             .map_err(|e| attested_mtls_seal_sync::Error::Attestation(format!("evidence: {e}")))?;
-        if raw.len() < 64 {
+        let quote_b64 = base64::engine::general_purpose::STANDARD.encode(raw);
+        let verified =
+            openapi_attest::sgx::verify_sgx_dcap_quote(&quote_b64, true).map_err(|e| {
+                attested_mtls_seal_sync::Error::Attestation(format!(
+                    "SGX DCAP signature/collateral verification failed: {e}"
+                ))
+            })?;
+        let expect = Self::report_data_for_channel(expected_channel_spki);
+        if !verified
+            .report_data_hex
+            .eq_ignore_ascii_case(&hex::encode(expect))
+        {
             return Err(attested_mtls_seal_sync::Error::Attestation(
-                "DCAP evidence too short".into(),
+                "verified SGX report_data does not bind the seal-sync transcript".into(),
             ));
+        }
+        if !verified
+            .mrenclave_hex
+            .eq_ignore_ascii_case(&evidence.measurement)
+        {
+            return Err(attested_mtls_seal_sync::Error::Attestation(
+                "verified SGX MRENCLAVE does not match evidence claim".into(),
+            ));
+        }
+        if !verified.tcb_status.eq_ignore_ascii_case("UpToDate") {
+            return Err(attested_mtls_seal_sync::Error::Attestation(format!(
+                "SGX TCB status is not UpToDate: {}",
+                verified.tcb_status
+            )));
         }
         Ok(())
     }
@@ -247,11 +277,7 @@ impl PeerAttestor for DcapChannelAttestor {
         if self.allowlist.iter().any(|a| a == &m) || self.measurement.eq_ignore_ascii_case(&m) {
             return true;
         }
-        let explicit = std::env::var("OPENAPI_SEAL_SYNC_ALLOWLIST")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .is_some();
-        !explicit
+        false
     }
 }
 
@@ -340,6 +366,7 @@ pub fn spawn_seal_sync_server(
                 tls_config: tls_cfg.clone(),
                 channel_spki_sha256: channel_spki.clone(),
                 challenge_base_url: challenge_base_url.clone(),
+                require_v3: true,
             };
             let helper = helper.clone();
             let export_cert = move || {
@@ -373,8 +400,7 @@ pub fn run_seal_sync_client(
 ) -> attested_mtls_seal_sync::Result<SyncOutcome> {
     let audit = StderrAudit;
     info!(%peer, local_spki = %local.spki_sha256, "seal-sync staging → active");
-    let outcome =
-        sync_from_active_tcp_with_gate(peer, local, attestor, sealer, &audit, None, None)?;
+    let outcome = sync_from_active_tcp_v3(peer, local, attestor, sealer, &audit)?;
     match &outcome {
         SyncOutcome::AlreadyAligned { peer } => {
             info!(peer_spki = %peer.spki_sha256, "seal-sync already_aligned");
@@ -492,13 +518,44 @@ mod tests {
     }
 
     #[test]
+    fn prod_requires_measurement_allowlist() {
+        let _g = crate::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("OPENAPI_PROFILE", "prod");
+        let cfg = SealSyncConfig {
+            listen: Some("127.0.0.1:9443".into()),
+            peer: None,
+            allowlist: vec![],
+            mock_psk: None,
+            challenge_base_url: None,
+        };
+        let err = cfg.validate_for_profile().unwrap_err().to_string();
+        assert!(err.contains("ALLOWLIST"), "got {err}");
+        std::env::remove_var("OPENAPI_PROFILE");
+    }
+
+    #[test]
     fn from_env_reads_listen() {
         let _g = crate::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("OPENAPI_SEAL_SYNC_LISTEN", "0.0.0.0:9444");
+        std::env::set_var("OPENAPI_SEAL_SYNC_LISTEN", "127.0.0.1:9444");
         std::env::remove_var("OPENAPI_SEAL_SYNC_PEER");
         std::env::remove_var("OPENAPI_SEAL_SYNC_PSK");
         let cfg = SealSyncConfig::from_env();
-        assert_eq!(cfg.listen.as_deref(), Some("0.0.0.0:9444"));
+        assert_eq!(cfg.listen.as_deref(), Some("127.0.0.1:9444"));
         std::env::remove_var("OPENAPI_SEAL_SYNC_LISTEN");
+    }
+
+    #[test]
+    fn dcap_attestor_rejects_unsigned_quote_bytes() {
+        let binding = "ab".repeat(32);
+        let attestor = DcapChannelAttestor {
+            measurement: "cd".repeat(32),
+            allowlist: vec!["cd".repeat(32)],
+        };
+        let evidence = attested_mtls_seal_sync::AttestationEvidence {
+            measurement: "cd".repeat(32),
+            channel_spki_sha256: binding.clone(),
+            evidence_b64: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0_u8; 64]),
+        };
+        assert!(attestor.verify(&evidence, &binding).is_err());
     }
 }

@@ -38,6 +38,7 @@ ope-crypto = { workspace = true }
 ope-e2e = { workspace = true }
 ope-envelope = { workspace = true }
 webpki-roots = "0.26"
+openapi-attest = { path = "../openapi-attest" }
 
 [target.'cfg(not(target_env = "sgx"))'.dependencies]
 rustls = { workspace = true }

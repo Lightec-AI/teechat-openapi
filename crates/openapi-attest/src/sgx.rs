@@ -16,6 +16,7 @@ use crate::error::{AttestError, Result};
 pub struct SgxVerifyReport {
     pub mrenclave_hex: String,
     pub mrsigner_hex: String,
+    pub report_data_hex: String,
     pub isv_prod_id: u16,
     pub isv_svn: u16,
     pub debug: bool,
@@ -68,6 +69,7 @@ pub fn verify_sgx_dcap_quote(quote_b64: &str, reject_debug: bool) -> Result<SgxV
     Ok(SgxVerifyReport {
         mrenclave_hex: hex::encode(enclave.mr_enclave),
         mrsigner_hex: hex::encode(enclave.mr_signer),
+        report_data_hex: hex::encode(enclave.report_data),
         isv_prod_id: enclave.isv_prod_id,
         isv_svn: enclave.isv_svn,
         debug,

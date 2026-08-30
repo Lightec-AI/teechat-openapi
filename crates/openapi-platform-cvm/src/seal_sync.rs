@@ -14,9 +14,9 @@ use std::sync::Arc;
 use std::thread;
 
 use attested_mtls_seal_sync::{
-    accept_one_with_gate, server_tls_config, sync_from_active_tcp_with_gate, AuditSink,
-    LocalSealer, MockAttestor, PeerAttestor, PeerChallengeGate, SealSyncServerConfig,
-    ServingIdentity, StderrAudit, SyncOutcome,
+    accept_one_with_gate, server_tls_config, sync_from_active_tcp_v3, AuditSink, LocalSealer,
+    MockAttestor, PeerAttestor, PeerChallengeGate, SealSyncServerConfig, ServingIdentity,
+    StderrAudit, SyncOutcome,
 };
 use base64::Engine as _;
 use openapi_attest::golden::GoldenLoadOptions;
@@ -87,12 +87,12 @@ impl SealSyncConfig {
             if self.mock_psk.is_some() {
                 anyhow::bail!(
                     "OPENAPI_SEAL_SYNC_PSK is forbidden when OPENAPI_PROFILE=prod; \
-                     use split-trust challenge (OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL)"
+                     use hardware SNP attestation and OPENAPI_SEAL_SYNC_ALLOWLIST"
                 );
             }
-            if self.challenge_base_url.is_none() {
+            if self.allowlist.is_empty() {
                 anyhow::bail!(
-                    "OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL required when seal-sync enabled in prod"
+                    "OPENAPI_SEAL_SYNC_ALLOWLIST required when seal-sync enabled in prod"
                 );
             }
         }
@@ -276,7 +276,7 @@ impl PeerAttestor for EdgeSealSyncAttestor {
     }
 }
 
-/// SNP-backed channel attestor (measurement = launch digest) — secondary binding only.
+/// SNP-backed channel attestor (measurement = launch digest).
 #[derive(Debug, Clone)]
 pub struct SnpChannelAttestor {
     measurement: String,
@@ -287,7 +287,7 @@ impl SnpChannelAttestor {
     fn report_data_for_channel(channel_spki_sha256: &str) -> [u8; REPORT_DATA_LEN] {
         let mut data = [0u8; REPORT_DATA_LEN];
         let mut h = Sha256::new();
-        h.update(b"teechat-seal-sync-v1");
+        h.update(b"teechat-seal-sync-v3");
         h.update(channel_spki_sha256.as_bytes());
         let dig = h.finalize();
         data[..32].copy_from_slice(&dig);
@@ -329,21 +329,31 @@ impl PeerAttestor for SnpChannelAttestor {
                 evidence.measurement
             )));
         }
-        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(&evidence.evidence_b64)
-            .map_err(|e| attested_mtls_seal_sync::Error::Attestation(format!("evidence: {e}")))?;
-        const SNP_REPORT_DATA_OFFSET: usize = 0x50;
         let expect = Self::report_data_for_channel(expected_channel_spki);
-        if raw.len() >= SNP_REPORT_DATA_OFFSET + REPORT_DATA_LEN {
-            let got = &raw[SNP_REPORT_DATA_OFFSET..SNP_REPORT_DATA_OFFSET + REPORT_DATA_LEN];
-            if got != expect.as_slice() {
-                return Err(attested_mtls_seal_sync::Error::Attestation(
-                    "SNP report_data does not bind channel SPKI".into(),
-                ));
-            }
-        } else if raw.len() < 32 {
+        let verified = openapi_attest::snp::verify_snp_report(&evidence.evidence_b64, true)
+            .map_err(|e| {
+                attested_mtls_seal_sync::Error::Attestation(format!(
+                    "SNP VCEK/chain verification failed: {e}"
+                ))
+            })?;
+        if !verified
+            .report_data_hex
+            .eq_ignore_ascii_case(&hex::encode(expect))
+        {
             return Err(attested_mtls_seal_sync::Error::Attestation(
-                "SNP evidence too short".into(),
+                "verified SNP report_data does not bind the seal-sync transcript".into(),
+            ));
+        }
+        let verified_measurement = openapi_attest::snp::challenge_canonical_launch_digest(
+            &verified.launch_measurement_hex,
+        );
+        if !verified_measurement.eq_ignore_ascii_case(&evidence.measurement)
+            && !verified
+                .launch_measurement_hex
+                .eq_ignore_ascii_case(&evidence.measurement)
+        {
+            return Err(attested_mtls_seal_sync::Error::Attestation(
+                "verified SNP launch measurement does not match evidence claim".into(),
             ));
         }
         Ok(())
@@ -354,13 +364,7 @@ impl PeerAttestor for SnpChannelAttestor {
         if self.allowlist.iter().any(|a| a == &m) || self.measurement.eq_ignore_ascii_case(&m) {
             return true;
         }
-        // Explicit OPENAPI_SEAL_SYNC_ALLOWLIST → deny unknowns. When unset, channel
-        // allowlist is secondary to split-trust challenge (prod root).
-        let explicit = std::env::var("OPENAPI_SEAL_SYNC_ALLOWLIST")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .is_some();
-        !explicit
+        false
     }
 }
 
@@ -413,6 +417,7 @@ pub fn spawn_seal_sync_server(
                 tls_config: tls_cfg.clone(),
                 channel_spki_sha256: channel_spki.clone(),
                 challenge_base_url: challenge_base_url.clone(),
+                require_v3: true,
             };
             let export_cert = {
                 let cert_path = cert_path.clone();
@@ -450,16 +455,8 @@ pub fn run_seal_sync_client(
 ) -> attested_mtls_seal_sync::Result<SyncOutcome> {
     let audit = StderrAudit;
     info!(%peer, local_spki = %local.spki_sha256, "seal-sync staging → active");
-    let gate = challenge_gate.map(|g| g as &dyn PeerChallengeGate);
-    let outcome = sync_from_active_tcp_with_gate(
-        peer,
-        local,
-        attestor,
-        sealer,
-        &audit,
-        gate,
-        local_challenge_base_url,
-    )?;
+    let _ = (challenge_gate, local_challenge_base_url);
+    let outcome = sync_from_active_tcp_v3(peer, local, attestor, sealer, &audit)?;
     match &outcome {
         SyncOutcome::AlreadyAligned { peer } => {
             info!(
@@ -605,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn prod_requires_challenge_url() {
+    fn prod_requires_measurement_allowlist() {
         let _g = crate::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("OPENAPI_PROFILE", "prod");
         let cfg = SealSyncConfig {
@@ -613,26 +610,25 @@ mod tests {
             peer: None,
             allowlist: vec![],
             mock_psk: None,
-            challenge_base_url: None,
+            challenge_base_url: Some("https://attacker.invalid".into()),
         };
         let err = cfg.validate_for_profile().unwrap_err().to_string();
-        assert!(err.contains("CHALLENGE_BASE_URL"), "got {err}");
+        assert!(err.contains("ALLOWLIST"), "got {err}");
         std::env::remove_var("OPENAPI_PROFILE");
     }
 
     #[test]
-    fn prod_ok_with_challenge_url() {
+    fn prod_ok_with_strict_allowlist() {
         let _g = crate::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("OPENAPI_PROFILE", "prod");
         let cfg = SealSyncConfig {
             listen: Some("127.0.0.1:9443".into()),
             peer: None,
-            allowlist: vec![],
+            allowlist: vec!["aa".repeat(32)],
             mock_psk: None,
             challenge_base_url: Some("https://127.0.0.1:8443".into()),
         };
         cfg.validate_for_profile().unwrap();
-        assert!(cfg.use_split_trust_gate());
         std::env::remove_var("OPENAPI_PROFILE");
     }
 
@@ -680,5 +676,20 @@ mod tests {
             Some("https://127.0.0.1:8443")
         );
         std::env::remove_var("OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL");
+    }
+
+    #[test]
+    fn snp_attestor_rejects_unsigned_report_bytes() {
+        let binding = "ab".repeat(32);
+        let attestor = SnpChannelAttestor {
+            measurement: "cd".repeat(48),
+            allowlist: vec!["cd".repeat(48)],
+        };
+        let evidence = attested_mtls_seal_sync::AttestationEvidence {
+            measurement: "cd".repeat(48),
+            channel_spki_sha256: binding.clone(),
+            evidence_b64: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([0_u8; 1184]),
+        };
+        assert!(attestor.verify(&evidence, &binding).is_err());
     }
 }

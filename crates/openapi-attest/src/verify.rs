@@ -11,10 +11,10 @@ use crate::ceremony::{
     CeremonyLoadOptions,
 };
 use crate::challenge_client::{challenge_edge, generate_nonce, ChallengeOutcome};
-use crate::error::{AttestError, Result};
 use crate::epoch_floor::{
     assert_epoch_monotonic, remember_epoch, GOLDEN_EPOCH_KIND, OPENAPI_EPOCH_KIND,
 };
+use crate::error::{AttestError, Result};
 use crate::github_release::{
     assert_not_mutable_latest_url, cross_check_code_hash_for_edge, fallback_tip,
     fetch_github_release_trust_resolved, github_releases_html_url, DEFAULT_GITHUB_OWNER,
@@ -405,6 +405,7 @@ fn finish_verify(
                 "kind": "sgx_dcap_ecdsa",
                 "mrenclave": r.mrenclave_hex,
                 "mrsigner": r.mrsigner_hex,
+                "report_data": r.report_data_hex,
                 "isv_prod_id": r.isv_prod_id,
                 "isv_svn": r.isv_svn,
                 "debug": r.debug,
