@@ -17,6 +17,7 @@
 //! collateral verify path is compiled (RB-02 / browser WASM).
 
 pub mod error;
+#[cfg(any(feature = "full", feature = "collateral-only"))]
 pub mod snp;
 
 #[cfg(feature = "full")]
@@ -39,6 +40,7 @@ pub mod tls_spki;
 pub mod verify;
 
 pub use error::{AttestError, Result};
+#[cfg(any(feature = "full", feature = "collateral-only"))]
 pub use snp::{
     challenge_canonical_launch_digest, raw_snp_report_b64, verify_snp_quote_with_collateral,
     verify_snp_report_with_collateral, SnpVerifyReport,

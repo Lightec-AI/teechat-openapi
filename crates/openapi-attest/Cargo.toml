@@ -11,6 +11,7 @@ rust-version.workspace = true
 default = ["full"]
 # Full CLI / edge verifier (network + SGX DCAP + platform types).
 full = [
+    "dep:sev",
     "dep:openapi-platform",
     "dep:ureq",
     "dep:rustls",
@@ -29,7 +30,7 @@ full = [
 sgx-dcap = ["dep:dcap-qvl"]
 # I/O-free SNP collateral verify only (RB-02 / browser WASM). Use with
 # `--no-default-features --features collateral-only`.
-collateral-only = []
+collateral-only = ["dep:sev"]
 
 [dependencies]
 base64 = { workspace = true }
@@ -39,7 +40,7 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 # SEV-SNP report parsing + VCEK chain helpers (AMD 57230 / 56860)
-sev = { version = "6.2", default-features = false, features = ["snp", "crypto_nossl"] }
+sev = { version = "6.2", default-features = false, features = ["snp", "crypto_nossl"], optional = true }
 
 # Full-feature deps (optional so collateral-only builds for wasm32).
 openapi-platform = { path = "../openapi-platform", optional = true }
