@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use dcap_qvl::collateral::get_collateral_from_pcs;
 use dcap_qvl::quote::Report;
 use dcap_qvl::verify::rustcrypto::verify as dcap_verify;
+#[cfg(feature = "full")]
 use openapi_platform::QuoteFormat;
 
 use crate::error::{AttestError, Result};
@@ -77,6 +78,7 @@ pub fn verify_sgx_dcap_quote(quote_b64: &str, reject_debug: bool) -> Result<SgxV
     })
 }
 
+#[cfg(feature = "full")]
 pub fn expected_quote_format() -> QuoteFormat {
     QuoteFormat::SgxDcapEcdsa
 }

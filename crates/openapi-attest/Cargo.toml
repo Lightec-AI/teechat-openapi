@@ -23,6 +23,9 @@ full = [
     "dep:ed25519-dalek",
     "dep:subtle",
 ]
+# Minimal SGX quote verification surface for the Fortanix enclave. Keep the
+# full verifier's HTTP/TLS client stack (and AWS-LC) out of the EDP target.
+sgx-dcap = ["dep:dcap-qvl", "dep:tokio"]
 # I/O-free SNP collateral verify only (RB-02 / browser WASM). Use with
 # `--no-default-features --features collateral-only`.
 collateral-only = []

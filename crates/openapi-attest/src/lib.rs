@@ -31,7 +31,7 @@ pub mod github_release;
 pub mod golden;
 #[cfg(feature = "full")]
 pub mod manifest;
-#[cfg(feature = "full")]
+#[cfg(any(feature = "full", feature = "sgx-dcap"))]
 pub mod sgx;
 #[cfg(feature = "full")]
 pub mod tls_spki;
