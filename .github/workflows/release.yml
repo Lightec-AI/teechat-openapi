@@ -45,6 +45,8 @@ jobs:
       - name: Build release binaries
         run: |
           cargo build --release -p openapi
+          cargo build --release -p openapi-acme
+          cargo build --release -p openapi-tls-ceremony
           cargo build --release -p teechat-openapi-attest
 
       - name: Stage artifacts + SHA256SUMS
@@ -52,10 +54,16 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp target/release/openapi dist/openapi
+          cp target/release/openapi-acme dist/openapi-acme
+          cp target/release/openapi-tls-ceremony dist/openapi-tls-ceremony
+          cp deploy/cvm/issue-and-seal-tls.sh dist/issue-and-seal-tls.sh
+          chmod 0755 dist/openapi dist/openapi-acme dist/openapi-tls-ceremony \
+            dist/issue-and-seal-tls.sh
           cp target/release/teechat-openapi-attest dist/teechat-openapi-attest
           (
             cd dist
-            sha256sum openapi teechat-openapi-attest | tee SHA256SUMS
+            sha256sum openapi openapi-acme openapi-tls-ceremony \
+              issue-and-seal-tls.sh teechat-openapi-attest | tee SHA256SUMS
           )
           CODE_HASH="$(awk '/ openapi$/ {print $1}' dist/SHA256SUMS)"
           if [[ -f manifest/release/openapi-edge-attest.json ]]; then
@@ -103,6 +111,9 @@ jobs:
         with:
           files: |
             dist/openapi
+            dist/openapi-acme
+            dist/openapi-tls-ceremony
+            dist/issue-and-seal-tls.sh
             dist/teechat-openapi-attest
             dist/SHA256SUMS
             dist/openapi-edge-attest.json
@@ -110,7 +121,7 @@ jobs:
           body: |
             ## Attestation trust root
 
-            - **`SHA256SUMS`** — digests of **this release's** `openapi` + `teechat-openapi-attest` only (no allowlist padding; RB-13)
+            - **`SHA256SUMS`** — digests of **this release's** OpenAPI, ceremony helpers, and attestation CLI only (no allowlist padding; RB-13)
             - **`openapi-edge-attest.json`** — edge allowlist (mirror to www `.well-known` as signed fallback)
 
             Verify: `teechat-openapi-attest verify https://openapi.teechat.ai`
