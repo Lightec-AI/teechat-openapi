@@ -184,10 +184,7 @@ pub fn resolve_usage_tokens(
         let hdr = usage_hdr.ok_or(EngineUsageError::Missing)?;
         let signed = parse_usage_report_header(hdr)?;
         verify_signed_usage_report(&signed, ctx)?;
-        return Ok((
-            signed.report.prompt_tokens,
-            signed.report.completion_tokens,
-        ));
+        return Ok((signed.report.prompt_tokens, signed.report.completion_tokens));
     }
 
     if let Some(hdr) = usage_hdr {

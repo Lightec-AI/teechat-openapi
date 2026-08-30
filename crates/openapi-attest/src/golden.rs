@@ -154,7 +154,8 @@ pub fn fetch_github_golden_digests(
     let tag = match tag.map(str::trim).filter(|s| !s.is_empty()) {
         Some("latest") => {
             return Err(AttestError::Manifest(
-                "golden releases/latest is refused (RB-04); pass --golden-github-tag epoch-N".into(),
+                "golden releases/latest is refused (RB-04); pass --golden-github-tag epoch-N"
+                    .into(),
             ));
         }
         Some(t) => t.to_string(),

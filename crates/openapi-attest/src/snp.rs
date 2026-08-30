@@ -41,11 +41,8 @@ pub fn challenge_canonical_launch_digest(raw_measurement_hex: &str) -> String {
 
 /// Extract `REPORT_DATA` from a raw SNP report (standard Base64 of report bytes).
 fn snp_report_reportdata_local(quote_b64: &str) -> Result<[u8; REPORT_DATA_LEN]> {
-    let raw = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        quote_b64.trim(),
-    )
-    .map_err(|e| AttestError::Quote(format!("quote_b64 decode: {e}")))?;
+    let raw = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, quote_b64.trim())
+        .map_err(|e| AttestError::Quote(format!("quote_b64 decode: {e}")))?;
     if raw.len() < SNP_REPORT_DATA_OFFSET + REPORT_DATA_LEN {
         return Err(AttestError::Quote(format!(
             "SNP report too short: {} bytes",

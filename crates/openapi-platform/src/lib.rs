@@ -52,10 +52,6 @@ pub use epoch_evidence::{
     bind_epoch_report_data_64, quote_has_epoch_evidence, verify_epoch_evidence, EpochEvidenceError,
     EpochEvidenceSubject, QuoteEpochClaims, VerifiedEpochEvidence,
 };
-pub use sealed_time::{
-    epoch_window_active, floor_past_not_after, observe_host_time_from_env,
-    sealed_time_enabled_from_env, sealed_time_path_from_env, SealedTimeError, SealedTimeStore,
-};
 pub use launch_digest::{
     compose_launch_digest, launch_digest_from_snp_quote, measurement_from_snp_report,
     snp_report_from_quote,
@@ -69,6 +65,10 @@ pub use seal::{
     seal_tls_private_key_amd_sp, unseal_tls_private_key, unseal_tls_private_key_amd_sp,
     AmdSpSealMeta, SealedTlsKeyBlob, AMD_SP_GFS_GUEST_POLICY_MEASUREMENT, SEAL_AAD, SEAL_AAD_V3,
     SEAL_VERSION, SEAL_VERSION_SGX_EGETKEY, SEAL_VERSION_SNP_AMD_SP,
+};
+pub use sealed_time::{
+    epoch_window_active, floor_past_not_after, observe_host_time_from_env,
+    sealed_time_enabled_from_env, sealed_time_path_from_env, SealedTimeError, SealedTimeStore,
 };
 
 use serde::{Deserialize, Serialize};

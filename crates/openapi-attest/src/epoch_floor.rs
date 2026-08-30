@@ -40,7 +40,11 @@ pub fn read_epoch_floor_at(path: &Path) -> Result<Option<u64>> {
     match fs::read_to_string(path) {
         Ok(s) => {
             let n = s.trim().parse::<u64>().map_err(|_| {
-                AttestError::Policy(format!("corrupt epoch floor {}: {}", path.display(), s.trim()))
+                AttestError::Policy(format!(
+                    "corrupt epoch floor {}: {}",
+                    path.display(),
+                    s.trim()
+                ))
             })?;
             Ok(Some(n))
         }
@@ -77,7 +81,9 @@ pub fn assert_epoch_monotonic(kind: &str, epoch: u64) -> Result<()> {
 
 pub fn assert_epoch_monotonic_at(kind: &str, epoch: u64, path: &Path) -> Result<()> {
     if epoch < 1 {
-        return Err(AttestError::Policy(format!("{kind} epoch {epoch} is invalid")));
+        return Err(AttestError::Policy(format!(
+            "{kind} epoch {epoch} is invalid"
+        )));
     }
     if let Some(floor) = read_epoch_floor_at(path)? {
         if epoch < floor {

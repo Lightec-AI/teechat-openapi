@@ -33,9 +33,7 @@ use crate::epoch_evidence::{
     verify_epoch_evidence, EpochEvidenceError, EpochEvidenceSubject, QuoteEpochClaims,
 };
 use crate::launch_digest::launch_digest_from_snp_quote;
-use crate::sealed_time::{
-    epoch_window_active, sealed_time_enabled_from_env, SealedTimeStore,
-};
+use crate::sealed_time::{epoch_window_active, sealed_time_enabled_from_env, SealedTimeStore};
 
 /// What convinced the edge to encrypt to this epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,10 +115,7 @@ fn check_window(
         parse_rfc3339_ms(trust.not_after).map_err(|_| RecipientError::InvalidTimestamp)?;
     // RB-49.3: when sealed time is on, a floor past not_after cannot be rescued by skew.
     let sealed_floor = if sealed_time_enabled_from_env() {
-        SealedTimeStore::from_env()
-            .read_floor_ms()
-            .ok()
-            .flatten()
+        SealedTimeStore::from_env().read_floor_ms().ok().flatten()
     } else {
         None
     };

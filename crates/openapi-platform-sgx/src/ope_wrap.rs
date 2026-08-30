@@ -140,7 +140,8 @@ fn parse_signing_seed_hex(hex: &str) -> Result<[u8; 32], OpeWrapError> {
             "OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX must be 64 hex characters".into(),
         ));
     }
-    let bytes = hex::decode(&raw).map_err(|e| OpeWrapError::Ope(format!("signing seed hex: {e}")))?;
+    let bytes =
+        hex::decode(&raw).map_err(|e| OpeWrapError::Ope(format!("signing seed hex: {e}")))?;
     let seed: [u8; 32] = bytes.try_into().map_err(|_| {
         OpeWrapError::Ope("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX must decode to 32 bytes".into())
     })?;
@@ -180,8 +181,7 @@ fn envelope_signing_seed() -> Result<[u8; 32], OpeWrapError> {
     let seed = parse_signing_seed_hex(raw)?;
     if prod && seed == DEV_VECTOR_001_SEED {
         return Err(OpeWrapError::Ope(
-            "OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX must not be DEV_VECTOR_001 in prod"
-                .into(),
+            "OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX must not be DEV_VECTOR_001 in prod".into(),
         ));
     }
     Ok(seed)
@@ -252,11 +252,15 @@ mod tests {
         );
         assert_ne!(ts, unix_bogus);
         assert!(
-            !ts.chars().all(|c| c.is_ascii_digit() || c == '.' || c == 'Z'),
+            !ts.chars()
+                .all(|c| c.is_ascii_digit() || c == '.' || c == 'Z'),
             "ts must not be unix-secs.000Z, got {ts}"
         );
         let skew = (chrono::Utc::now() - parsed).num_seconds().abs();
-        assert!(skew < 5, "ts should be wall-clock now, skew={skew}s ts={ts}");
+        assert!(
+            skew < 5,
+            "ts should be wall-clock now, skew={skew}s ts={ts}"
+        );
     }
 
     #[test]
@@ -347,7 +351,10 @@ mod tests {
             e2e.get("ephemeral_epoch").and_then(|v| v.as_str()),
             Some("epoch-test")
         );
-        assert_eq!(enc.envelope.engine_id.as_deref(), Some(identity.engine_id.as_str()));
+        assert_eq!(
+            enc.envelope.engine_id.as_deref(),
+            Some(identity.engine_id.as_str())
+        );
         assert!(
             enc.envelope.sig.as_deref().is_some_and(|s| !s.is_empty()),
             "edge envelope must be signed (RB-47)"
@@ -385,10 +392,7 @@ mod tests {
     fn prod_rejects_vector001_seed() {
         let _g = ENV_LOCK.lock().unwrap();
         std::env::set_var("OPENAPI_PROFILE", "prod");
-        std::env::set_var(
-            "OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX",
-            "01".repeat(32),
-        );
+        std::env::set_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX", "01".repeat(32));
         let err = envelope_signing_seed().unwrap_err().to_string();
         std::env::remove_var("OPENAPI_PROFILE");
         std::env::remove_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX");
@@ -400,10 +404,7 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap();
         std::env::remove_var("OPENAPI_PROFILE");
         let seed = [2u8; 32];
-        std::env::set_var(
-            "OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX",
-            hex::encode(seed),
-        );
+        std::env::set_var("OPENAPI_OPE_ENVELOPE_SIGNING_SEED_HEX", hex::encode(seed));
         let (_engine_secret, identity) = mock_engine_from_seed(&DEV_ENGINE_SEED);
         let trust = PreassignTrust {
             engine_id: identity.engine_id.clone(),
@@ -430,12 +431,8 @@ mod tests {
             opaque_e2e: true,
             ..ope_envelope::VerifyOptions::with_defaults()
         };
-        ope_envelope::verify_envelope(
-            &enc.envelope,
-            &mock_keypair_from_seed(&seed).public,
-            &opts,
-        )
-        .expect("custom seed must verify");
+        ope_envelope::verify_envelope(&enc.envelope, &mock_keypair_from_seed(&seed).public, &opts)
+            .expect("custom seed must verify");
         assert!(
             ope_envelope::verify_envelope(
                 &enc.envelope,
