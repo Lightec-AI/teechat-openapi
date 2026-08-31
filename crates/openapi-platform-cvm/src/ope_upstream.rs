@@ -167,6 +167,7 @@ impl OpeDispatchUpstream {
         // uses the relayed *connect* quote, which was minted with nonce=None —
         // passing the challenge nonce here recomputes a different preimage and
         // rejects every live epoch (REPORT_DATA mismatch / client timeouts).
+        let mut challenge_vcek_der = None;
         if require_engine_challenge_from_env() {
             let mut nonce = [0u8; 32];
             rand::thread_rng().fill_bytes(&mut nonce);
@@ -181,6 +182,9 @@ impl OpeDispatchUpstream {
                 .map_err(Self::map_gw)?;
             verify_engine_challenge_response(&nonce, &chal)
                 .map_err(|e| ApiError::Forbidden(format!("engine challenge failed: {e}")))?;
+            challenge_vcek_der = chal.cpu.vcek_der().map_err(|e| {
+                ApiError::Forbidden(format!("engine challenge VCEK decode failed: {e}"))
+            })?;
         }
         let accepted = accept_engine_recipient(
             &self.recipient_policy,
@@ -191,7 +195,7 @@ impl OpeDispatchUpstream {
         )
         .map_err(|e| ApiError::Forbidden(format!("untrusted OPE engine recipient: {e}")))?;
         if let Some(report_b64) = accepted.report_b64.as_deref() {
-            self.verify_report_chain(report_b64)?;
+            self.verify_report_chain(report_b64, challenge_vcek_der.as_deref())?;
         }
         if accepted.via == RecipientTrustVia::IdentitySignature {
             warn!(
@@ -205,10 +209,14 @@ impl OpeDispatchUpstream {
 
     /// AMD chain verification over the report the epoch keys were found in.
     ///
-    /// Optional because it needs egress to the AMD KDS, which the SGX lab and
-    /// some closed deployments do not have. When it is on, an unverifiable
-    /// report is a refusal, not a warning.
-    fn verify_report_chain(&self, report_b64: &str) -> Result<(), ApiError> {
+    /// Prefer the VCEK carried by the nonce-bound engine challenge. It is
+    /// untrusted until the built-in AMD chain verifies this exact report.
+    /// KDS remains a compatibility fallback for older challenge responses.
+    fn verify_report_chain(
+        &self,
+        report_b64: &str,
+        challenge_vcek_der: Option<&[u8]>,
+    ) -> Result<(), ApiError> {
         if !self.verify_engine_snp_chain {
             return Ok(());
         }
@@ -221,7 +229,13 @@ impl OpeDispatchUpstream {
         {
             return Ok(());
         }
-        openapi_attest::snp::verify_snp_report(report_b64, true).map_err(|e| {
+        let verified = match challenge_vcek_der {
+            Some(vcek_der) => {
+                openapi_attest::snp::verify_snp_report_with_collateral(report_b64, vcek_der, true)
+            }
+            None => openapi_attest::snp::verify_snp_report(report_b64, true),
+        };
+        verified.map_err(|e| {
             ApiError::Forbidden(format!("engine SNP report failed chain verification: {e}"))
         })?;
         self.verified_reports
@@ -1060,7 +1074,9 @@ mod trust_tests {
     #[test]
     fn chain_verification_is_skipped_when_disabled_and_cached_once_verified() {
         let upstream = upstream_with(strict_policy());
-        assert!(upstream.verify_report_chain("not-a-real-report").is_ok());
+        assert!(upstream
+            .verify_report_chain("not-a-real-report", Some(b"untrusted-vcek"))
+            .is_ok());
     }
 
     #[test]
@@ -1072,7 +1088,7 @@ mod trust_tests {
         config.verify_engine_snp_chain = true;
         let upstream = OpeDispatchUpstream::try_new(config).unwrap();
         assert!(matches!(
-            upstream.verify_report_chain(&STANDARD.encode([0u8; 1184])),
+            upstream.verify_report_chain(&STANDARD.encode([0u8; 1184]), Some(b"invalid-vcek")),
             Err(ApiError::Forbidden(_))
         ));
     }

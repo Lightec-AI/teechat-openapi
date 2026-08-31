@@ -201,6 +201,25 @@ pub struct EngineChallengeWireEpoch {
 #[derive(Debug, Clone, Deserialize)]
 pub struct EngineChallengeWireCpu {
     pub quote_b64: String,
+    /// Optional AMD collateral carried by the engine challenge. The VCEK is
+    /// untrusted input until it verifies the signed SNP report against the
+    /// built-in AMD root chain.
+    #[serde(default)]
+    pub endorsement: Option<EngineChallengeWireSnpEndorsement>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EngineChallengeWireSnpEndorsement {
+    pub vcek_der_b64: String,
+}
+
+impl EngineChallengeWireCpu {
+    pub fn vcek_der(&self) -> Result<Option<Vec<u8>>, EngineChallengeError> {
+        self.endorsement
+            .as_ref()
+            .map(|endorsement| decode_b64(&endorsement.vcek_der_b64))
+            .transpose()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -559,5 +578,25 @@ mod tests {
         .unwrap();
         let err = verify_engine_challenge_response(&nonce, &doc).unwrap_err();
         assert!(matches!(err, EngineChallengeError::ReportDataMismatch));
+    }
+
+    #[test]
+    fn cpu_wire_decodes_optional_embedded_vcek() {
+        let expected = [0xabu8; 48];
+        let cpu: EngineChallengeWireCpu = serde_json::from_value(serde_json::json!({
+            "quote_b64": "",
+            "endorsement": {
+                "vcek_der_b64": URL_SAFE_NO_PAD.encode(expected),
+            },
+        }))
+        .unwrap();
+        assert_eq!(
+            cpu.vcek_der().unwrap().as_deref(),
+            Some(expected.as_slice())
+        );
+
+        let without: EngineChallengeWireCpu =
+            serde_json::from_value(serde_json::json!({ "quote_b64": "" })).unwrap();
+        assert_eq!(without.vcek_der().unwrap(), None);
     }
 }
