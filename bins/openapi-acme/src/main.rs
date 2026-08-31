@@ -5,6 +5,7 @@
 //!
 //! Usage:
 //!   openapi-acme issue|renew --domain NAME [--webroot DIR] [--acme-root DIR] [--email ADDR] [--staging]
+//!   openapi-acme revoke --cert-path FILE --reason keycompromise --acme-root DIR --confirm-revoke [--staging]
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -13,9 +14,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use instant_acme::{
     Account, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier, LetsEncrypt,
-    NewAccount, NewOrder, OrderStatus, RetryPolicy,
+    NewAccount, NewOrder, OrderStatus, RetryPolicy, RevocationReason, RevocationRequest,
 };
+use rustls::pki_types::{pem::PemObject, CertificateDer};
 use tracing::{info, warn};
+
+const USAGE: &str = "usage:
+  openapi-acme issue|renew --domain NAME [--webroot DIR] [--acme-root DIR] [--email ADDR] [--staging]
+  openapi-acme revoke --cert-path FILE --reason keycompromise|superseded|cessationofoperation --acme-root DIR --confirm-revoke [--staging]";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,13 +38,9 @@ async fn main() -> Result<()> {
         .init();
 
     let mut args = std::env::args().skip(1);
-    let mode = args
-        .next()
-        .context("usage: openapi-acme issue|renew --domain NAME [options]")?;
+    let mode = args.next().context(USAGE)?;
     if matches!(mode.as_str(), "-h" | "--help" | "help") {
-        println!(
-            "usage: openapi-acme issue|renew --domain NAME [--webroot DIR] [--acme-root DIR] [--email ADDR] [--staging]"
-        );
+        println!("{USAGE}");
         return Ok(());
     }
 
@@ -53,6 +55,9 @@ async fn main() -> Result<()> {
     let mut staging = std::env::var("OPENAPI_ACME_STAGING")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    let mut cert_path: Option<PathBuf> = None;
+    let mut revocation_reason: Option<String> = None;
+    let mut confirm_revoke = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -64,25 +69,90 @@ async fn main() -> Result<()> {
                 acme_root = PathBuf::from(args.next().context("--acme-root needs a value")?);
             }
             "--email" => email = Some(args.next().context("--email needs a value")?),
+            "--cert-path" => {
+                cert_path = Some(PathBuf::from(
+                    args.next().context("--cert-path needs a value")?,
+                ));
+            }
+            "--reason" => {
+                revocation_reason = Some(args.next().context("--reason needs a value")?);
+            }
+            "--confirm-revoke" => confirm_revoke = true,
             "--staging" => staging = true,
             "-h" | "--help" => {
-                println!(
-                    "usage: openapi-acme issue|renew --domain NAME [--webroot DIR] [--acme-root DIR] [--email ADDR] [--staging]"
-                );
+                println!("{USAGE}");
                 return Ok(());
             }
             other => bail!("unknown arg: {other}"),
         }
     }
 
-    let domain = domain.context("missing --domain / OPENAPI_ACME_CERT_NAME")?;
     match mode.as_str() {
-        "issue" | "renew" => {}
-        other => bail!("unknown mode: {other} (want issue|renew)"),
+        "issue" | "renew" => {
+            let domain = domain.context("missing --domain / OPENAPI_ACME_CERT_NAME")?;
+            provision(&domain, &webroot, &acme_root, email.as_deref(), staging).await?;
+            info!(%domain, mode = %mode, "ACME certificate written; run openapi-tls-ceremony seal-from-acme next");
+        }
+        "revoke" => {
+            if !confirm_revoke {
+                bail!("revoke requires --confirm-revoke");
+            }
+            let cert_path = cert_path.context("revoke requires --cert-path")?;
+            let reason_name = revocation_reason.context("revoke requires --reason")?;
+            let reason = parse_revocation_reason(&reason_name)?;
+            revoke_certificate(&cert_path, &acme_root, staging, reason).await?;
+            println!(
+                "CHECK=acme_certificate_revoked cert_path={} reason={reason_name}",
+                cert_path.display()
+            );
+        }
+        other => bail!("unknown mode: {other}\n{USAGE}"),
     }
+    Ok(())
+}
 
-    provision(&domain, &webroot, &acme_root, email.as_deref(), staging).await?;
-    info!(%domain, mode = %mode, "ACME certificate written; run openapi-tls-ceremony seal-from-acme next");
+fn parse_revocation_reason(raw: &str) -> Result<RevocationReason> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "keycompromise" => Ok(RevocationReason::KeyCompromise),
+        "superseded" => Ok(RevocationReason::Superseded),
+        "cessationofoperation" => Ok(RevocationReason::CessationOfOperation),
+        other => bail!(
+            "unsupported revocation reason `{other}` (want keycompromise|superseded|cessationofoperation)"
+        ),
+    }
+}
+
+async fn revoke_certificate(
+    cert_path: &Path,
+    acme_root: &Path,
+    staging: bool,
+    reason: RevocationReason,
+) -> Result<()> {
+    let account_path = acme_root.join(if staging {
+        "account.staging.json"
+    } else {
+        "account.json"
+    });
+    let raw = fs::read_to_string(&account_path)
+        .with_context(|| format!("read existing ACME account {}", account_path.display()))?;
+    let credentials: AccountCredentials =
+        serde_json::from_str(&raw).context("parse ACME account credentials")?;
+    let account = Account::builder()?
+        .from_credentials(credentials)
+        .await
+        .context("restore existing ACME account for revocation")?;
+
+    let pem =
+        fs::read(cert_path).with_context(|| format!("read certificate {}", cert_path.display()))?;
+    let certificate = CertificateDer::from_pem_slice(&pem)
+        .with_context(|| format!("parse leaf certificate {}", cert_path.display()))?;
+    account
+        .revoke(&RevocationRequest {
+            certificate: &certificate,
+            reason: Some(reason),
+        })
+        .await
+        .context("ACME revoke")?;
     Ok(())
 }
 
@@ -295,4 +365,22 @@ fn chrono_like_stamp() -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     format!("-{secs}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn revocation_reason_is_explicit_and_restricted() {
+        assert!(matches!(
+            parse_revocation_reason("keycompromise").unwrap(),
+            RevocationReason::KeyCompromise
+        ));
+        assert!(matches!(
+            parse_revocation_reason("superseded").unwrap(),
+            RevocationReason::Superseded
+        ));
+        assert!(parse_revocation_reason("unspecified").is_err());
+    }
 }
