@@ -1,4 +1,3 @@
-use openapi_core::usage::UsageReport;
 use openapi_core::ApiError;
 
 /// Public challenge is unauthenticated; allow browser SPA / researchers to POST from any origin.
@@ -34,41 +33,24 @@ pub fn with_challenge_cors(mut response: Vec<u8>) -> Vec<u8> {
     response
 }
 
-pub fn build_json_response(status: u16, body: &[u8], usage: Option<&UsageReport>) -> Vec<u8> {
-    let mut headers = format!(
-        "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
+pub fn build_json_response(status: u16, body: &[u8]) -> Vec<u8> {
+    let headers = format!(
+        "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
-    if let Some(report) = usage {
-        headers.push_str(&format!(
-            "X-TeeChat-Usage-Report: {}\r\n",
-            serde_json::to_string(report).unwrap_or_default()
-        ));
-    }
-    headers.push_str("Connection: close\r\n\r\n");
     let mut out = headers.into_bytes();
     out.extend_from_slice(body);
     out
 }
 
-pub fn build_sse_response(body: &[u8], usage: &UsageReport) -> Vec<u8> {
-    let mut payload = body.to_vec();
-    if !payload.ends_with(b"\n\n") {
-        if payload.ends_with(b"\n") {
-            payload.push(b'\n');
-        } else {
-            payload.extend_from_slice(b"\n\n");
-        }
-    }
-    let trailer = format!("data: {}\n\n", serde_json::json!({"teechat_usage": usage}));
-    payload.extend_from_slice(trailer.as_bytes());
-
+/// Buffered SSE body (non-chunked). No client-visible TeeChat metering (METER-002).
+pub fn build_sse_buffered_response(body: &[u8]) -> Vec<u8> {
     let headers = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        payload.len()
+        body.len()
     );
     let mut out = headers.into_bytes();
-    out.extend_from_slice(&payload);
+    out.extend_from_slice(body);
     out
 }
 
@@ -101,10 +83,14 @@ pub fn build_error_response(err: ApiError) -> Vec<u8> {
     bytes
 }
 
+/// Regression guard: OpenAPI must not expose TeeChat billing artifacts to third-party clients.
+pub fn response_bytes_lack_client_metering(text: &str) -> bool {
+    !text.contains("teechat_usage") && !text.contains("X-TeeChat-Usage-Report:")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openapi_core::usage::UsageSigner;
 
     #[test]
     fn error_response_has_json_body() {
@@ -112,6 +98,25 @@ mod tests {
         let text = String::from_utf8(bytes).unwrap();
         assert!(text.starts_with("HTTP/1.1 401"));
         assert!(text.contains("invalid_api_key"));
+        assert!(response_bytes_lack_client_metering(&text));
+    }
+
+    #[test]
+    fn json_response_has_no_usage_header() {
+        let bytes = build_json_response(200, br#"{"id":"x"}"#);
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.starts_with("HTTP/1.1 200"));
+        assert!(text.contains("application/json"));
+        assert!(response_bytes_lack_client_metering(&text));
+    }
+
+    #[test]
+    fn sse_buffered_response_has_no_teechat_metering() {
+        let bytes = build_sse_buffered_response(b"data: {\"choices\":[]}\n\ndata: [DONE]\n\n");
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("text/event-stream"));
+        assert!(text.contains("[DONE]"));
+        assert!(response_bytes_lack_client_metering(&text));
     }
 
     #[test]
@@ -149,16 +154,6 @@ mod tests {
     }
 
     #[test]
-    fn sse_response_appends_usage_trailer() {
-        let signer = UsageSigner::from_seed([2u8; 32]);
-        let usage = signer.sign_report("k", "m", 1, 2, 3).unwrap();
-        let bytes = build_sse_response(b"data: {}\n\n", &usage);
-        let text = String::from_utf8(bytes).unwrap();
-        assert!(text.contains("text/event-stream"));
-        assert!(text.contains("teechat_usage"));
-    }
-
-    #[test]
     fn challenge_cors_preflight_is_204() {
         let text = String::from_utf8(build_challenge_cors_preflight()).unwrap();
         assert!(text.starts_with("HTTP/1.1 204"));
@@ -168,13 +163,21 @@ mod tests {
 
     #[test]
     fn with_challenge_cors_injects_headers() {
-        let raw = build_json_response(200, b"{}", None);
+        let raw = build_json_response(200, b"{}");
         let text = String::from_utf8(with_challenge_cors(raw)).unwrap();
         assert!(text.contains("Access-Control-Allow-Origin: *"));
         assert!(text.contains("\r\n\r\n{}"));
         // Must not glue last header onto Access-Control-
         assert!(text.contains("Connection: close\r\nAccess-Control-Allow-Origin"));
         assert!(!text.contains("closeAccess-Control"));
+    }
+
+    #[test]
+    fn client_metering_guard_detects_teechat_artifacts() {
+        let bad = "data: {\"teechat_usage\":{\"key_id\":\"k\"}}\n\n";
+        assert!(!response_bytes_lack_client_metering(bad));
+        let good = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n";
+        assert!(response_bytes_lack_client_metering(good));
     }
 
     #[test]

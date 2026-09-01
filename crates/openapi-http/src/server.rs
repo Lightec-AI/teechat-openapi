@@ -10,12 +10,11 @@ use thiserror::Error;
 
 use crate::request::{ParseError, ParsedRequest};
 use crate::response::{
-    build_challenge_cors_preflight, build_error_response, build_json_response, build_sse_response,
-    is_attestation_challenge_path, with_challenge_cors,
+    build_challenge_cors_preflight, build_error_response, build_json_response,
+    build_sse_buffered_response, is_attestation_challenge_path, with_challenge_cors,
 };
-use openapi_core::SseUsageAccumulator;
 
-use crate::streaming::{write_sse_stream_headers, write_sse_usage_trailer, ChunkedWriter};
+use crate::streaming::{write_sse_stream_end, write_sse_stream_headers, ChunkedWriter};
 
 #[derive(Debug, Error)]
 pub enum ServerError {
@@ -232,19 +231,11 @@ where
     ) {
         Ok(AppResponse::Json(body)) => {
             let bytes = serde_json::to_vec(&body).unwrap_or_default();
-            out.write_all(&maybe_cors(build_json_response(200, &bytes, None)))
+            out.write_all(&maybe_cors(build_json_response(200, &bytes)))
                 .map_err(ServerError::Io)?;
         }
-        Ok(AppResponse::JsonWithUsage { body, usage }) => {
-            let bytes = serde_json::to_vec(&body).unwrap_or_default();
-            out.write_all(&maybe_cors(build_json_response(200, &bytes, Some(&usage))))
-                .map_err(ServerError::Io)?;
-        }
-        Ok(AppResponse::SseStream {
-            upstream_body,
-            usage,
-        }) => {
-            out.write_all(&build_sse_response(&upstream_body, &usage))
+        Ok(AppResponse::SseBuffered { upstream_body }) => {
+            out.write_all(&build_sse_buffered_response(&upstream_body))
                 .map_err(ServerError::Io)?;
         }
         Ok(AppResponse::SsePassthrough {
@@ -253,25 +244,15 @@ where
             body,
             key_id,
             key_set,
-            model,
-            now_ms,
         }) => {
-            // METER-001: sign after accumulating upstream SSE usage (not 0/0).
             write_sse_stream_headers(out).map_err(|e| ServerError::Other(e.to_string()))?;
             out.flush().map_err(ServerError::Io)?;
             let mut chunked = ChunkedWriter::new(out);
-            let mut acc = SseUsageAccumulator::new(&mut chunked);
             let ctx = openapi_core::UpstreamRequestContext::from_auth(&key_id, &key_set);
-            app.execute_sse_passthrough_ctx(method, &path, &body, &ctx, &mut acc)
+            app.execute_sse_passthrough_ctx(method, &path, &body, &ctx, &mut chunked)
                 .map_err(|e| ServerError::Other(e.to_string()))?;
-            let (prompt_tokens, completion_tokens) = acc.token_counts();
-            let usage = app
-                .sign_stream_usage(&key_id, &model, prompt_tokens, completion_tokens, now_ms)
-                .map_err(|e| ServerError::Other(e.to_string()))?;
-            let chunked = acc.into_inner();
             chunked.flush().map_err(ServerError::Io)?;
-            write_sse_usage_trailer(chunked.inner, &usage)
-                .map_err(|e| ServerError::Other(e.to_string()))?;
+            write_sse_stream_end(chunked.inner).map_err(|e| ServerError::Other(e.to_string()))?;
         }
         Err(err) => {
             out.write_all(&maybe_cors(build_error_response(err)))
@@ -284,6 +265,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::response::response_bytes_lack_client_metering;
     use ed25519_dalek::SigningKey;
     use openapi_core::auth::Authenticator;
     use openapi_core::catalog::{hash_api_key, sign_test_catalog, KeyCatalog, KeyRecord};
@@ -398,7 +380,7 @@ mod tests {
                 .map_err(|e| ApiError::Upstream(e.to_string()))?;
             out.write_all(b"\"}\n\n")
                 .map_err(|e| ApiError::Upstream(e.to_string()))?;
-            // Final chunk includes usage — METER-001 accumulates before signing.
+            // Upstream may include OpenAI `usage` in SSE — passthrough unchanged; edge does not append TeeChat metering.
             out.write_all(
                 br#"data: {"usage":{"prompt_tokens":12,"completion_tokens":34}}
 
@@ -469,11 +451,38 @@ mod tests {
         assert!(text.contains("💡"));
         assert!(!text.contains('\u{FFFD}'));
         assert!(text.contains("[DONE]"));
-        assert!(text.contains("teechat_usage"));
-        assert!(
-            text.contains("\"prompt_tokens\":12") && text.contains("\"completion_tokens\":34"),
-            "METER-001: trailer must reflect accumulated SSE usage, got: {text}"
+        assert!(response_bytes_lack_client_metering(&text));
+        // Upstream OpenAI usage may passthrough; TeeChat edge must not append signed metering.
+        assert!(text.contains("\"prompt_tokens\":12") && text.contains("\"completion_tokens\":34"));
+    }
+
+    #[test]
+    fn integration_non_stream_has_no_teechat_usage_header() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = test_app();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                let _ = handle_connection(stream, app);
+            }
+        });
+
+        let body = r#"{"model":"m","messages":[{"role":"user","content":"hi"}]}"#;
+        let req = format!(
+            "POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer sk-teechat-http\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
         );
+
+        let mut stream = std::net::TcpStream::connect(addr).unwrap();
+        stream.write_all(req.as_bytes()).unwrap();
+        stream.flush().unwrap();
+
+        let mut full = Vec::new();
+        stream.read_to_end(&mut full).unwrap();
+        let text = String::from_utf8_lossy(&full);
+        assert!(text.contains("200"));
+        assert!(response_bytes_lack_client_metering(&text));
     }
 
     #[test]
