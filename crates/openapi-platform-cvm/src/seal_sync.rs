@@ -14,9 +14,10 @@ use std::sync::Arc;
 use std::thread;
 
 use attested_mtls_seal_sync::{
-    accept_one_with_gate, server_tls_config, sync_from_active_tcp_v3, AuditSink, LocalSealer,
-    MockAttestor, PeerAttestor, PeerChallengeGate, SealSyncServerConfig, ServingIdentity,
-    StderrAudit, SyncOutcome, V3NonceStore,
+    accept_one_with_gate, allow_legacy_v3_import_from_env, server_tls_config,
+    sync_from_active_tcp_v3_with_options, AuditSink, LocalSealer, MockAttestor, PeerAttestor,
+    PeerChallengeGate, SealSyncServerConfig, ServingIdentity, StderrAudit, SyncOutcome,
+    V3NonceStore, V3SyncOptions,
 };
 use base64::Engine as _;
 use openapi_attest::golden::GoldenLoadOptions;
@@ -42,6 +43,8 @@ pub struct SealSyncConfig {
     pub mock_psk: Option<String>,
     /// This guest's `/v1/attestation/challenge` base URL (split-trust).
     pub challenge_base_url: Option<String>,
+    /// One-shot import from a pre-mutual-TLS (`4d403ff`) exporter.
+    pub allow_legacy_v3_import: bool,
 }
 
 impl SealSyncConfig {
@@ -70,6 +73,7 @@ impl SealSyncConfig {
             challenge_base_url: std::env::var("OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            allow_legacy_v3_import: allow_legacy_v3_import_from_env(),
         }
     }
 
@@ -458,8 +462,27 @@ pub fn run_seal_sync_client(
 ) -> attested_mtls_seal_sync::Result<SyncOutcome> {
     let audit = StderrAudit;
     info!(%peer, local_spki = %local.spki_sha256, "seal-sync staging → active");
-    let _ = (challenge_gate, local_challenge_base_url);
-    let outcome = sync_from_active_tcp_v3(peer, local, attestor, sealer, &audit)?;
+    let allow_legacy = allow_legacy_v3_import_from_env();
+    if allow_legacy {
+        info!("seal-sync allowing one-shot legacy v3 import (4d403ff transcript)");
+    }
+    let gate_ref = if allow_legacy {
+        None
+    } else {
+        challenge_gate.map(|g| g as &dyn PeerChallengeGate)
+    };
+    let outcome = sync_from_active_tcp_v3_with_options(
+        peer,
+        local,
+        attestor,
+        sealer,
+        &audit,
+        V3SyncOptions {
+            challenge_gate: gate_ref,
+            local_challenge_base_url,
+            allow_legacy_import: allow_legacy,
+        },
+    )?;
     match &outcome {
         SyncOutcome::AlreadyAligned { peer } => {
             info!(
@@ -598,6 +621,7 @@ mod tests {
             allowlist: vec![],
             mock_psk: Some("secret".into()),
             challenge_base_url: Some("https://127.0.0.1:8443".into()),
+            allow_legacy_v3_import: false,
         };
         let err = cfg.validate_for_profile().unwrap_err().to_string();
         assert!(err.contains("PSK") || err.contains("prod"), "got {err}");
@@ -614,6 +638,7 @@ mod tests {
             allowlist: vec![],
             mock_psk: None,
             challenge_base_url: Some("https://attacker.invalid".into()),
+            allow_legacy_v3_import: false,
         };
         let err = cfg.validate_for_profile().unwrap_err().to_string();
         assert!(err.contains("ALLOWLIST"), "got {err}");
@@ -630,6 +655,7 @@ mod tests {
             allowlist: vec!["aa".repeat(32)],
             mock_psk: None,
             challenge_base_url: Some("https://127.0.0.1:8443".into()),
+            allow_legacy_v3_import: false,
         };
         cfg.validate_for_profile().unwrap();
         std::env::remove_var("OPENAPI_PROFILE");
@@ -661,6 +687,7 @@ mod tests {
             allowlist: vec![],
             mock_psk: Some("ci-psk".into()),
             challenge_base_url: Some("https://127.0.0.1:8443".into()),
+            allow_legacy_v3_import: false,
         };
         assert!(!cfg.use_split_trust_gate());
     }
@@ -681,6 +708,20 @@ mod tests {
             Some("https://127.0.0.1:8443")
         );
         std::env::remove_var("OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL");
+    }
+
+    #[test]
+    fn from_env_reads_legacy_v3_import_flag() {
+        let _g = crate::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("OPENAPI_SEAL_SYNC_ALLOW_LEGACY_V3_IMPORT", "1");
+        std::env::remove_var("OPENAPI_SEAL_SYNC_LISTEN");
+        std::env::remove_var("OPENAPI_SEAL_SYNC_PEER");
+        std::env::remove_var("OPENAPI_SEAL_SYNC_PSK");
+        let cfg = SealSyncConfig::from_env();
+        assert!(cfg.allow_legacy_v3_import);
+        std::env::remove_var("OPENAPI_SEAL_SYNC_ALLOW_LEGACY_V3_IMPORT");
+        let cfg = SealSyncConfig::from_env();
+        assert!(!cfg.allow_legacy_v3_import);
     }
 
     #[test]

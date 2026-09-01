@@ -22,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.12.5"
+version = "0.12.8"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Lightec-AI/teechat-openapi"
@@ -32,10 +32,10 @@ rust-version = "1.75"
 aes-gcm = "0.10"
 anyhow = "1.0"
 # Public TCB — git only (never path into sibling vendor/).
-attested-mtls = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "4d403ff3a4776a9258a4b773e75c9aacb349d7cb" }
+attested-mtls = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "69d7281690bbf2629e26526bdd53cb9a7396a848" }
 # Features selected per crate: CVM/gateway `aws-lc`; SGX EDP `rustcrypto`.
-attested-mtls-seal-sync = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "4d403ff3a4776a9258a4b773e75c9aacb349d7cb", default-features = false }
-attested-mtls-snp-seal = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "4d403ff3a4776a9258a4b773e75c9aacb349d7cb" }
+attested-mtls-seal-sync = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "69d7281690bbf2629e26526bdd53cb9a7396a848", default-features = false }
+attested-mtls-snp-seal = { git = "https://github.com/Lightec-AI/teechat-attested-mtls.git", rev = "69d7281690bbf2629e26526bdd53cb9a7396a848" }
 base64 = "0.22"
 # Clock only — OPE envelope `ts` must be real RFC3339 (ope-envelope verify_timestamp).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

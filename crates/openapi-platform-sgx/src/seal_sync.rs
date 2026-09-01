@@ -12,9 +12,10 @@ use std::thread;
 
 use anyhow::Context;
 use attested_mtls_seal_sync::{
-    accept_one_with_gate, server_tls_config, sync_from_active_tcp_v3, AuditSink, LocalSealer,
+    accept_one_with_gate, allow_legacy_v3_import_from_env, server_tls_config,
+    sync_from_active_tcp_v3_with_options, AllowAllChallengeGate, AuditSink, LocalSealer,
     MockAttestor, PeerAttestor, PeerChallengeGate, SealSyncServerConfig, ServingIdentity,
-    StderrAudit, SyncOutcome, V3NonceStore,
+    StderrAudit, SyncOutcome, V3NonceStore, V3SyncOptions,
 };
 use base64::Engine as _;
 use openapi_platform::{load_edge_profile, SealedTlsKeyBlob, Sealer, REPORT_DATA_LEN};
@@ -37,6 +38,7 @@ pub struct SealSyncConfig {
     pub allowlist: Vec<String>,
     pub mock_psk: Option<String>,
     pub challenge_base_url: Option<String>,
+    pub allow_legacy_v3_import: bool,
 }
 
 impl SealSyncConfig {
@@ -64,6 +66,7 @@ impl SealSyncConfig {
             challenge_base_url: std::env::var("OPENAPI_SEAL_SYNC_CHALLENGE_BASE_URL")
                 .ok()
                 .filter(|s| !s.is_empty()),
+            allow_legacy_v3_import: allow_legacy_v3_import_from_env(),
         }
     }
 
@@ -442,10 +445,27 @@ pub fn run_seal_sync_client(
     local: &ServingIdentity,
     attestor: &EdgeSealSyncAttestor,
     sealer: &SgxLocalSealer,
+    challenge_gate: Option<&dyn PeerChallengeGate>,
+    local_challenge_base_url: Option<&str>,
 ) -> attested_mtls_seal_sync::Result<SyncOutcome> {
     let audit = StderrAudit;
     info!(%peer, local_spki = %local.spki_sha256, "seal-sync staging → active");
-    let outcome = sync_from_active_tcp_v3(peer, local, attestor, sealer, &audit)?;
+    let allow_legacy = allow_legacy_v3_import_from_env();
+    if allow_legacy {
+        info!("seal-sync allowing one-shot legacy v3 import (4d403ff transcript)");
+    }
+    let outcome = sync_from_active_tcp_v3_with_options(
+        peer,
+        local,
+        attestor,
+        sealer,
+        &audit,
+        V3SyncOptions {
+            challenge_gate: if allow_legacy { None } else { challenge_gate },
+            local_challenge_base_url,
+            allow_legacy_import: allow_legacy,
+        },
+    )?;
     match &outcome {
         SyncOutcome::AlreadyAligned { peer } => {
             info!(peer_spki = %peer.spki_sha256, "seal-sync already_aligned");
@@ -503,8 +523,21 @@ pub fn maybe_start_seal_sync(
 
     if let Some(peer) = &cfg.peer {
         let local_sealer = SgxLocalSealer::new(sealer.clone(), helper.clone(), seal_root);
-        run_seal_sync_client(peer, &identity, &attestor, &local_sealer)
-            .context("seal-sync import from peer")?;
+        let allow = AllowAllChallengeGate;
+        let gate = if cfg.use_split_trust_gate() {
+            Some(&allow as &dyn PeerChallengeGate)
+        } else {
+            None
+        };
+        run_seal_sync_client(
+            peer,
+            &identity,
+            &attestor,
+            &local_sealer,
+            gate,
+            challenge_url.as_deref(),
+        )
+        .context("seal-sync import from peer")?;
         let (key, cert) = reload_after_import(&helper, &sealer, seal_root.as_ref())?;
         unsealed_key_pem = Some(key);
         cert_pem = Some(cert);
@@ -556,6 +589,7 @@ mod tests {
             allowlist: vec![],
             mock_psk: Some("secret".into()),
             challenge_base_url: None,
+            allow_legacy_v3_import: false,
         };
         let err = cfg.validate_for_profile().unwrap_err().to_string();
         assert!(err.contains("PSK") || err.contains("prod"), "got {err}");
@@ -572,6 +606,7 @@ mod tests {
             allowlist: vec![],
             mock_psk: None,
             challenge_base_url: None,
+            allow_legacy_v3_import: false,
         };
         let err = cfg.validate_for_profile().unwrap_err().to_string();
         assert!(err.contains("ALLOWLIST"), "got {err}");
