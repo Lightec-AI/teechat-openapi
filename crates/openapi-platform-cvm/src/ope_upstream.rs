@@ -436,23 +436,12 @@ impl UpstreamForwarder for OpeDispatchUpstream {
             .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
-        let usage_hdr = headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("x-ope-usage-report"))
-            .map(|(_, v)| v.clone());
 
         let written = bridge_ope_to_openai_sse(
             &enc,
             &mut reader,
             &ct,
-            usage_hdr.as_deref(),
             &model,
-            body,
-            Some(UsageMeterCtx {
-                engine_id: &pre.engine_id,
-                epoch_id: &pre.trust.epoch_id,
-                verify_key: &pre.trust.identity.ed25519_public,
-            }),
             out,
         )?;
         Ok(StreamForwardResult {
@@ -581,22 +570,16 @@ fn decrypt_ndjson_to_text(enc: &EncryptedOpeRequest, raw: &[u8]) -> Result<Strin
     Ok(text)
 }
 
-#[allow(clippy::too_many_arguments)] // Streaming bridge dependencies remain explicit.
 fn bridge_ope_to_openai_sse(
     enc: &EncryptedOpeRequest,
     reader: &mut dyn Read,
     content_type: &str,
-    usage_hdr: Option<&str>,
     model: &str,
-    request_body: &[u8],
-    meter: Option<UsageMeterCtx<'_>>,
     out: &mut dyn Write,
 ) -> Result<u64, ApiError> {
     let id = format!("chatcmpl-{}", uuid_like());
     let mut written = 0u64;
     let mut server_share = String::new();
-    let mut full = String::new();
-    let mut trailer_usage: Option<String> = None;
 
     if content_type.contains("ope+json-stream") || content_type.is_empty() {
         let mut buf_reader = BufReader::new(reader);
@@ -620,9 +603,6 @@ fn bridge_ope_to_openai_sse(
                 continue;
             }
             if v.get("type").and_then(|x| x.as_str()) == Some("trailer") {
-                if let Some(u) = v.get("usage_report").and_then(|x| x.as_str()) {
-                    trailer_usage = Some(u.to_string());
-                }
                 continue;
             }
             if let Some(share) = v.get("server_share").and_then(|x| x.as_str()) {
@@ -650,7 +630,6 @@ fn bridge_ope_to_openai_sse(
                 if piece.is_empty() {
                     continue;
                 }
-                full.push_str(&piece);
                 let chunk = openai_sse_delta(&id, model, &piece, None);
                 written += write_sse(out, &chunk)?;
             }
@@ -661,30 +640,12 @@ fn bridge_ope_to_openai_sse(
             .read_to_end(&mut raw)
             .map_err(|e| ApiError::Upstream(e.to_string()))?;
         let text = decrypt_ope_body_to_text(enc, &raw, content_type)?;
-        full = text.clone();
         if !text.is_empty() {
             written += write_sse(out, &openai_sse_delta(&id, model, &text, None))?;
         }
     }
 
-    let usage_src = trailer_usage.as_deref().or(usage_hdr);
-    let (prompt_tokens, completion_tokens) =
-        resolve_usage_or_estimate(usage_src, request_body, &full, meter)?;
     written += write_sse(out, &openai_sse_delta(&id, model, "", Some("stop")))?;
-    // Final usage-bearing chunk (OpenAI-compatible clients).
-    let usage_chunk = json!({
-        "id": id,
-        "object": "chat.completion.chunk",
-        "created": 1_700_000_000,
-        "model": model,
-        "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }],
-        "usage": {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens
-        }
-    });
-    written += write_sse(out, &usage_chunk.to_string())?;
     written += write_all_count(out, b"data: [DONE]\n\n")?;
     Ok(written)
 }
@@ -1091,5 +1052,19 @@ mod trust_tests {
             upstream.verify_report_chain(&STANDARD.encode([0u8; 1184]), Some(b"invalid-vcek")),
             Err(ApiError::Forbidden(_))
         ));
+    }
+
+    #[test]
+    fn ope_bridge_openai_sse_has_no_client_metering() {
+        let finish = openai_sse_delta("chatcmpl-test", "Qwen/Qwen3.6-35B-A3B", "", Some("stop"));
+        assert!(!finish.contains("teechat_usage"));
+        assert!(!finish.contains("\"usage\""));
+        let mut out = Vec::new();
+        write_sse(&mut out, &finish).unwrap();
+        write_all_count(&mut out, b"data: [DONE]\n\n").unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("[DONE]"));
+        assert!(!text.contains("teechat_usage"));
+        assert!(!text.contains("X-TeeChat-Usage-Report"));
     }
 }
