@@ -1,4 +1,5 @@
-//! Accumulate OpenAI-compatible SSE `usage` fields while streaming (METER-001).
+//! Helpers for parsing OpenAI-compatible SSE `usage` fields (internal / tests).
+//! Client responses must not append TeeChat-signed metering (METER-002 on gateway).
 
 use serde_json::Value;
 

@@ -14,7 +14,7 @@ use crate::quota::{enforce_max_context, enforce_token_quota};
 use crate::remote_auth::EdgeAuthenticator;
 use crate::routes::{classify, normalize_path, RouteAction};
 use crate::upstream::{body_wants_stream, model_from_body};
-use crate::usage::{UsageReport, UsageSigner};
+use crate::usage::UsageSigner;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -36,25 +36,18 @@ impl HttpMethod {
 #[derive(Debug, Clone)]
 pub enum AppResponse {
     Json(Value),
-    JsonWithUsage {
-        body: Value,
-        usage: UsageReport,
-    },
-    /// Buffered SSE (non-streaming upstream fallback / tests).
-    SseStream {
+    /// Buffered SSE (upstream fallback / tests). No client-visible metering.
+    SseBuffered {
         upstream_body: Vec<u8>,
-        usage: UsageReport,
     },
-    /// Incremental SSE passthrough: HTTP layer pipes upstream body to the client,
-    /// accumulates SSE `usage`, then signs the final report (METER-001).
+    /// Incremental SSE passthrough: HTTP layer pipes upstream body unchanged (METER-002
+    /// billing is engine-signed on the gateway hop; clients receive OpenAI-shaped SSE only).
     SsePassthrough {
         method: HttpMethod,
         path: String,
         body: Vec<u8>,
         key_id: String,
         key_set: String,
-        model: String,
-        now_ms: u64,
     },
 }
 
@@ -190,6 +183,7 @@ where
     authenticator: EdgeAuthenticator,
     upstream: U,
     platform: P,
+    #[allow(dead_code)] // env/bootstrap still provisions UsageSigner; METER-002 bills on gateway
     usage_signer: UsageSigner,
     rate_limiter: Arc<RateLimiter>,
     challenge_rate_limiter: Arc<RateLimiter>,
@@ -345,15 +339,12 @@ where
                 }
                 let ctx = UpstreamRequestContext::from_auth(&auth.key_id, &auth.policy.key_set);
                 if method == HttpMethod::Post && body_wants_stream(body) {
-                    let model = model_from_body(body);
                     return Ok(AppResponse::SsePassthrough {
                         method,
                         path: path.clone(),
                         body: body.to_vec(),
                         key_id: auth.key_id.clone(),
                         key_set: auth.policy.key_set.clone(),
-                        model,
-                        now_ms,
                     });
                 }
                 let upstream = self.upstream.forward_v1_ctx(
@@ -430,10 +421,9 @@ where
         auth: AuthContext,
         path: &str,
         body: &[u8],
-        now_ms: u64,
+        _now_ms: u64,
     ) -> Result<AppResponse, ApiError> {
         let stream = body_wants_stream(body);
-        let model = model_from_body(body);
         let ctx = UpstreamRequestContext::from_auth(&auth.key_id, &auth.policy.key_set);
 
         if stream {
@@ -443,8 +433,6 @@ where
                 body: body.to_vec(),
                 key_id: auth.key_id.clone(),
                 key_set: auth.policy.key_set.clone(),
-                model,
-                now_ms,
             });
         }
 
@@ -452,17 +440,7 @@ where
             .upstream
             .forward_v1_ctx(HttpMethod::Post, path, Some(body), &ctx)?;
 
-        let (prompt_tokens, completion_tokens) = extract_token_counts(&upstream, false);
-
-        let usage = self.usage_signer.sign_report(
-            &auth.key_id,
-            &model,
-            prompt_tokens,
-            completion_tokens,
-            now_ms,
-        )?;
-
-        inference_to_app_response(upstream, false, usage)
+        Ok(upstream_to_inference_response(upstream, false))
     }
 
     /// Pipe a prepared SSE passthrough request to the client writer.
@@ -493,19 +471,6 @@ where
     ) -> Result<StreamForwardResult, ApiError> {
         self.upstream
             .forward_v1_stream_ctx(method, path, Some(body), ctx, out)
-    }
-
-    /// Sign a usage report after SSE accumulation (METER-001).
-    pub fn sign_stream_usage(
-        &self,
-        key_id: &str,
-        model: &str,
-        prompt_tokens: u64,
-        completion_tokens: u64,
-        now_ms: u64,
-    ) -> Result<UsageReport, ApiError> {
-        self.usage_signer
-            .sign_report(key_id, model, prompt_tokens, completion_tokens, now_ms)
     }
 
     fn handle_attestation(
@@ -598,62 +563,23 @@ fn upstream_to_json_response(upstream: UpstreamResponse) -> AppResponse {
     }
 }
 
-fn inference_to_app_response(
-    upstream: UpstreamResponse,
-    stream: bool,
-    usage: UsageReport,
-) -> Result<AppResponse, ApiError> {
+fn upstream_to_inference_response(upstream: UpstreamResponse, stream: bool) -> AppResponse {
     match upstream {
-        UpstreamResponse::Json(body) if !stream => Ok(AppResponse::JsonWithUsage { body, usage }),
-        UpstreamResponse::Json(body) if stream => Ok(AppResponse::SseStream {
-            upstream_body: serde_json::to_vec(&body).unwrap(),
-            usage,
-        }),
-        UpstreamResponse::Raw {
-            bytes,
-            content_type: _,
-        } if stream => Ok(AppResponse::SseStream {
+        UpstreamResponse::Json(body) if stream => AppResponse::SseBuffered {
+            upstream_body: serde_json::to_vec(&body).unwrap_or_default(),
+        },
+        UpstreamResponse::Json(body) => AppResponse::Json(body),
+        UpstreamResponse::Raw { bytes, .. } if stream => AppResponse::SseBuffered {
             upstream_body: bytes,
-            usage,
-        }),
-        UpstreamResponse::Json(body) => Ok(AppResponse::JsonWithUsage { body, usage }),
-        UpstreamResponse::Raw { bytes, .. } => {
-            let body: Value = serde_json::from_slice(&bytes)
-                .map_err(|e| ApiError::Upstream(format!("invalid upstream json: {e}")))?;
-            Ok(AppResponse::JsonWithUsage { body, usage })
-        }
+        },
+        UpstreamResponse::Raw { bytes, .. } => match serde_json::from_slice::<Value>(&bytes) {
+            Ok(body) => AppResponse::Json(body),
+            Err(_) => AppResponse::Json(serde_json::json!({
+                "object": "binary",
+                "data": URL_SAFE_NO_PAD.encode(bytes),
+            })),
+        },
     }
-}
-
-fn extract_token_counts(upstream: &UpstreamResponse, stream: bool) -> (u64, u64) {
-    if stream {
-        return (0, 0);
-    }
-    match upstream {
-        UpstreamResponse::Json(v) => usage_from_json(v),
-        UpstreamResponse::Raw { bytes, .. } => serde_json::from_slice::<Value>(bytes)
-            .ok()
-            .map(|v| usage_from_json(&v))
-            .unwrap_or((0, 0)),
-    }
-}
-
-fn usage_from_json(v: &Value) -> (u64, u64) {
-    let usage = match v.get("usage") {
-        Some(u) => u,
-        None => return (0, 0),
-    };
-    let prompt = usage
-        .get("prompt_tokens")
-        .or_else(|| usage.get("input_tokens"))
-        .and_then(|t| t.as_u64())
-        .unwrap_or(0);
-    let completion = usage
-        .get("completion_tokens")
-        .or_else(|| usage.get("output_tokens"))
-        .and_then(|t| t.as_u64())
-        .unwrap_or(0);
-    (prompt, completion)
 }
 
 pub use openapi_platform::AttestationChallengeResponse as ChallengeResponse;
@@ -785,7 +711,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_completions_success_with_usage() {
+    fn chat_completions_success_passthrough_json() {
         let app = build_test_app(MockUpstream::default().with(
             "/v1/chat/completions",
             UpstreamResponse::Json(serde_json::json!({
@@ -805,17 +731,16 @@ mod tests {
             )
             .unwrap();
         match resp {
-            AppResponse::JsonWithUsage { body, usage } => {
+            AppResponse::Json(body) => {
                 assert_eq!(body["id"], "cmpl-1");
-                assert_eq!(usage.prompt_tokens, 3);
-                assert_eq!(usage.completion_tokens, 5);
+                assert_eq!(body["usage"]["prompt_tokens"], 3);
             }
-            _ => panic!("expected json with usage"),
+            _ => panic!("expected json passthrough without edge-signed usage"),
         }
     }
 
     #[test]
-    fn embeddings_forwarded_with_usage() {
+    fn embeddings_forwarded_without_edge_usage() {
         let app = build_test_app(MockUpstream::default().with(
             "/v1/embeddings",
             UpstreamResponse::Json(serde_json::json!({
@@ -828,8 +753,8 @@ mod tests {
             .handle(HttpMethod::Post, "/v1/embeddings", Some(AUTH), body, 1)
             .unwrap();
         match resp {
-            AppResponse::JsonWithUsage { usage, .. } => assert_eq!(usage.prompt_tokens, 7),
-            _ => panic!("expected usage"),
+            AppResponse::Json(body) => assert_eq!(body["usage"]["prompt_tokens"], 7),
+            _ => panic!("expected json passthrough"),
         }
     }
 
@@ -893,7 +818,7 @@ mod tests {
                 100,
             )
             .unwrap();
-        assert!(matches!(resp, AppResponse::JsonWithUsage { .. }));
+        assert!(matches!(resp, AppResponse::Json { .. }));
     }
 
     #[test]
@@ -1120,13 +1045,11 @@ mod tests {
                 path,
                 body,
                 key_id,
-                model,
                 ..
             } => {
                 assert_eq!(path, "/v1/chat/completions");
                 assert!(body_wants_stream(&body));
                 assert_eq!(key_id, "k-test");
-                assert_eq!(model, "m");
             }
             _ => panic!("expected sse passthrough"),
         }
@@ -1546,7 +1469,7 @@ mod tests {
                 1,
             )
             .unwrap();
-        assert!(matches!(resp, AppResponse::JsonWithUsage { .. }));
+        assert!(matches!(resp, AppResponse::Json { .. }));
     }
 
     #[test]
