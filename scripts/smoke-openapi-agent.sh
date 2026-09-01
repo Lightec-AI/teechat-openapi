@@ -63,15 +63,15 @@ fi
 [[ -n "$MODEL" ]] || fail "no model id in /v1/models"
 log "OK models (using model=$MODEL)"
 
-# 3) Non-stream completion + usage header
+# 3) Non-stream completion — no TeeChat metering headers on client responses
 HDR="$TMP/nostream.hdr"
 BODY="$TMP/nostream.body"
 curl -fsS -D "$HDR" -o "$BODY" "${AUTH[@]}" \
   -d "{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly: pong\"}],\"stream\":false,\"max_tokens\":16}" \
   "${BASE}/v1/chat/completions"
-grep -qi 'X-TeeChat-Usage-Report:' "$HDR" || fail "missing X-TeeChat-Usage-Report on non-stream"
+grep -qi 'X-TeeChat-Usage-Report:' "$HDR" && fail "non-stream must not expose X-TeeChat-Usage-Report (METER-002 gateway billing)"
 python3 -c "import json; json.load(open('$BODY'))" || fail "non-stream body not json"
-log "OK chat/completions (non-stream)"
+log "OK chat/completions (non-stream, no client metering)"
 
 if [[ "${OPENAPI_SMOKE_SKIP_STREAM:-}" == "1" ]]; then
   log "SKIP stream (-- OPENAPI_SMOKE_SKIP_STREAM=1)"
@@ -79,7 +79,7 @@ if [[ "${OPENAPI_SMOKE_SKIP_STREAM:-}" == "1" ]]; then
   exit 0
 fi
 
-# 4) Stream — chunked SSE, usage trailer, UTF-8 safe reassembly (emoji prompt)
+# 4) Stream — chunked SSE, no teechat_usage trailer (Cline-safe)
 STREAM_HDR="$TMP/stream.hdr"
 STREAM_BODY="$TMP/stream.body"
 curl -fsS -N -D "$STREAM_HDR" -o "$STREAM_BODY" "${AUTH[@]}" \
@@ -88,7 +88,8 @@ curl -fsS -N -D "$STREAM_HDR" -o "$STREAM_BODY" "${AUTH[@]}" \
 
 grep -qi 'Transfer-Encoding: chunked' "$STREAM_HDR" || fail "stream response not chunked"
 grep -q 'data:' "$STREAM_BODY" || fail "stream missing SSE data lines"
-grep -q 'teechat_usage' "$STREAM_BODY" || fail "stream missing teechat_usage trailer"
+grep -q 'teechat_usage' "$STREAM_BODY" && fail "stream must not include teechat_usage trailer"
+grep -qi 'X-TeeChat-Usage-Report:' "$STREAM_HDR" && fail "stream must not expose X-TeeChat-Usage-Report"
 
 python3 - "$STREAM_BODY" <<'PY' || fail "stream UTF-8 / SSE validation"
 import sys

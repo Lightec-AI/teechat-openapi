@@ -1,14 +1,14 @@
 # TeeChat OpenAPI Edge Proxy
 
-Apache-2.0 open-source edge proxy for [`openapi.<region>.teechat.ai`](https://teechat.ai) — OpenAI-compatible HTTP API with API-key auth, signed usage reports, and optional attestation challenge.
+Apache-2.0 open-source edge proxy for [`openapi.<region>.teechat.ai`](https://teechat.ai) — OpenAI-compatible HTTP API with API-key auth, optional attestation challenge, and gateway-backed metering (METER-002).
 
 ## Supported routes
 
 Drop-in OpenAI SDK compatibility: authenticate, rate-limit, forward to `OPENAPI_UPSTREAM_BASE_URL` (engine root, e.g. `http://127.0.0.1:8000`).
 
-| Tier | Routes | Usage report |
-|------|--------|--------------|
-| **Inference (metered)** | `POST /v1/chat/completions`, `/v1/completions`, `/v1/embeddings`, `/v1/responses`, `/v1/moderations` | Yes (`X-TeeChat-Usage-Report` or SSE trailer) |
+| Tier | Routes | Client-visible metering |
+|------|--------|-------------------------|
+| **Inference** | `POST /v1/chat/completions`, `/v1/completions`, `/v1/embeddings`, `/v1/responses`, `/v1/moderations` | **No** — billing is engine-signed on the gateway hop |
 | **Discovery** | `GET /v1/models` | No |
 | **Transparent proxy** | Other `GET`/`POST /v1/*` not listed below | No |
 | **Attestation** | `POST /v1/attestation/challenge` | No |
@@ -16,7 +16,7 @@ Drop-in OpenAI SDK compatibility: authenticate, rate-limit, forward to `OPENAPI_
 
 Ephemeral in-memory state (TTL, no disk) may be added later for batch/file compat. Process restart clears all ephemeral IDs.
 
-Non-streaming inference responses include `X-TeeChat-Usage-Report`. Streaming (`stream: true`) uses **chunked SSE passthrough** (upstream bytes forwarded incrementally) and appends a final signed usage event.
+Streaming (`stream: true`) uses **chunked SSE passthrough** (upstream bytes forwarded incrementally) or OPE→OpenAI bridge on the production path. Responses end with standard OpenAI `[DONE]` — **no** `teechat_usage` trailer or `X-TeeChat-Usage-Report` header (see [docs/streaming-contract.md](docs/streaming-contract.md)).
 
 `GET /v1/models` always proxies the upstream engine list; the edge does not substitute a static catalog when upstream is reachable.
 
