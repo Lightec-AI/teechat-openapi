@@ -491,6 +491,203 @@ impl UpstreamForwarder for OpeDispatchUpstream {
     }
 }
 
+/// Reassemble UTF-8 safely across OPE decrypt chunks (mirror Tauri `valid_up_to`).
+struct Utf8PlainAccumulator {
+    pending: Vec<u8>,
+}
+
+impl Utf8PlainAccumulator {
+    fn new() -> Self {
+        Self { pending: Vec::new() }
+    }
+
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>, ApiError> {
+        self.pending.extend_from_slice(bytes);
+        let mut out = Vec::new();
+        loop {
+            match std::str::from_utf8(&self.pending) {
+                Ok(text) => {
+                    if !text.is_empty() {
+                        out.push(text.to_string());
+                    }
+                    self.pending.clear();
+                    break;
+                }
+                Err(err) => {
+                    let valid = err.valid_up_to();
+                    if valid > 0 {
+                        let text = std::str::from_utf8(&self.pending[..valid])
+                            .map_err(|e| ApiError::Upstream(e.to_string()))?;
+                        out.push(text.to_string());
+                        self.pending.drain(..valid);
+                    }
+                    if err.error_len().is_some() {
+                        return Err(ApiError::Upstream("ope plaintext invalid utf8".into()));
+                    }
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    fn finish(self) -> Result<Option<String>, ApiError> {
+        if self.pending.is_empty() {
+            return Ok(None);
+        }
+        String::from_utf8(self.pending)
+            .map(Some)
+            .map_err(|_| ApiError::Upstream("ope plaintext invalid utf8 tail".into()))
+    }
+}
+
+fn completion_text_from_openai_delta_frame(frame: &Value) -> String {
+    let mut out = String::new();
+    let Some(choice) = frame
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+    else {
+        return out;
+    };
+    let delta = choice.get("delta").cloned().unwrap_or(json!({}));
+    for key in ["content", "reasoning", "reasoning_content"] {
+        if let Some(text) = delta.get(key).and_then(|v| v.as_str()) {
+            out.push_str(text);
+        }
+    }
+    out
+}
+
+fn append_plain_completion_text(text: &mut String, plain: &[u8]) -> Result<(), ApiError> {
+    if let Ok(piece) = std::str::from_utf8(plain) {
+        if let Ok(v) = serde_json::from_str::<Value>(piece) {
+            if v.get("type").and_then(|t| t.as_str()) == Some("openai_delta") {
+                text.push_str(&completion_text_from_openai_delta_frame(&v));
+                return Ok(());
+            }
+        }
+        text.push_str(piece);
+        return Ok(());
+    }
+    let valid = std::str::from_utf8(plain)
+        .err()
+        .map(|e| e.valid_up_to())
+        .unwrap_or(0);
+    if valid > 0 {
+        text.push_str(std::str::from_utf8(&plain[..valid]).map_err(|e| {
+            ApiError::Upstream(format!("ope plaintext invalid utf8: {e}"))
+        })?);
+    }
+    if valid < plain.len() {
+        return Err(ApiError::Upstream("ope plaintext invalid utf8".into()));
+    }
+    Ok(())
+}
+
+fn openai_sse_from_structured_delta(
+    id: &str,
+    model: &str,
+    delta: &Value,
+    finish: Option<&str>,
+) -> Option<String> {
+    let delta_empty = delta.as_object().is_none_or(|o| o.is_empty());
+    if delta_empty && finish.is_none() {
+        return None;
+    }
+    let mut out_delta = json!({});
+    if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
+        if !content.is_empty() {
+            out_delta["content"] = json!(content);
+        }
+    }
+    for key in ["reasoning_content", "reasoning"] {
+        if let Some(reasoning) = delta.get(key).and_then(|v| v.as_str()) {
+            if !reasoning.is_empty() {
+                out_delta["reasoning_content"] = json!(reasoning);
+                break;
+            }
+        }
+    }
+    if let Some(tool_calls) = delta.get("tool_calls") {
+        out_delta["tool_calls"] = tool_calls.clone();
+    }
+    Some(
+        json!({
+            "id": id,
+            "object": "chat.completion.chunk",
+            "created": 1_700_000_000,
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "delta": out_delta,
+                "finish_reason": finish
+            }]
+        })
+        .to_string(),
+    )
+}
+
+fn emit_openai_delta_frame(
+    frame: &Value,
+    id: &str,
+    model: &str,
+    out: &mut dyn Write,
+    written: &mut u64,
+    saw_finish: &mut bool,
+) -> Result<(), ApiError> {
+    let Some(choice) = frame
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+    else {
+        return Ok(());
+    };
+    let delta = choice.get("delta").cloned().unwrap_or(json!({}));
+    let finish = choice
+        .get("finish_reason")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("null"));
+    if finish.is_some() {
+        *saw_finish = true;
+    }
+    if let Some(chunk) = openai_sse_from_structured_delta(id, model, &delta, finish) {
+        *written += write_sse(out, &chunk)?;
+    }
+    Ok(())
+}
+
+fn process_decrypted_plaintext(
+    plain: &[u8],
+    acc: &mut Utf8PlainAccumulator,
+    id: &str,
+    model: &str,
+    out: &mut dyn Write,
+    written: &mut u64,
+    saw_finish: &mut bool,
+) -> Result<(), ApiError> {
+    if let Ok(text) = std::str::from_utf8(plain) {
+        if let Ok(v) = serde_json::from_str::<Value>(text) {
+            if v.get("type").and_then(|t| t.as_str()) == Some("openai_delta") {
+                return emit_openai_delta_frame(&v, id, model, out, written, saw_finish);
+            }
+        }
+    }
+    for piece in acc.push(plain)? {
+        if piece.is_empty() {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(&piece) {
+            if v.get("type").and_then(|t| t.as_str()) == Some("openai_delta") {
+                emit_openai_delta_frame(&v, id, model, out, written, saw_finish)?;
+                continue;
+            }
+        }
+        *written += write_sse(out, &openai_sse_delta(&id, model, &piece, None))?;
+    }
+    Ok(())
+}
+
 fn decrypt_ope_body_to_text(
     enc: &EncryptedOpeRequest,
     raw: &[u8],
@@ -515,7 +712,7 @@ fn decrypt_ope_body_to_text(
                 .ok_or_else(|| ApiError::Upstream("ope chunk not string".into()))?;
             let plain = decrypt_chunk(&enc.envelope, &enc.client_session, share, i as u32, ct)
                 .map_err(|e| ApiError::Upstream(e.to_string()))?;
-            text.push_str(&String::from_utf8_lossy(&plain));
+            append_plain_completion_text(&mut text, &plain)?;
         }
         return Ok(text);
     }
@@ -564,7 +761,7 @@ fn decrypt_ndjson_to_text(enc: &EncryptedOpeRequest, raw: &[u8]) -> Result<Strin
                 ct,
             )
             .map_err(|e| ApiError::Upstream(e.to_string()))?;
-            text.push_str(&String::from_utf8_lossy(&plain));
+            append_plain_completion_text(&mut text, &plain)?;
         }
     }
     Ok(text)
@@ -580,6 +777,8 @@ fn bridge_ope_to_openai_sse(
     let id = format!("chatcmpl-{}", uuid_like());
     let mut written = 0u64;
     let mut server_share = String::new();
+    let mut legacy_acc = Utf8PlainAccumulator::new();
+    let mut saw_finish = false;
 
     if content_type.contains("ope+json-stream") || content_type.is_empty() {
         let mut buf_reader = BufReader::new(reader);
@@ -626,12 +825,31 @@ fn bridge_ope_to_openai_sse(
                     ct,
                 )
                 .map_err(|e| ApiError::Upstream(e.to_string()))?;
-                let piece = String::from_utf8_lossy(&plain);
-                if piece.is_empty() {
+                if plain.is_empty() {
                     continue;
                 }
-                let chunk = openai_sse_delta(&id, model, &piece, None);
-                written += write_sse(out, &chunk)?;
+                process_decrypted_plaintext(
+                    &plain,
+                    &mut legacy_acc,
+                    &id,
+                    model,
+                    out,
+                    &mut written,
+                    &mut saw_finish,
+                )?;
+            }
+        }
+        if let Some(tail) = legacy_acc.finish()? {
+            if !tail.is_empty() {
+                if let Ok(v) = serde_json::from_str::<Value>(&tail) {
+                    if v.get("type").and_then(|t| t.as_str()) == Some("openai_delta") {
+                        emit_openai_delta_frame(&v, &id, model, out, &mut written, &mut saw_finish)?;
+                    } else {
+                        written += write_sse(out, &openai_sse_delta(&id, model, &tail, None))?;
+                    }
+                } else {
+                    written += write_sse(out, &openai_sse_delta(&id, model, &tail, None))?;
+                }
             }
         }
     } else {
@@ -645,7 +863,9 @@ fn bridge_ope_to_openai_sse(
         }
     }
 
-    written += write_sse(out, &openai_sse_delta(&id, model, "", Some("stop")))?;
+    if !saw_finish {
+        written += write_sse(out, &openai_sse_delta(&id, model, "", Some("stop")))?;
+    }
     written += write_all_count(out, b"data: [DONE]\n\n")?;
     Ok(written)
 }
@@ -1052,6 +1272,47 @@ mod trust_tests {
             upstream.verify_report_chain(&STANDARD.encode([0u8; 1184]), Some(b"invalid-vcek")),
             Err(ApiError::Forbidden(_))
         ));
+    }
+
+    #[test]
+    fn openai_delta_sse_maps_tool_calls_and_reasoning() {
+        let frame = json!({
+            "type": "openai_delta",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "reasoning": "plan",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": "get_weather", "arguments": "{}" }
+                    }]
+                },
+                "finish_reason": null
+            }]
+        });
+        let sse = openai_sse_from_structured_delta(
+            "chatcmpl-test",
+            "Qwen/Qwen3.6-35B-A3B",
+            &frame["choices"][0]["delta"],
+            None,
+        )
+        .unwrap();
+        assert!(sse.contains("\"reasoning_content\":\"plan\""));
+        assert!(sse.contains("\"tool_calls\""));
+        assert!(sse.contains("get_weather"));
+    }
+
+    #[test]
+    fn utf8_accumulator_splits_emoji_without_replacement() {
+        let mut acc = Utf8PlainAccumulator::new();
+        let bytes = "💡综合".as_bytes();
+        let (head, tail) = bytes.split_at(2);
+        let parts = acc.push(head).unwrap();
+        assert!(parts.is_empty());
+        let parts = acc.push(tail).unwrap();
+        assert_eq!(parts.join(""), "💡综合");
     }
 
     #[test]
