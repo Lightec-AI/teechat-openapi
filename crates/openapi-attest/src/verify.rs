@@ -24,8 +24,8 @@ use crate::golden::{
     find_golden_release, golden_os_pin_matches, load_golden_digests, GoldenLoadOptions,
 };
 use crate::manifest::{
-    fetch_signed_manifest, find_matching_releases, load_signed_manifest_files, VerifiedManifest,
-    DEFAULT_MANIFEST_URL,
+    fetch_signed_manifest, find_matching_releases, load_signed_manifest_files, EdgeRelease,
+    OpenApiEdgeManifest, VerifiedManifest, DEFAULT_MANIFEST_URL,
 };
 use crate::sgx;
 use crate::snp;
@@ -138,12 +138,14 @@ pub fn verify_openapi_edge(opts: VerifyOptions) -> Result<AttestationVerdict> {
     let outcome = challenge_edge(&opts.endpoint, &nonce)?;
 
     let mut trust_opts = opts.clone();
+    let mut auto_github_tag = false;
     if trust_opts.github_tag.is_none()
         && !trust_opts.prefer_teechat_manifest
         && trust_opts.manifest_path.is_none()
     {
         let bv = outcome.response.edge.build_version.trim();
         if !bv.is_empty() {
+            auto_github_tag = true;
             trust_opts.github_tag = Some(if bv.starts_with('v') {
                 bv.to_string()
             } else {
@@ -151,7 +153,7 @@ pub fn verify_openapi_edge(opts: VerifyOptions) -> Result<AttestationVerdict> {
             });
         }
     }
-    let trust = load_trust_bundle(&trust_opts)?;
+    let trust = load_trust_bundle_for_edge(&trust_opts, &outcome, allowlist_host, auto_github_tag)?;
 
     finish_verify(
         outcome,
@@ -165,6 +167,140 @@ pub fn verify_openapi_edge(opts: VerifyOptions) -> Result<AttestationVerdict> {
         &opts.ceremony,
         opts.require_ceremony_spki,
     )
+}
+
+/// Overlap allowlists often ship on a patch tag (e.g. live 0.12.9 rows on `v0.12.10`).
+fn bump_semver_patch_tag(tag: &str) -> Option<String> {
+    let t = tag.strip_prefix('v').unwrap_or(tag);
+    let mut parts: Vec<u64> = t.split('.').filter_map(|p| p.parse().ok()).collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    parts[2] = parts[2].saturating_add(1);
+    Some(format!("v{}.{}.{}", parts[0], parts[1], parts[2]))
+}
+
+fn edge_matches_manifest(
+    manifest: &OpenApiEdgeManifest,
+    outcome: &ChallengeOutcome,
+    hostname: &str,
+) -> bool {
+    find_matching_releases(
+        manifest,
+        hostname,
+        &outcome.response.edge.build_version,
+        &outcome.response.edge.code_hash,
+        &outcome.response.edge.measurement,
+        outcome.response.quote_format,
+        outcome.response.edge.policy_hash.as_deref(),
+    )
+    .is_ok()
+}
+
+fn load_trust_bundle_for_edge(
+    opts: &VerifyOptions,
+    outcome: &ChallengeOutcome,
+    hostname: &str,
+    auto_github_tag: bool,
+) -> Result<TrustBundle> {
+    if !auto_github_tag {
+        return load_trust_bundle(opts);
+    }
+    let Some(base_tag) = opts.github_tag.as_deref() else {
+        return load_trust_bundle(opts);
+    };
+
+    let mut tag = base_tag.to_string();
+    let mut last_bundle = None;
+    for _ in 0..6 {
+        let mut attempt = opts.clone();
+        attempt.github_tag = Some(tag.clone());
+        match load_trust_bundle(&attempt) {
+            Ok(bundle) => {
+                if edge_matches_manifest(&bundle.manifest.manifest, outcome, hostname) {
+                    return Ok(bundle);
+                }
+                last_bundle = Some(bundle);
+            }
+            Err(_) if last_bundle.is_some() => break,
+            Err(e) => {
+                if let Some(next) = bump_semver_patch_tag(&tag) {
+                    tag = next;
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+        if let Some(next) = bump_semver_patch_tag(&tag) {
+            tag = next;
+        } else {
+            break;
+        }
+    }
+
+    if let Some(bundle) = last_bundle {
+        return Ok(bundle);
+    }
+    load_trust_bundle(opts)
+}
+
+struct GoldenMatch<'a> {
+    release: &'a EdgeRelease,
+    golden_version: Option<String>,
+    trust_source: String,
+}
+
+/// GitHub golden pin may lag; retry signed www fallback when the default epoch lacks the row.
+fn match_golden_for_candidates<'a>(
+    candidates: &[&'a EdgeRelease],
+    measurement: &Measurement,
+    golden_opts: &GoldenLoadOptions,
+) -> Result<GoldenMatch<'a>> {
+    let mut sources = vec![golden_opts.clone()];
+    if !golden_opts.prefer_www {
+        sources.push(GoldenLoadOptions {
+            prefer_www: true,
+            ..golden_opts.clone()
+        });
+    }
+
+    for opts in sources {
+        let golden = load_golden_digests(&opts)?;
+        for rel in candidates {
+            match rel.golden_version.as_deref() {
+                Some(gv) => {
+                    let Ok(grelease) =
+                        find_golden_release(&golden.manifest, "openapi", "sev-snp-cvm", gv)
+                    else {
+                        continue;
+                    };
+                    if golden_os_pin_matches(grelease, measurement) {
+                        assert_epoch_monotonic(GOLDEN_EPOCH_KIND, golden.manifest.epoch)?;
+                        remember_epoch(GOLDEN_EPOCH_KIND, golden.manifest.epoch)?;
+                        return Ok(GoldenMatch {
+                            release: rel,
+                            golden_version: Some(gv.to_string()),
+                            trust_source: golden.trust_source.clone(),
+                        });
+                    }
+                }
+                None => {
+                    assert_epoch_monotonic(GOLDEN_EPOCH_KIND, golden.manifest.epoch)?;
+                    remember_epoch(GOLDEN_EPOCH_KIND, golden.manifest.epoch)?;
+                    return Ok(GoldenMatch {
+                        release: rel,
+                        golden_version: None,
+                        trust_source: golden.trust_source.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    Err(AttestError::Policy(
+        "challenge measurement does not match any golden digests row for this build/code_hash"
+            .into(),
+    ))
 }
 
 fn load_trust_bundle(opts: &VerifyOptions) -> Result<TrustBundle> {
@@ -278,46 +414,21 @@ fn finish_verify(
     // Candidates already matched composed (or Phase-1) LD on the app allowlist.
     // Golden digests pin the OS family via golden_version + image_digest — not by
     // equating OS baseline LD to live MEASUREMENT (hybrid app-verity).
-    let mut golden_trust_source = None;
-    let mut golden_version = None;
-    let mut matched = None;
-    if require_golden_digests {
-        let golden = load_golden_digests(golden_opts)?;
-        for rel in &candidates {
-            match rel.golden_version.as_deref() {
-                Some(gv) => {
-                    let Ok(grelease) =
-                        find_golden_release(&golden.manifest, "openapi", "sev-snp-cvm", gv)
-                    else {
-                        continue;
-                    };
-                    if golden_os_pin_matches(grelease, &response.edge.measurement) {
-                        assert_epoch_monotonic(GOLDEN_EPOCH_KIND, golden.manifest.epoch)?;
-                        remember_epoch(GOLDEN_EPOCH_KIND, golden.manifest.epoch)?;
-                        golden_version = Some(gv.to_string());
-                        golden_trust_source = Some(golden.trust_source.clone());
-                        matched = Some(*rel);
-                        break;
-                    }
-                }
-                None => {
-                    // Transitional: embedded measurement already matched in find_matching_releases.
-                    golden_version = None;
-                    matched = Some(*rel);
-                    break;
-                }
-            }
-        }
-        if matched.is_none() {
-            return Err(AttestError::Policy(
-                "challenge measurement does not match any golden digests row for this build/code_hash"
-                    .into(),
-            ));
-        }
+    let (golden_trust_source, golden_version, matched) = if require_golden_digests {
+        let gm = match_golden_for_candidates(&candidates, &response.edge.measurement, golden_opts)?;
+        (
+            Some(gm.trust_source),
+            gm.golden_version,
+            Some(gm.release),
+        )
     } else {
-        matched = candidates.first().copied();
-        golden_version = matched.and_then(|r| r.golden_version.clone());
-    }
+        let m = candidates.first().copied();
+        (
+            None,
+            m.and_then(|r| r.golden_version.clone()),
+            m,
+        )
+    };
     let matched_release = matched.ok_or_else(|| {
         AttestError::Policy(
             "edge measurement/build/code_hash/policy_hash not on allowlist for this hostname"
@@ -483,4 +594,21 @@ fn hostname_of(endpoint: &str) -> Result<String> {
 fn port_of(endpoint: &str) -> Result<u16> {
     let u = Url::parse(endpoint).map_err(|e| AttestError::Http(format!("bad url: {e}")))?;
     Ok(u.port_or_known_default().unwrap_or(443))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bump_semver_patch_tag;
+
+    #[test]
+    fn bump_semver_patch_tag_steps_patch() {
+        assert_eq!(
+            bump_semver_patch_tag("v0.12.9").as_deref(),
+            Some("v0.12.10")
+        );
+        assert_eq!(
+            bump_semver_patch_tag("v0.12.10").as_deref(),
+            Some("v0.12.11")
+        );
+    }
 }

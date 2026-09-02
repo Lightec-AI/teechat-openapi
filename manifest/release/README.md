@@ -23,3 +23,8 @@ Requirements:
 - After the GitHub Release is published, mirror the **same JSON bytes** to teechat.ai
   `.well-known` as an Ed25519-signed fallback (see TeeChat ops runbook
   `docs/ops/openapi-edge-attestation-manifest.md`).
+
+**Overlap / patch tags:** Live edge reports `build_version` `X.Y.Z` from the deployed
+binary. The matching allowlist row often ships on **`vX.Y.(Z+1)`** (allowlist-only
+patch tag) before VIP cutover finishes. `teechat-openapi-attest` steps patch tags when
+`vX.Y.Z` has no row; golden may use signed www until the GitHub epoch publishes.
