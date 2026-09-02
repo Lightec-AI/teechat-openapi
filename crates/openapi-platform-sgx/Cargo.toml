@@ -19,6 +19,10 @@ chrono = { workspace = true }
 hex = { workspace = true }
 hkdf = { workspace = true }
 rand = { workspace = true }
+rand_core = { version = "0.6", default-features = false, features = ["getrandom"] }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "pem"] }
+spki = "0.7"
+x509-cert = { version = "0.2", default-features = false, features = ["builder", "pem", "std"] }
 ed25519-dalek = { workspace = true }
 openapi-acme-sync = { path = "../openapi-acme-sync" }
 openapi-core = { path = "../openapi-core" }

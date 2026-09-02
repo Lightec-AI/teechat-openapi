@@ -112,6 +112,8 @@ Fortanix EDP: **no `std::fs`**, DNS hangs, TCP to IP works. The TLS private key 
 
 **Crypto on EDP:** `ring` ECDSA / key-exchange hits `#UD` (`exception_vector: 6`) inside Fortanix enclaves on sgx-lab (92 MiB EPC). Option A ACME JOSE/CSR uses pure Rust **`p256`/`ecdsa`**, and both the ACME HTTPS client and edge TLS server use **`rustls-rustcrypto`** via `builder_with_provider` (not `rustls`+ring).
 
+**Seal-sync v3 import (staging `OPENAPI_SEAL_SYNC_PEER`):** the importer mints an ephemeral admin-channel client cert on cold start. `attested-mtls-seal-sync::generate_ephemeral_channel_identity` uses **rcgen/ring** by default — same `#UD` as above. SGX builds must use `openapi-platform-sgx::sgx_channel_identity` (pure `p256` + `x509-cert`) and call `sync_from_active_tcp_v3_with_client_identity`. DCAP quote verify uses `openapi-dcap-helper` `POST /collateral` + in-enclave `dcap-qvl` rustcrypto. **`dcap-qvl` rejects debug quotes unconditionally** — lab `sgxs-sign -d` enclaves cannot complete DCAP seal-sync; use prod signing (drop `-d`) or `OPENAPI_SEAL_SYNC_PSK` mock path for bring-up.
+
 | Component | Role |
 |-----------|------|
 | `openapi-ceremony-helper` | Host loopback `:18501` — DNS, allowlisted ACME HTTPS relay (`/https-relay`), HTTP-01 webroot, artifact store |

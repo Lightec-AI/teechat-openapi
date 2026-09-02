@@ -14,6 +14,7 @@ mod report;
 mod run;
 mod seal;
 mod seal_sync;
+mod sgx_channel_identity;
 mod tls;
 mod tls_key_policy;
 mod upstream;

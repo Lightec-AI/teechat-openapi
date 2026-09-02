@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VENDOR_DIR="${ROOT}/deploy/sgx/vendor/ring"
 MARKER="${VENDOR_DIR}/.teechat-fortanix-patched"
 RING_VER="${RING_PATCH_VERSION:-0.17.14}"
-PATCH_REV=2
+PATCH_REV=4
 
 if [[ -f "${MARKER}" ]] && [[ "$(cat "${MARKER}")" == "${PATCH_REV}" ]]; then
   exit 0
@@ -59,6 +59,17 @@ if old not in text:
 else:
     rand_path.write_text(text.replace(old, new, 1))
     print(f"patched {rand_path}")
+
+# rcgen pulls ring without less-safe-getrandom-custom-or-rdrand; [patch.crates-io]
+# cannot enable features on transitive deps — always wire SystemRandom on Fortanix.
+fortanix_line = '    all(target_os = "unknown", target_env = "sgx"),\n'
+anchor = '    target_os = "linux",\n'
+text = rand_path.read_text()
+# Fortanix may already appear in the less-safe-getrandom nested cfg; only add
+# the outer cfg entry when linux is not already followed by the SGX target.
+if anchor + fortanix_line not in text and anchor in text:
+    rand_path.write_text(text.replace(anchor, anchor + fortanix_line, 1))
+    print(f"patched Fortanix SystemRandom cfg in {rand_path}")
 
 # --- build.rs: assemble ELF for fortanix (linux ABI) ---
 build_path = root / "build.rs"

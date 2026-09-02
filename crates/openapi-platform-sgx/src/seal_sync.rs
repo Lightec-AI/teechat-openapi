@@ -13,7 +13,7 @@ use std::thread;
 use anyhow::Context;
 use attested_mtls_seal_sync::{
     accept_one_with_gate, allow_legacy_v3_import_from_env, server_tls_config,
-    sync_from_active_tcp_v3_with_options, AllowAllChallengeGate, AuditSink, LocalSealer,
+    sync_from_active_tcp_v3_with_client_identity, AllowAllChallengeGate, AuditSink, LocalSealer,
     MockAttestor, PeerAttestor, PeerChallengeGate, SealSyncServerConfig, ServingIdentity,
     StderrAudit, SyncOutcome, V3NonceStore, V3SyncOptions,
 };
@@ -454,12 +454,16 @@ pub fn run_seal_sync_client(
     if allow_legacy {
         info!("seal-sync allowing one-shot legacy v3 import (4d403ff transcript)");
     }
-    let outcome = sync_from_active_tcp_v3_with_options(
+    // rcgen/ring ECDSA panics (#UD) in Fortanix EDP — use pure RustCrypto identity.
+    let client_identity = crate::sgx_channel_identity::generate_ephemeral_channel_identity()
+        .map_err(|e| attested_mtls_seal_sync::Error::Tls(e.to_string()))?;
+    let outcome = sync_from_active_tcp_v3_with_client_identity(
         peer,
         local,
         attestor,
         sealer,
         &audit,
+        &client_identity,
         V3SyncOptions {
             challenge_gate: if allow_legacy { None } else { challenge_gate },
             local_challenge_base_url,
