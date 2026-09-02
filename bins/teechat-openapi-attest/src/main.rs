@@ -39,6 +39,7 @@ fn main() -> Result<()> {
             let mut require_golden = true;
             let mut ceremony = CeremonyLoadOptions::default();
             let mut require_ceremony = true;
+            let mut allowlist_hostname = None;
             let mut i = 0;
             while i < args.len() {
                 match args[i].as_str() {
@@ -120,6 +121,14 @@ fn main() -> Result<()> {
                             Some(args.get(i).context("--ceremony-sig value")?.clone());
                     }
                     "--skip-ceremony-spki" => require_ceremony = false,
+                    "--allowlist-hostname" => {
+                        i += 1;
+                        allowlist_hostname = Some(
+                            args.get(i)
+                                .context("--allowlist-hostname value")?
+                                .clone(),
+                        );
+                    }
                     other if !other.starts_with('-') => endpoint = other.to_string(),
                     other => bail!("unknown flag {other}"),
                 }
@@ -127,7 +136,7 @@ fn main() -> Result<()> {
             }
             let verdict = verify_openapi_edge(VerifyOptions {
                 endpoint,
-                allowlist_hostname: None,
+                allowlist_hostname,
                 manifest_url,
                 manifest_path,
                 manifest_sig_path,
@@ -199,6 +208,8 @@ Flags:
   --ceremony-manifest-url / --ceremony-manifest / --ceremony-sig
                          TLS ceremony SPKI allowlist (www by default)
   --skip-ceremony-spki   break-glass: skip SPKI pin (empty active[] already skips)
+  --allowlist-hostname <host>
+                         match manifest rows for this hostname (endpoint URL host otherwise)
   --skip-session-spki    Monitors may omit peer SPKI bind (not recommended)
 
 Challenge from the edge is evidence only — not the allowlist trust root.
