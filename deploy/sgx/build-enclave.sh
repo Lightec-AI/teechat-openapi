@@ -81,9 +81,21 @@ ftxsgx-elf2sgxs "${ELF}" \
   --output "${SGXS}"
 
 echo "=== sign SGXS ==="
-# Debug enclave for lab bring-up (ftxsgx-runner default); prod signing drops -d.
+# Debug (-d) is the lab default. DCAP QVL rejects debug quotes, so seal-sync
+# v3 cannot import from a debug exporter. Prod-sign: SGX_DEBUG=0 (drop -d).
+# Runbook: docs/ops/openapi-sgx-tls-ceremony.md
 SIGN_LOG="$(mktemp)"
-sgxs-sign -d --key "${KEY}" "${SGXS}" "${SIG}" | tee "${SIGN_LOG}"
+SIGN_ARGS=(--key "${KEY}" "${SGXS}" "${SIG}")
+case "${SGX_DEBUG:-1}" in
+  0|false|no)
+    echo ">> SGX_DEBUG=0 — production SIGSTRUCT (DEBUG attribute off)"
+    ;;
+  *)
+    echo ">> SGX_DEBUG=1 — debug SIGSTRUCT (sgxs-sign -d); DCAP seal-sync will fail"
+    SIGN_ARGS=(-d "${SIGN_ARGS[@]}")
+    ;;
+esac
+sgxs-sign "${SIGN_ARGS[@]}" | tee "${SIGN_LOG}"
 
 echo "=== MRENCLAVE / metadata ==="
 {

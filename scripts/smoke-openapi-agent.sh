@@ -107,4 +107,92 @@ PY
 
 log "OK chat/completions (stream + UTF-8)"
 
+# 5) Structured tool_calls (Cline / WorkBuddy agent loop) — non-stream + stream
+TOOLS_BODY="$TMP/tools.json"
+python3 - "$MODEL" "$TOOLS_BODY" <<'PY'
+import json, sys
+model, out = sys.argv[1], sys.argv[2]
+payload = {
+    "model": model,
+    "messages": [{"role": "user", "content": "Call the get_time tool now. Do not answer yourself."}],
+    "tools": [{
+        "type": "function",
+        "function": {
+            "name": "get_time",
+            "description": "Return current UTC time",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }],
+    "tool_choice": "auto",
+    "max_tokens": 128,
+    "temperature": 0,
+    "stream": False,
+}
+open(out, "w", encoding="utf-8").write(json.dumps(payload))
+PY
+curl -fsS -o "$TMP/tools.out" "${AUTH[@]}" -d @"$TOOLS_BODY" \
+  "${BASE}/v1/chat/completions" || fail "tools non-stream request"
+python3 - "$TMP/tools.out" <<'PY' || fail "tools non-stream missing structured tool_calls"
+import json, sys
+r = json.load(open(sys.argv[1]))
+if "error" in r:
+    raise SystemExit(r["error"])
+msg = r["choices"][0]["message"]
+tc = msg.get("tool_calls") or []
+if not tc:
+    raise SystemExit(f"no tool_calls in message keys={sorted(msg.keys())} content={msg.get('content')!r}")
+name = (tc[0].get("function") or {}).get("name")
+if name != "get_time":
+    raise SystemExit(f"unexpected tool name {name!r}")
+print("non-stream tool_calls ok:", name)
+PY
+log "OK chat/completions (non-stream tool_calls)"
+
+python3 - "$MODEL" "$TMP/tools-stream.json" <<'PY'
+import json, sys
+model, out = sys.argv[1], sys.argv[2]
+payload = {
+    "model": model,
+    "messages": [{"role": "user", "content": "Call the get_time tool now. Do not answer yourself."}],
+    "tools": [{
+        "type": "function",
+        "function": {
+            "name": "get_time",
+            "description": "Return current UTC time",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }],
+    "tool_choice": "auto",
+    "max_tokens": 128,
+    "temperature": 0,
+    "stream": True,
+}
+open(out, "w", encoding="utf-8").write(json.dumps(payload))
+PY
+curl -fsS -N -o "$TMP/tools-stream.out" "${AUTH[@]}" -d @"$TMP/tools-stream.json" \
+  "${BASE}/v1/chat/completions" || fail "tools stream request"
+python3 - "$TMP/tools-stream.out" <<'PY' || fail "tools stream missing structured tool_calls"
+from pathlib import Path
+import json, sys
+body = Path(sys.argv[1]).read_text(encoding="utf-8")
+if "\ufffd" in body:
+    raise SystemExit("U+FFFD in tools stream")
+saw = False
+for line in body.splitlines():
+    if not line.startswith("data: "):
+        continue
+    p = line[6:].strip()
+    if p == "[DONE]":
+        break
+    o = json.loads(p)
+    d = (o.get("choices") or [{}])[0].get("delta") or {}
+    if d.get("tool_calls"):
+        saw = True
+        break
+if not saw:
+    raise SystemExit("no delta.tool_calls in SSE (model may have answered in content — agent stall)")
+print("stream tool_calls ok")
+PY
+log "OK chat/completions (stream tool_calls)"
+
 log "complete — ready for agent tools (baseURL=${BASE}/v1)"
