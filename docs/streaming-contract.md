@@ -42,4 +42,13 @@ Matches gateway `pipeInferenceResultToClient` intent for OPE streams.
 
 Run `scripts/smoke-openapi-agent.sh` against a running edge + upstream (vLLM or mock).
 
-The smoke script asserts **absence** of `teechat_usage` / `X-TeeChat-Usage-Report` on client responses.
+The smoke script asserts **absence** of `teechat_usage` / `X-TeeChat-Usage-Report` on client responses,
+and that both `stream:true` SSE and `stream:false` JSON expose structured `tool_calls` when the
+engine emits `openai_delta` frames (v0.13.1+ non-stream aggregate).
+
+## Non-stream `openai_delta` aggregate (v0.13.1)
+
+For `stream: false`, OPE plaintext chunks may be neutral `{"type":"openai_delta",…}` frames (same
+as the SSE path). The edge merges split `delta.tool_calls` by index into a single
+`chat.completion` message — it must **not** flatten frames to `content` only (that drops tools and
+yields empty assistant messages with `finish_reason: stop`).

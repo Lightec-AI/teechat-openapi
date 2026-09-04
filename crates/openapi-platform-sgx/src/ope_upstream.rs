@@ -298,9 +298,9 @@ impl UpstreamForwarder for OpeDispatchUpstream {
             .find(|(k, _)| k.eq_ignore_ascii_case("x-ope-usage-report"))
             .map(|(_, v)| v.as_str());
 
-        let text = decrypt_ope_body_to_text(&enc, &raw, ct)?;
+        let agg = decrypt_ope_body_to_completion(&enc, &raw, ct)?;
         if path.contains("embeddings") {
-            let embeddings: Value = serde_json::from_str(&text)
+            let embeddings: Value = serde_json::from_str(&agg.content)
                 .map_err(|e| ApiError::Upstream(format!("embeddings response is not JSON: {e}")))?;
             if embeddings.get("object").and_then(|v| v.as_str()) == Some("chat.completion") {
                 return Err(ApiError::Upstream(
@@ -312,7 +312,7 @@ impl UpstreamForwarder for OpeDispatchUpstream {
         let (prompt_tokens, completion_tokens) = resolve_usage_or_estimate(
             usage_hdr,
             body,
-            &text,
+            &agg.content,
             Some(UsageMeterCtx {
                 engine_id: &pre.engine_id,
                 epoch_id: &pre.trust.epoch_id,
@@ -320,7 +320,7 @@ impl UpstreamForwarder for OpeDispatchUpstream {
             }),
         )?;
         let completion =
-            openai_chat_completion_json(&model, &text, prompt_tokens, completion_tokens);
+            openai_chat_completion_json(&model, &agg, prompt_tokens, completion_tokens);
         Ok(UpstreamResponse::Json(completion))
     }
 
@@ -481,33 +481,96 @@ impl Utf8PlainAccumulator {
     }
 }
 
-fn completion_text_from_openai_delta_frame(frame: &Value) -> String {
-    let mut out = String::new();
+/// Non-stream OPE plaintext may be legacy UTF-8 or one/more `openai_delta` frames.
+/// Streaming already maps `delta.tool_calls`; buffered JSON must preserve them too
+/// (Cline/WorkBuddy `stream:false` agent loops).
+#[derive(Debug, Default, Clone)]
+struct AggregatedCompletion {
+    content: String,
+    tool_calls: Vec<Value>,
+    finish_reason: Option<String>,
+}
+
+fn merge_tool_call_deltas(into: &mut Vec<Value>, deltas: &[Value]) {
+    for d in deltas {
+        let idx = d
+            .get("index")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(into.len() as u64) as usize;
+        while into.len() <= idx {
+            into.push(json!({}));
+        }
+        let slot = &mut into[idx];
+        if let Some(id) = d.get("id").filter(|v| !v.is_null()) {
+            slot["id"] = id.clone();
+        }
+        if let Some(ty) = d.get("type").filter(|v| !v.is_null()) {
+            slot["type"] = ty.clone();
+        }
+        if slot.get("type").is_none() {
+            slot["type"] = json!("function");
+        }
+        let mut func = slot.get("function").cloned().unwrap_or(json!({}));
+        if let Some(f) = d.get("function").and_then(|v| v.as_object()) {
+            if let Some(name) = f.get("name").and_then(|v| v.as_str()) {
+                if !name.is_empty() {
+                    func["name"] = json!(name);
+                }
+            }
+            if let Some(args) = f.get("arguments").and_then(|v| v.as_str()) {
+                let prev = func
+                    .get("arguments")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                func["arguments"] = json!(format!("{prev}{args}"));
+            }
+        }
+        if func.get("name").is_none() {
+            func["name"] = json!("");
+        }
+        if func.get("arguments").is_none() {
+            func["arguments"] = json!("");
+        }
+        slot["function"] = func;
+    }
+}
+
+fn apply_openai_delta_frame(agg: &mut AggregatedCompletion, frame: &Value) {
     let Some(choice) = frame
         .get("choices")
         .and_then(|c| c.as_array())
         .and_then(|a| a.first())
     else {
-        return out;
+        return;
     };
     let delta = choice.get("delta").cloned().unwrap_or(json!({}));
     for key in ["content", "reasoning", "reasoning_content"] {
         if let Some(text) = delta.get(key).and_then(|v| v.as_str()) {
-            out.push_str(text);
+            agg.content.push_str(text);
         }
     }
-    out
+    if let Some(tcs) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+        merge_tool_call_deltas(&mut agg.tool_calls, tcs);
+    }
+    if let Some(fr) = choice
+        .get("finish_reason")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("null"))
+    {
+        agg.finish_reason = Some(fr.to_string());
+    }
 }
 
-fn append_plain_completion_text(text: &mut String, plain: &[u8]) -> Result<(), ApiError> {
+fn append_plain_to_aggregate(agg: &mut AggregatedCompletion, plain: &[u8]) -> Result<(), ApiError> {
     if let Ok(piece) = std::str::from_utf8(plain) {
         if let Ok(v) = serde_json::from_str::<Value>(piece) {
             if v.get("type").and_then(|t| t.as_str()) == Some("openai_delta") {
-                text.push_str(&completion_text_from_openai_delta_frame(&v));
+                apply_openai_delta_frame(agg, &v);
                 return Ok(());
             }
         }
-        text.push_str(piece);
+        agg.content.push_str(piece);
         return Ok(());
     }
     let valid = std::str::from_utf8(plain)
@@ -515,7 +578,7 @@ fn append_plain_completion_text(text: &mut String, plain: &[u8]) -> Result<(), A
         .map(|e| e.valid_up_to())
         .unwrap_or(0);
     if valid > 0 {
-        text.push_str(std::str::from_utf8(&plain[..valid]).map_err(|e| {
+        agg.content.push_str(std::str::from_utf8(&plain[..valid]).map_err(|e| {
             ApiError::Upstream(format!("ope plaintext invalid utf8: {e}"))
         })?);
     }
@@ -628,13 +691,13 @@ fn process_decrypted_plaintext(
     Ok(())
 }
 
-fn decrypt_ope_body_to_text(
+fn decrypt_ope_body_to_completion(
     enc: &EncryptedOpeRequest,
     raw: &[u8],
     content_type: &str,
-) -> Result<String, ApiError> {
+) -> Result<AggregatedCompletion, ApiError> {
     if content_type.contains("ope+json-stream") || looks_like_ope_ndjson(raw) {
-        return decrypt_ndjson_to_text(enc, raw);
+        return decrypt_ndjson_to_completion(enc, raw);
     }
     // Buffered OPE JSON: { server_share, chunks: [] }
     let v: Value = serde_json::from_slice(raw)
@@ -645,16 +708,16 @@ fn decrypt_ope_body_to_text(
             .and_then(|x| x.as_array())
             .cloned()
             .unwrap_or_default();
-        let mut text = String::new();
+        let mut agg = AggregatedCompletion::default();
         for (i, c) in chunks.iter().enumerate() {
             let ct = c
                 .as_str()
                 .ok_or_else(|| ApiError::Upstream("ope chunk not string".into()))?;
             let plain = decrypt_chunk(&enc.envelope, &enc.client_session, share, i as u32, ct)
                 .map_err(|e| ApiError::Upstream(e.to_string()))?;
-            append_plain_completion_text(&mut text, &plain)?;
+            append_plain_to_aggregate(&mut agg, &plain)?;
         }
-        return Ok(text);
+        return Ok(agg);
     }
     Err(ApiError::Upstream(
         "unexpected ope response shape (expected stream or server_share/chunks)".into(),
@@ -666,9 +729,12 @@ fn looks_like_ope_ndjson(raw: &[u8]) -> bool {
     s.lines().any(|l| l.contains("\"ope_stream\""))
 }
 
-fn decrypt_ndjson_to_text(enc: &EncryptedOpeRequest, raw: &[u8]) -> Result<String, ApiError> {
+fn decrypt_ndjson_to_completion(
+    enc: &EncryptedOpeRequest,
+    raw: &[u8],
+) -> Result<AggregatedCompletion, ApiError> {
     let mut server_share = String::new();
-    let mut text = String::new();
+    let mut agg = AggregatedCompletion::default();
     for line in String::from_utf8_lossy(raw).lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -701,10 +767,10 @@ fn decrypt_ndjson_to_text(enc: &EncryptedOpeRequest, raw: &[u8]) -> Result<Strin
                 ct,
             )
             .map_err(|e| ApiError::Upstream(e.to_string()))?;
-            append_plain_completion_text(&mut text, &plain)?;
+            append_plain_to_aggregate(&mut agg, &plain)?;
         }
     }
-    Ok(text)
+    Ok(agg)
 }
 
 fn bridge_ope_to_openai_sse(
@@ -797,16 +863,53 @@ fn bridge_ope_to_openai_sse(
         reader
             .read_to_end(&mut raw)
             .map_err(|e| ApiError::Upstream(e.to_string()))?;
-        let text = decrypt_ope_body_to_text(enc, &raw, content_type)?;
-        if !text.is_empty() {
-            written += write_sse(out, &openai_sse_delta(&id, model, &text, None))?;
-        }
+        let agg = decrypt_ope_body_to_completion(enc, &raw, content_type)?;
+        written += emit_aggregated_completion_as_sse(&id, model, &agg, out, &mut saw_finish)?;
     }
 
     if !saw_finish {
         written += write_sse(out, &openai_sse_delta(&id, model, "", Some("stop")))?;
     }
     written += write_all_count(out, b"data: [DONE]\n\n")?;
+    Ok(written)
+}
+
+fn emit_aggregated_completion_as_sse(
+    id: &str,
+    model: &str,
+    agg: &AggregatedCompletion,
+    out: &mut dyn Write,
+    saw_finish: &mut bool,
+) -> Result<u64, ApiError> {
+    let mut written = 0u64;
+    if !agg.content.is_empty() {
+        written += write_sse(out, &openai_sse_delta(id, model, &agg.content, None))?;
+    }
+    if !agg.tool_calls.is_empty() {
+        let mut indexed = Vec::with_capacity(agg.tool_calls.len());
+        for (i, tc) in agg.tool_calls.iter().enumerate() {
+            let mut d = tc.clone();
+            if let Some(obj) = d.as_object_mut() {
+                obj.insert("index".into(), json!(i));
+            }
+            indexed.push(d);
+        }
+        let delta = json!({ "tool_calls": indexed });
+        if let Some(chunk) = openai_sse_from_structured_delta(id, model, &delta, None) {
+            written += write_sse(out, &chunk)?;
+        }
+    }
+    let finish = agg.finish_reason.as_deref().or_else(|| {
+        if agg.tool_calls.is_empty() {
+            None
+        } else {
+            Some("tool_calls")
+        }
+    });
+    if let Some(fr) = finish {
+        *saw_finish = true;
+        written += write_sse(out, &openai_sse_delta(id, model, "", Some(fr)))?;
+    }
     Ok(written)
 }
 
@@ -842,10 +945,45 @@ fn openai_sse_delta(id: &str, model: &str, content: &str, finish: Option<&str>) 
 
 fn openai_chat_completion_json(
     model: &str,
-    text: &str,
+    agg: &AggregatedCompletion,
     prompt_tokens: u64,
     completion_tokens: u64,
 ) -> Value {
+    let finish = agg
+        .finish_reason
+        .clone()
+        .unwrap_or_else(|| {
+            if agg.tool_calls.is_empty() {
+                "stop".to_string()
+            } else {
+                "tool_calls".to_string()
+            }
+        });
+    let mut message = json!({ "role": "assistant" });
+    if agg.tool_calls.is_empty() {
+        message["content"] = json!(agg.content.clone());
+    } else {
+        message["content"] = if agg.content.is_empty() {
+            Value::Null
+        } else {
+            json!(agg.content.clone())
+        };
+        let tool_calls: Vec<Value> = agg
+            .tool_calls
+            .iter()
+            .enumerate()
+            .map(|(i, tc)| {
+                json!({
+                    "id": tc.get("id").cloned().unwrap_or_else(|| json!(format!("call_{i}"))),
+                    "type": tc.get("type").cloned().unwrap_or_else(|| json!("function")),
+                    "function": tc.get("function").cloned().unwrap_or_else(|| {
+                        json!({ "name": "", "arguments": "" })
+                    }),
+                })
+            })
+            .collect();
+        message["tool_calls"] = Value::Array(tool_calls);
+    }
     json!({
         "id": format!("chatcmpl-{}", uuid_like()),
         "object": "chat.completion",
@@ -853,8 +991,8 @@ fn openai_chat_completion_json(
         "model": model,
         "choices": [{
             "index": 0,
-            "message": { "role": "assistant", "content": text },
-            "finish_reason": "stop"
+            "message": message,
+            "finish_reason": finish
         }],
         "usage": {
             "prompt_tokens": prompt_tokens,
@@ -1166,5 +1304,61 @@ mod trust_tests {
         assert!(text.contains("[DONE]"));
         assert!(!text.contains("teechat_usage"));
         assert!(!text.contains("X-TeeChat-Usage-Report"));
+    }
+
+    #[test]
+    fn nonstream_aggregates_split_tool_call_deltas() {
+        let mut agg = AggregatedCompletion::default();
+        apply_openai_delta_frame(
+            &mut agg,
+            &json!({
+                "type": "openai_delta",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "chatcmpl-tool-1",
+                            "type": "function",
+                            "function": { "name": "get_time" }
+                        }]
+                    },
+                    "finish_reason": null
+                }]
+            }),
+        );
+        apply_openai_delta_frame(
+            &mut agg,
+            &json!({
+                "type": "openai_delta",
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "function": { "arguments": "{}" }
+                        }]
+                    },
+                    "finish_reason": null
+                }]
+            }),
+        );
+        apply_openai_delta_frame(
+            &mut agg,
+            &json!({
+                "type": "openai_delta",
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "tool_calls"
+                }]
+            }),
+        );
+        let completion = openai_chat_completion_json("Qwen/Qwen3.6-35B-A3B", &agg, 10, 1);
+        let msg = &completion["choices"][0]["message"];
+        assert!(msg.get("content").unwrap().is_null());
+        assert_eq!(completion["choices"][0]["finish_reason"], "tool_calls");
+        assert_eq!(msg["tool_calls"][0]["function"]["name"], "get_time");
+        assert_eq!(msg["tool_calls"][0]["function"]["arguments"], "{}");
     }
 }
