@@ -61,25 +61,97 @@ fn content_chars(content: Option<&Value>) -> u64 {
 
 /// Enforce near-exhaust gate. No-op when `remaining_tokens` is unset (legacy catalog keys).
 pub fn enforce_token_quota(policy: &OpenApiKeyPolicy, body: &[u8]) -> Result<(), ApiError> {
+    enforce_token_quota_for_key(policy, body, None)
+}
+
+/// Same as [`enforce_token_quota`], with optional `key_id` for debug WARNs (one-shot instrumentation).
+pub fn enforce_token_quota_for_key(
+    policy: &OpenApiKeyPolicy,
+    body: &[u8],
+    key_id: Option<&str>,
+) -> Result<(), ApiError> {
     let Some(remaining) = policy.remaining_tokens else {
         return Ok(());
     };
+    let est = estimate_prompt_tokens(body);
+    let tight = remaining < TIGHT_REMAINING_TOKENS;
+    let large = est >= LARGE_PROMPT_TOKENS;
     if remaining == 0 {
+        // #region agent log
+        tracing::warn!(
+            key_id = key_id.unwrap_or(""),
+            remaining,
+            est,
+            body_len = body.len(),
+            tight,
+            large,
+            rpm = policy.rpm,
+            max_context = ?policy.max_context_tokens,
+            max_in_flight = ?policy.max_in_flight,
+            branch = "remaining_zero",
+            "quota gate reject"
+        );
+        // #endregion
         return Err(ApiError::InsufficientQuota("token quota exhausted".into()));
     }
-    let est = estimate_prompt_tokens(body);
     if est > remaining {
+        // #region agent log
+        tracing::warn!(
+            key_id = key_id.unwrap_or(""),
+            remaining,
+            est,
+            body_len = body.len(),
+            tight,
+            large,
+            rpm = policy.rpm,
+            max_context = ?policy.max_context_tokens,
+            max_in_flight = ?policy.max_in_flight,
+            branch = "est_exceeds_remaining",
+            "quota gate reject"
+        );
+        // #endregion
         return Err(ApiError::InsufficientQuota(format!(
             "estimated prompt tokens ({est}) exceed remaining quota ({remaining})"
         )));
     }
-    let tight = remaining < TIGHT_REMAINING_TOKENS;
-    let large = est >= LARGE_PROMPT_TOKENS;
     if tight && large {
+        // #region agent log
+        tracing::warn!(
+            key_id = key_id.unwrap_or(""),
+            remaining,
+            est,
+            body_len = body.len(),
+            tight,
+            large,
+            rpm = policy.rpm,
+            max_context = ?policy.max_context_tokens,
+            max_in_flight = ?policy.max_in_flight,
+            branch = "tight_and_large",
+            "quota gate reject"
+        );
+        // #endregion
         return Err(ApiError::InsufficientQuota(format!(
             "remaining quota ({remaining}) is near exhaust; refuse large prompt (~{est} tokens)"
         )));
     }
+    // #region agent log
+    // Admit path: only log when prompt is large (Cursor-sized) so we can compare pass vs reject.
+    if large || body.len() >= 100_000 {
+        tracing::warn!(
+            key_id = key_id.unwrap_or(""),
+            remaining,
+            est,
+            body_len = body.len(),
+            tight,
+            large,
+            rpm = policy.rpm,
+            max_context = ?policy.max_context_tokens,
+            max_in_flight = ?policy.max_in_flight,
+            branch = "admit_ok",
+            "quota gate admit"
+        );
+    }
+    // #endregion
     Ok(())
 }
 
@@ -90,6 +162,16 @@ pub fn enforce_max_context(policy: &OpenApiKeyPolicy, body: &[u8]) -> Result<(),
     };
     let est = estimate_prompt_tokens(body);
     if est > u64::from(max) {
+        // #region agent log
+        tracing::warn!(
+            remaining = ?policy.remaining_tokens,
+            est,
+            max_context = max,
+            body_len = body.len(),
+            branch = "context_length_exceeded",
+            "max_context gate reject"
+        );
+        // #endregion
         return Err(ApiError::BadRequest(format!(
             "context_length_exceeded: estimated prompt tokens ({est}) exceed tier max ({max})"
         )));

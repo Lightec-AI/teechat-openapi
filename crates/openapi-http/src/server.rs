@@ -319,14 +319,21 @@ where
                 other => other.openai_type(),
             };
             // Always surface app-layer 429s (capacity path already WARNs separately).
-            if matches!(err, ApiError::RateLimited) || debug_access {
+            if matches!(err, ApiError::RateLimited | ApiError::InsufficientQuota(_)) || debug_access
+            {
                 // #region agent log
+                let detail = match &err {
+                    ApiError::InsufficientQuota(msg) => msg.as_str(),
+                    ApiError::RateLimited => "rate_limited",
+                    other => other.openai_type(),
+                };
                 warn!(
                     ip = client_ip.unwrap_or("unknown"),
                     method,
                     path,
                     status,
                     code,
+                    detail,
                     "debug access: error response"
                 );
                 // #endregion

@@ -10,7 +10,7 @@ use crate::error::ApiError;
 use crate::limits::{InflightGate, IpConnPermit, IpConnTracker, Limits, RateLimiter};
 use crate::maintenance::{MaintenanceState, SharedMaintenanceState};
 use crate::models::{AttestationChallengeRequest, ChatCompletionRequest, ModelsListResponse};
-use crate::quota::{enforce_max_context, enforce_token_quota};
+use crate::quota::{enforce_max_context, enforce_token_quota_for_key};
 use crate::remote_auth::EdgeAuthenticator;
 use crate::routes::{classify, normalize_path, RouteAction};
 use crate::upstream::{body_wants_stream, model_from_body};
@@ -316,7 +316,7 @@ where
                 self.enforce_rate_limit(&auth)?;
                 self.limits.validate_body_size(body.len())?;
                 self.enforce_model_policy(&auth, body)?;
-                enforce_token_quota(&auth.policy, body)?;
+                enforce_token_quota_for_key(&auth.policy, body, Some(auth.key_id.as_str()))?;
                 enforce_max_context(&auth.policy, body)?;
                 if path == "/v1/chat/completions" {
                     self.handle_chat_completions(auth, body, now_ms)
@@ -334,7 +334,7 @@ where
                 }
                 if method == HttpMethod::Post && !body.is_empty() {
                     self.enforce_model_policy(&auth, body)?;
-                    enforce_token_quota(&auth.policy, body)?;
+                    enforce_token_quota_for_key(&auth.policy, body, Some(auth.key_id.as_str()))?;
                     enforce_max_context(&auth.policy, body)?;
                 }
                 let ctx = UpstreamRequestContext::from_auth(&auth.key_id, &auth.policy.key_set);
