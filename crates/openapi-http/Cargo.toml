@@ -13,6 +13,7 @@ openapi-core = { path = "../openapi-core" }
 openapi-platform = { path = "../openapi-platform" }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 base64 = { workspace = true }

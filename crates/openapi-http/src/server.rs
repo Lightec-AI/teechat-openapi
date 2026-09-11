@@ -7,6 +7,7 @@ use openapi_core::handler::{App, AppResponse, HttpMethod, UpstreamForwarder};
 use openapi_core::ApiError;
 use openapi_platform::AttestationPlatform;
 use thiserror::Error;
+use tracing::warn;
 
 use crate::request::{ParseError, ParsedRequest};
 use crate::response::{
@@ -219,6 +220,23 @@ where
         }
     };
 
+    let debug_access = std::env::var("OPENAPI_DEBUG_ACCESS_LOG")
+        .ok()
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "on"))
+        .unwrap_or(false);
+    if debug_access {
+        // #region agent log
+        warn!(
+            ip = client_ip.unwrap_or("unknown"),
+            method,
+            path,
+            body_len = body.len(),
+            has_auth = authorization.is_some(),
+            "debug access: request"
+        );
+        // #endregion
+    }
+
     let http_method = HttpMethod::parse(method);
     match app.handle_from_ex(
         http_method.clone(),
@@ -230,11 +248,35 @@ where
         challenge_bench_header,
     ) {
         Ok(AppResponse::Json(body)) => {
+            if debug_access {
+                // #region agent log
+                warn!(
+                    ip = client_ip.unwrap_or("unknown"),
+                    method,
+                    path,
+                    status = 200,
+                    kind = "json",
+                    "debug access: response"
+                );
+                // #endregion
+            }
             let bytes = serde_json::to_vec(&body).unwrap_or_default();
             out.write_all(&maybe_cors(build_json_response(200, &bytes)))
                 .map_err(ServerError::Io)?;
         }
         Ok(AppResponse::SseBuffered { upstream_body }) => {
+            if debug_access {
+                // #region agent log
+                warn!(
+                    ip = client_ip.unwrap_or("unknown"),
+                    method,
+                    path,
+                    status = 200,
+                    kind = "sse_buffered",
+                    "debug access: response"
+                );
+                // #endregion
+            }
             out.write_all(&build_sse_buffered_response(&upstream_body))
                 .map_err(ServerError::Io)?;
         }
@@ -245,6 +287,18 @@ where
             key_id,
             key_set,
         }) => {
+            if debug_access {
+                // #region agent log
+                warn!(
+                    ip = client_ip.unwrap_or("unknown"),
+                    method = ?method,
+                    path = %path,
+                    status = 200,
+                    kind = "sse_passthrough",
+                    "debug access: response"
+                );
+                // #endregion
+            }
             write_sse_stream_headers(out).map_err(|e| ServerError::Other(e.to_string()))?;
             out.flush().map_err(ServerError::Io)?;
             let mut chunked = ChunkedWriter::new(out);
@@ -255,6 +309,28 @@ where
             write_sse_stream_end(chunked.inner).map_err(|e| ServerError::Other(e.to_string()))?;
         }
         Err(err) => {
+            let status = err.status_code();
+            let code = match &err {
+                ApiError::RateLimited => "rate_limit_exceeded",
+                ApiError::InsufficientQuota(_) => "insufficient_quota",
+                ApiError::Unauthorized => "invalid_api_key",
+                ApiError::Forbidden(_) => "model_not_allowed",
+                ApiError::ServiceUnavailable { code, .. } => code.as_str(),
+                other => other.openai_type(),
+            };
+            // Always surface app-layer 429s (capacity path already WARNs separately).
+            if matches!(err, ApiError::RateLimited) || debug_access {
+                // #region agent log
+                warn!(
+                    ip = client_ip.unwrap_or("unknown"),
+                    method,
+                    path,
+                    status,
+                    code,
+                    "debug access: error response"
+                );
+                // #endregion
+            }
             out.write_all(&maybe_cors(build_error_response(err)))
                 .map_err(ServerError::Io)?;
         }
